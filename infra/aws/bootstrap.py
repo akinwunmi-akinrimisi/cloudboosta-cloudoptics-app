@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -134,18 +135,44 @@ def upload_templates(s3: Any, bucket: str) -> dict[str, str]:
     return urls
 
 
+def ensure_user(iam: Any) -> None:
+    # The broker role's trust policy names this user, so it must exist first.
+    try:
+        iam.get_user(UserName=USER)
+    except iam.exceptions.NoSuchEntityException:
+        iam.create_user(UserName=USER, Tags=TAGS)
+        print(f"created user {USER}")
+
+
+def retry_while_propagating(call: Any, attempts: int = 12, delay: float = 5.0) -> Any:
+    """IAM is eventually consistent: a new user can be rejected as a principal for a while."""
+    for attempt in range(attempts):
+        try:
+            return call()
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code != "MalformedPolicyDocument" or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+    return None
+
+
 def ensure_role(iam: Any, account: str) -> str:
     trust = json.dumps(broker_trust_policy(account))
     try:
         arn = iam.get_role(RoleName=ROLE)["Role"]["Arn"]
-        iam.update_assume_role_policy(RoleName=ROLE, PolicyDocument=trust)
+        retry_while_propagating(
+            lambda: iam.update_assume_role_policy(RoleName=ROLE, PolicyDocument=trust)
+        )
     except iam.exceptions.NoSuchEntityException:
-        arn = iam.create_role(
-            RoleName=ROLE,
-            AssumeRolePolicyDocument=trust,
-            Description="Cloudoptics broker: assumes customers' read-only roles only",
-            MaxSessionDuration=3600,
-            Tags=TAGS,
+        arn = retry_while_propagating(
+            lambda: iam.create_role(
+                RoleName=ROLE,
+                AssumeRolePolicyDocument=trust,
+                Description="Cloudoptics broker: assumes customers' read-only roles only",
+                MaxSessionDuration=3600,
+                Tags=TAGS,
+            )
         )["Role"]["Arn"]
         print(f"created role {ROLE}")
     iam.put_role_policy(
@@ -156,12 +183,7 @@ def ensure_role(iam: Any, account: str) -> str:
     return str(arn)
 
 
-def ensure_user_and_rotate_key(iam: Any, account: str) -> dict[str, str]:
-    try:
-        iam.get_user(UserName=USER)
-    except iam.exceptions.NoSuchEntityException:
-        iam.create_user(UserName=USER, Tags=TAGS)
-        print(f"created user {USER}")
+def rotate_user_key(iam: Any, account: str) -> dict[str, str]:
     iam.put_user_policy(
         UserName=USER,
         PolicyName="assume-broker-only",
@@ -200,8 +222,9 @@ def main() -> int:
     bucket = f"cloudoptics-public-{account}"
     ensure_bucket(s3, bucket)
     urls = upload_templates(s3, bucket)
+    ensure_user(iam)
     role_arn = ensure_role(iam, account)
-    key = ensure_user_and_rotate_key(iam, account)
+    key = rotate_user_key(iam, account)
     emit(
         {
             "CLOUDOPTICS_AWS_BROKER_ROLE_ARN": role_arn,
