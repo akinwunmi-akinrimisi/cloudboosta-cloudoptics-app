@@ -110,6 +110,9 @@ async def bearer_claims(request: Request) -> Claims:
             "Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    settings = get_settings()
+    if settings.auth_mode == "oidc" and not settings.oidc_jwks_url:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in is not configured yet")
     try:
         return await get_verifier().verify(token)
     except jwt.PyJWTError as exc:

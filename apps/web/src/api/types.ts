@@ -67,9 +67,12 @@ export interface Connection {
 export interface ConnectionSetup {
   connection: Connection
   externalId: string
-  quickCreateUrl: string
+  /** Null until the templates are hosted in our S3 bucket (CloudFormation quick-create needs S3). */
+  quickCreateUrl: string | null
   templateUrl: string
+  templateDownloadUrl: string
   resourceTemplateUrl: string
+  resourceTemplateDownloadUrl: string
   stackRegion: string
   principalArn: string
 }

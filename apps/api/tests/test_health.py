@@ -14,11 +14,24 @@ async def test_healthz() -> None:
     assert response.json()["status"] == "ok"
 
 
-async def test_readyz() -> None:
-    async with client() as c:
+async def test_readyz_checks_the_database(app) -> None:  # type: ignore[no-untyped-def]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         response = await c.get("/readyz")
     assert response.status_code == 200
     assert response.json()["status"] == "ready"
+
+
+async def test_readyz_reports_an_unreachable_database(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from cloudoptics import main
+
+    dead = create_async_engine("postgresql+psycopg://nobody@127.0.0.1:1/none")
+    monkeypatch.setattr(main, "get_engine", lambda: dead)
+    async with client() as c:
+        response = await c.get("/readyz")
+    assert response.status_code == 503
+    assert response.json()["title"] == "Database unavailable"
 
 
 async def test_unknown_route_returns_problem_json() -> None:

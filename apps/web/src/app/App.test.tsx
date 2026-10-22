@@ -49,10 +49,10 @@ describe('Cloudoptics web app', () => {
     await user.type(accountField, '1234-5678-9012')
     await user.click(screen.getByRole('button', { name: 'Continue' }))
 
-    const link = await screen.findByRole('link', { name: /Open CloudFormation in AWS/ })
-    const url = new URL(link.getAttribute('href') ?? '')
-    expect(url.hostname).toBe('us-east-1.console.aws.amazon.com')
-    expect(url.hash).toContain('param_ExternalId=')
+    const download = await screen.findByRole('link', { name: /Download template/ })
+    expect(download.getAttribute('href')).toMatch(/cfn\/billing-role\.yaml$/)
+    expect(screen.getByText('Upload a template file')).toBeTruthy()
+    expect(screen.getByLabelText('Copy External ID')).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: 'I have deployed the stack' }))
     expect(await screen.findByText('Healthy')).toBeTruthy()

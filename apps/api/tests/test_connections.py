@@ -21,7 +21,32 @@ async def workspace(client: AsyncClient, login) -> tuple[str, dict[str, str]]:
     return r.json()["id"], headers
 
 
-async def test_create_connection_returns_a_quick_create_link(client: AsyncClient, login) -> None:
+async def test_setup_offers_the_template_download_until_templates_are_hosted(
+    client: AsyncClient, login
+) -> None:
+    tenant, headers = await workspace(client, login)
+    r = await client.post(
+        f"/v1/tenants/{tenant}/connections", json={"awsAccountId": "101010101010"}, headers=headers
+    )
+    body = r.json()
+    assert body["quickCreateUrl"] is None
+    assert body["templateDownloadUrl"].endswith("/infra/cloudformation/billing-role.yaml")
+    assert body["resourceTemplateDownloadUrl"].endswith("/infra/cloudformation/resource-role.yaml")
+
+
+@pytest.fixture
+def quick_create():  # type: ignore[no-untyped-def]
+    from cloudoptics.platform.settings import get_settings
+
+    settings = get_settings()
+    settings.cfn_quick_create_enabled = True
+    yield
+    settings.cfn_quick_create_enabled = False
+
+
+async def test_create_connection_returns_a_quick_create_link(
+    client: AsyncClient, login, quick_create
+) -> None:
     tenant, headers = await workspace(client, login)
     r = await client.post(
         f"/v1/tenants/{tenant}/connections",

@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, ExternalLink } from 'lucide-react'
+import { Check, Copy, Download, ExternalLink } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useState } from 'react'
 
@@ -244,33 +244,76 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
       {step === 2 && setup && (
         <Card>
           <h1 className="text-2xl font-semibold">Deploy the read-only role</h1>
-          <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-secondary">
-            <li>Sign in to AWS account {setup.connection.awsAccountId} as an administrator.</li>
-            <li>
-              Open the CloudFormation link below. It opens in <strong>us-east-1</strong> with the
-              values filled in.
-            </li>
-            <li>Tick the IAM acknowledgement box and choose <strong>Create stack</strong>.</li>
-            <li>Wait for CREATE_COMPLETE (about 2 minutes), then come back here.</li>
-          </ol>
+          {setup.quickCreateUrl ? (
+            <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-secondary">
+              <li>Sign in to AWS account {setup.connection.awsAccountId} as an administrator.</li>
+              <li>
+                Open the CloudFormation link below. It opens in <strong>us-east-1</strong> with the
+                values filled in.
+              </li>
+              <li>Tick the IAM acknowledgement box and choose <strong>Create stack</strong>.</li>
+              <li>Wait for CREATE_COMPLETE (about 2 minutes), then come back here.</li>
+            </ol>
+          ) : (
+            <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-secondary">
+              <li>Download the template below.</li>
+              <li>
+                Sign in to AWS account {setup.connection.awsAccountId} as an administrator and open{' '}
+                <a
+                  className="text-accent underline"
+                  href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  CloudFormation → Create stack in us-east-1
+                </a>
+                .
+              </li>
+              <li>
+                Choose <strong>Upload a template file</strong>, select the downloaded file, and name
+                the stack <code className="font-mono text-xs">cloudoptics-billing-access</code>.
+              </li>
+              <li>Paste the External ID and the Cloudoptics principal shown below into the parameters.</li>
+              <li>
+                Tick the IAM acknowledgement box, choose <strong>Submit</strong>, wait for
+                CREATE_COMPLETE (about 2 minutes), then come back here.
+              </li>
+            </ol>
+          )}
           <div className="mt-6 flex flex-col gap-4">
-            <a
-              href={setup.quickCreateUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
-            >
-              Open CloudFormation in AWS <ExternalLink size={16} />
-            </a>
+            {setup.quickCreateUrl ? (
+              <a
+                href={setup.quickCreateUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
+              >
+                Open CloudFormation in AWS <ExternalLink size={16} />
+              </a>
+            ) : (
+              <a
+                href={setup.templateDownloadUrl}
+                download="cloudoptics-billing-role.yaml"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
+              >
+                Download template <Download size={16} />
+              </a>
+            )}
             <CopyValue label="External ID" value={setup.externalId} />
-            <details className="text-sm">
-              <summary className="cursor-pointer text-secondary">Set it up by hand instead</summary>
-              <div className="mt-3 flex flex-col gap-3">
-                <CopyValue label="Template URL" value={setup.templateUrl} />
-                <CopyValue label="Cloudoptics principal" value={setup.principalArn} />
-                <CopyValue label="Role we will assume" value={setup.connection.roleArn} />
-              </div>
-            </details>
+            {setup.quickCreateUrl ? (
+              <details className="text-sm">
+                <summary className="cursor-pointer text-secondary">Set it up by hand instead</summary>
+                <div className="mt-3 flex flex-col gap-3">
+                  <CopyValue label="Template URL" value={setup.templateUrl} />
+                  <CopyValue label="Cloudoptics principal" value={setup.principalArn} />
+                  <CopyValue label="Role we will assume" value={setup.connection.roleArn} />
+                </div>
+              </details>
+            ) : (
+              <CopyValue label="Cloudoptics principal" value={setup.principalArn} />
+            )}
           </div>
           <div className="mt-6 flex justify-end">
             <Button onClick={check}>I have deployed the stack</Button>

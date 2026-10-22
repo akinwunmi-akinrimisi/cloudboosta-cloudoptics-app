@@ -242,24 +242,18 @@ export class DemoApi implements Api {
   }
 
   private setup(conn: Connection): ConnectionSetup {
-    const template = 'https://cloudoptics-public.s3.eu-west-2.amazonaws.com/cfn/v1/billing-role.yaml'
-    const principal = 'arn:aws:iam::000000000000:role/CloudopticsBroker'
-    const ext = this.state.externalIds[conn.id] ?? ''
-    const params = new URLSearchParams({
-      templateURL: template,
-      stackName: 'cloudoptics-billing-access',
-      param_ExternalId: ext,
-      param_CloudopticsPrincipalArn: principal,
-      param_CreateCurExport: String(conn.createCurExport),
-    })
+    const base = `${import.meta.env.BASE_URL}cfn`
     return {
       connection: structuredClone(conn),
-      externalId: ext,
-      quickCreateUrl: `https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create/review?${params}`,
-      templateUrl: template,
-      resourceTemplateUrl: template.replace('billing-role', 'resource-role'),
+      externalId: this.state.externalIds[conn.id] ?? '',
+      // The demo has no S3-hosted template, so it shows the download path, like staging today.
+      quickCreateUrl: null,
+      templateUrl: `${base}/billing-role.yaml`,
+      templateDownloadUrl: `${base}/billing-role.yaml`,
+      resourceTemplateUrl: `${base}/resource-role.yaml`,
+      resourceTemplateDownloadUrl: `${base}/resource-role.yaml`,
       stackRegion: 'us-east-1',
-      principalArn: principal,
+      principalArn: 'arn:aws:iam::000000000000:role/CloudopticsBroker',
     }
   }
 }

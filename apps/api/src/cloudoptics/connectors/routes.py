@@ -68,9 +68,11 @@ class Connection(ApiModel):
 class ConnectionSetup(ApiModel):
     connection: Connection
     external_id: str
-    quick_create_url: str
+    quick_create_url: str | None
     template_url: str
+    template_download_url: str
     resource_template_url: str
+    resource_template_download_url: str
     stack_region: str = aws.STACK_REGION
     principal_arn: str
 
@@ -89,7 +91,9 @@ def _setup(row: Any, external_id: str) -> ConnectionSetup:
     return ConnectionSetup(
         connection=_to_model(row),
         external_id=external_id,
-        quick_create_url=aws.quick_create_url(
+        quick_create_url=None
+        if not settings.cfn_quick_create_enabled
+        else aws.quick_create_url(
             settings.cfn_billing_template_url,
             external_id=external_id,
             principal_arn=settings.cloudoptics_principal_arn,
@@ -98,7 +102,9 @@ def _setup(row: Any, external_id: str) -> ConnectionSetup:
             stack_name=row.stack_name,
         ),
         template_url=settings.cfn_billing_template_url,
+        template_download_url=f"{settings.cfn_template_download_base}/billing-role.yaml",
         resource_template_url=settings.cfn_resource_template_url,
+        resource_template_download_url=f"{settings.cfn_template_download_base}/resource-role.yaml",
         principal_arn=settings.cloudoptics_principal_arn,
     )
 

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_AUTH_SECRET = "dev-only-secret-change-me-0123456789abcdef"  # noqa: S105 - refused outside dev
@@ -42,10 +42,26 @@ class Settings(BaseSettings):
         "https://cloudoptics-public.s3.eu-west-2.amazonaws.com/cfn/v1/resource-role.yaml"
     )
     aws_region: str = "eu-west-2"
+    # Quick-create needs the templates in our S3 bucket. Until that bucket exists, onboarding
+    # offers the template as a download for a manual "Upload a template file" in AWS.
+    cfn_quick_create_enabled: bool = False
+    cfn_template_download_base: str = (
+        "https://raw.githubusercontent.com/akinwunmi-akinrimisi/cloudboosta-cloudoptics-app/"
+        "main/infra/cloudformation"
+    )
 
     # "inline" runs background jobs inside the request (local, tests, demo); staging and
     # production use the Procrastinate queue and a worker process.
     jobs_mode: Literal["inline", "queue"] = "inline"
+
+    @field_validator("database_url", "app_database_url")
+    @classmethod
+    def _psycopg_driver(cls, url: str) -> str:
+        """Accept plain ``postgresql://`` URLs (as DigitalOcean provides) for psycopg 3."""
+        for prefix in ("postgresql://", "postgres://"):
+            if url.startswith(prefix):
+                return "postgresql+psycopg://" + url[len(prefix) :]
+        return url
 
     @model_validator(mode="after")
     def _guard_production(self) -> Self:
