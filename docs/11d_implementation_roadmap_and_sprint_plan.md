@@ -137,6 +137,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
 
 ### Sprint 0 (1 week) — Inception & foundations
 - **Goals:** de-risk the two riskiest technical bets; set up the repo, CI and environments skeleton; finalise ADRs.
+- **Status (22 Oct 2026):** done in the repo: monorepo + CI skeleton (OPS-1, branch protection still to be set by an admin), synthetic CUR fixture v0 (IN-1), ADR-001…011 drafted (`docs/adr/`). Pending, need real accounts: CC-1, ADM-1, OPS-5 and the fixture check against a real export (`docs/spikes/sprint-0.md`).
 - **Deliverables:**
   - ADR-001…011 drafted.
   - Monorepo + CI skeleton (OPS-1).

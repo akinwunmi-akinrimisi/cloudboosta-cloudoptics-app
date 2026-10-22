@@ -1,0 +1,87 @@
+/* Brand tokens from the Cloudoptic design system (docs/08 §2.2.1). Tailwind and the full
+   token set replace this file in Sprint 1. */
+:root {
+  --brand-blue: #2c68fc;
+  --brand-yellow: #fac812;
+  --brand-navy: #0b1f4b;
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #101828;
+  --text-muted: #475467;
+  color-scheme: light dark;
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand-blue: #5b8cff;
+    --bg: #0b1220;
+    --surface: #111a2e;
+    --text: #e6e9f0;
+    --text-muted: #a3adc2;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.shell {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: var(--brand-navy);
+}
+
+@media (prefers-color-scheme: dark) {
+  .brand {
+    color: var(--text);
+  }
+}
+
+.kpi {
+  font-size: 2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  margin: 8px 0 16px;
+}
+
+.toggle {
+  display: inline-flex;
+  border: 1px solid var(--text-muted);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.toggle button {
+  border: 0;
+  padding: 8px 14px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.toggle button[aria-pressed='true'] {
+  background: var(--brand-blue);
+  color: #fff;
+}
+
+.toggle button:focus-visible {
+  outline: 3px solid var(--brand-yellow);
+  outline-offset: -3px;
+}
+
+.note {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
