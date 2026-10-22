@@ -468,3 +468,18 @@ Cloudoptics — MVP Product (product file)
 3. Chart library choice and its accessibility support (decision with engineering in Phase 11).
 4. ~~Cloudboosta brand guidelines availability.~~ Resolved: brand colours #2C68FC and #FAC812, with #0B1F4B navy as the complement (§2.2.1). Still open: logo and typography guidelines, and how strongly Cloudoptics shares the parent identity.
 5. Whether the Savings tracker should be a Kanban board or a funnel/list (test in round 1 usability).
+
+## 2.8 Design artefacts (22 Oct 2026)
+
+**Design system:** "Cloudoptics", with the brand palette, the currency toggle, the Cloudoptics logo mark and **Lucide** adopted as the icon set (ISC licence, 1.5px outline). https://claude.ai/artifact/5QwdnGsyDJjqS6EcteX1Jp
+
+**UI canvas:** "Cloudoptics MVP UI", 20 artboards. https://claude.ai/artifact/EtBQXbFBRhR3NWDmtWCNJL
+
+| Group | Artboards |
+|---|---|
+| Core screens | Overview (working currency toggle), Recommendations, Recommendation detail, Cost explorer, Budgets and alerts, Onboarding |
+| Costs and reports | Anomalies, AWS credits, Monthly report, Forecast and exchange rate (working scenario slider) |
+| Settings | Connections, Users and roles, Notifications, Preferences, Security and audit, Workspace |
+| Phone and brand | Phone overview, Phone recommendation, Phone budgets, Brand sheet |
+
+All screens use one fictional tenant ("Kola Pay", ₦1,540 = $1 illustrative) with figures that agree across screens. Both links are private until shared from the page's Share menu.
