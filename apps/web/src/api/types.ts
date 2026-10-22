@@ -83,8 +83,16 @@ export interface ConnectionCreate {
   createCurExport: boolean
 }
 
+export interface AuthConfig {
+  mode: 'dev' | 'oidc'
+  configured: boolean
+  issuer: string | null
+  clientId: string | null
+}
+
 export interface Api {
   readonly mode: 'http' | 'demo'
+  authConfig(): Promise<AuthConfig>
   isSignedIn(): boolean
   signIn(email: string, name?: string): Promise<void>
   signOut(): void

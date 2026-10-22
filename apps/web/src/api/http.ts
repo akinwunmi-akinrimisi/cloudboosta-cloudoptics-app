@@ -1,6 +1,6 @@
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
-import type { Api, Connection, ConnectionCreate, ConnectionSetup, Me, Tenant } from './types'
+import type { Api, AuthConfig, Connection, ConnectionCreate, ConnectionSetup, Me, Tenant } from './types'
 import { ApiError } from './types'
 
 const TOKEN_KEY = 'co.token'
@@ -13,6 +13,10 @@ export class HttpApi implements Api {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl.replace(/\/$/, '')
+  }
+
+  authConfig(): Promise<AuthConfig> {
+    return this.request('GET', '/v1/auth/config', undefined, false)
   }
 
   isSignedIn(): boolean {

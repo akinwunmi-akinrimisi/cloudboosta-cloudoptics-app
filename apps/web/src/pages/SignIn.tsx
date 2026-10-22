@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { FormEvent } from 'react'
 import { useState } from 'react'
 
@@ -15,6 +15,8 @@ export function SignIn() {
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const config = useQuery({ queryKey: ['auth-config'], queryFn: () => api.authConfig() })
+  const pending = config.data?.mode === 'oidc'
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -42,27 +44,43 @@ export function SignIn() {
           <p className="mt-1 text-sm text-secondary">
             See your AWS spend in dollars and your local currency, and what is safe to cut.
           </p>
-          <form className="mt-6 flex flex-col gap-4" onSubmit={submit}>
-            <Field
-              label="Work email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <Field
-              label="Your name (optional)"
-              autoComplete="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            {error && <Alert tone="error">{error}</Alert>}
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Signing in…' : 'Continue'}
-            </Button>
-          </form>
-          {api.mode === 'demo' ? (
+          {pending && (
+            <div className="mt-6">
+              <Alert tone="info">
+                Sign-in is being set up for this environment. Try the{' '}
+                <a
+                  className="font-medium text-accent underline"
+                  href="https://akinwunmi-akinrimisi.github.io/cloudboosta-cloudoptics-app/"
+                >
+                  public demo
+                </a>{' '}
+                in the meantime.
+              </Alert>
+            </div>
+          )}
+          {!pending && (
+            <form className="mt-6 flex flex-col gap-4" onSubmit={submit}>
+              <Field
+                label="Work email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Field
+                label="Your name (optional)"
+                autoComplete="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              {error && <Alert tone="error">{error}</Alert>}
+              <Button type="submit" disabled={busy}>
+                {busy ? 'Signing in…' : 'Continue'}
+              </Button>
+            </form>
+          )}
+          {pending ? null : api.mode === 'demo' ? (
             <p className="mt-4 text-xs text-muted">
               Demo: no password, no AWS calls. Everything you enter stays in this browser.
             </p>

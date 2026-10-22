@@ -151,3 +151,21 @@ async def test_oidc_without_configuration_is_a_clear_503(client: AsyncClient) ->
         settings.auth_mode = "dev"
     assert r.status_code == 503
     assert r.json()["title"] == "Sign-in is not configured yet"
+
+
+async def test_auth_config_tells_the_web_app_which_sign_in_to_show(client: AsyncClient) -> None:
+    from cloudoptics.platform.settings import get_settings
+
+    assert (await client.get("/v1/auth/config")).json() == {
+        "mode": "dev",
+        "configured": True,
+        "issuer": None,
+        "clientId": None,
+    }
+    settings = get_settings()
+    settings.auth_mode = "oidc"
+    try:
+        body = (await client.get("/v1/auth/config")).json()
+    finally:
+        settings.auth_mode = "dev"
+    assert body["mode"] == "oidc" and body["configured"] is False

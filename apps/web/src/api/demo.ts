@@ -2,6 +2,7 @@ import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
   Api,
+  AuthConfig,
   Connection,
   ConnectionCreate,
   ConnectionSetup,
@@ -83,6 +84,10 @@ export class DemoApi implements Api {
     const t = this.state.tenants.find((x) => x.id === tenantId)
     if (!t) throw new ApiError(404, 'Workspace not found')
     return t
+  }
+
+  async authConfig(): Promise<AuthConfig> {
+    return { mode: 'dev', configured: true, issuer: null, clientId: null }
   }
 
   isSignedIn(): boolean {
