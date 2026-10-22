@@ -1,0 +1,20 @@
+{
+  "name": "Cloudoptics",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "forwardPorts": [5173, 8000],
+  "portsAttributes": {
+    "5173": { "label": "Web", "onAutoForward": "openBrowser" },
+    "8000": { "label": "API", "visibility": "public" }
+  },
+  "postCreateCommand": "bash scripts/dev-setup.sh",
+  "postStartCommand": "bash scripts/dev-start.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["charliermarsh.ruff", "ms-python.python", "oxc.oxc-vscode"]
+    }
+  }
+}

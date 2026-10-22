@@ -15,3 +15,4 @@ Format: context, decision, consequences, alternatives. Source of truth for the d
 | [ADR-009](009-grafana-cloud-sentry-and-posthog-for-observability.md) | Grafana Cloud, Sentry and PostHog for observability | Proposed |
 | [ADR-010](010-exchange-rates-are-set-by-hand-by-cloudoptics-staff.md) | Exchange rates are set by hand by Cloudoptics staff | Decided 22 Oct 2026 |
 | [ADR-011](011-static-egress-ips-from-lon1.md) | Static egress IPs from LON1 | Open — Sprint 0 verification |
+| [ADR-012](012-github-first-hosting.md) | Host on GitHub first, move to DigitalOcean when proven | Decided 22 Oct 2026 |

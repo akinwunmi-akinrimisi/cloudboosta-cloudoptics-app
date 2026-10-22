@@ -1,14 +1,27 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import App from './App'
+import { api } from './api'
+import { ApiProvider } from './app/context'
+import { createAppRouter } from './app/router'
 import './styles.css'
+
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
+})
+const router = createAppRouter({ api, queryClient })
 
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing #root element')
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <ApiProvider api={api}>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ApiProvider>
   </StrictMode>,
 )

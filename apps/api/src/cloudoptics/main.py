@@ -1,17 +1,33 @@
-"""API process entry point.
-
-Sprint 0 skeleton: health endpoints and RFC 9457 problem+json errors. Routers for each
-module are added from Sprint 1 (WBS API-1).
-"""
+"""API process entry point."""
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from cloudoptics import __version__
+from cloudoptics.connectors import routes as connector_routes
+from cloudoptics.identity import dev as dev_routes
+from cloudoptics.identity import routes as identity_routes
 from cloudoptics.platform.settings import get_settings
 
 PROBLEM_JSON = "application/problem+json"
+
+
+def _problem(request: Request, status: int, title: str, **extra: object) -> JSONResponse:
+    """RFC 9457 problem details (docs/09 §3.4)."""
+    return JSONResponse(
+        status_code=status,
+        media_type=PROBLEM_JSON,
+        content={
+            "type": "about:blank",
+            "title": title,
+            "status": status,
+            "instance": request.url.path,
+            **extra,
+        },
+    )
 
 
 def create_app() -> FastAPI:
@@ -21,19 +37,27 @@ def create_app() -> FastAPI:
         version=__version__,
         docs_url="/docs" if settings.environment != "production" else None,
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
+        allow_headers=["authorization", "content-type"],
+    )
 
     @app.exception_handler(StarletteHTTPException)
-    async def problem_response(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        return JSONResponse(
-            status_code=exc.status_code,
-            media_type=PROBLEM_JSON,
-            content={
-                "type": "about:blank",
-                "title": str(exc.detail),
-                "status": exc.status_code,
-                "instance": request.url.path,
-            },
-        )
+    async def http_problem(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        response = _problem(request, exc.status_code, str(exc.detail))
+        for key, value in (exc.headers or {}).items():
+            response.headers[key] = value
+        return response
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_problem(request: Request, exc: RequestValidationError) -> JSONResponse:
+        errors = [
+            {"field": ".".join(str(p) for p in e["loc"][1:]), "message": e["msg"]}
+            for e in exc.errors()
+        ]
+        return _problem(request, 422, "Request validation failed", errors=errors)
 
     @app.get("/healthz", tags=["platform"])
     async def healthz() -> dict[str, str]:
@@ -42,9 +66,13 @@ def create_app() -> FastAPI:
 
     @app.get("/readyz", tags=["platform"])
     async def readyz() -> dict[str, str]:
-        """Readiness: dependency checks (database, queue) are added in Sprint 1."""
+        """Readiness: dependency checks (database, queue) are added with the deployment."""
         return {"status": "ready", "environment": settings.environment}
 
+    app.include_router(identity_routes.router)
+    app.include_router(connector_routes.router)
+    if settings.auth_mode == "dev":
+        app.include_router(dev_routes.router)
     return app
 
 
