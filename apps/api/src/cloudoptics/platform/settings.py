@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_url: str = ""
+    # WorkOS AuthKit (ADR-006). With a client ID, the JWKS URL and issuers are derived; the API
+    # key lets the API read a user's email when the access token does not carry it.
+    workos_client_id: str = ""
+    workos_api_key: str = ""
+    workos_api_base: str = "https://api.workos.com"
     dev_auth_secret: str = DEV_AUTH_SECRET
 
     # Base64 32-byte key for the local envelope encryptor. KMS replaces it in staging/prod.
@@ -53,6 +58,10 @@ class Settings(BaseSettings):
     # "inline" runs background jobs inside the request (local, tests, demo); staging and
     # production use the Procrastinate queue and a worker process.
     jobs_mode: Literal["inline", "queue"] = "inline"
+
+    @property
+    def oidc_configured(self) -> bool:
+        return bool(self.workos_client_id or self.oidc_jwks_url)
 
     @field_validator("database_url", "app_database_url")
     @classmethod

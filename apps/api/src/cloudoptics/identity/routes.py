@@ -140,6 +140,7 @@ UPDATE_TENANT = text(
 class AuthConfig(ApiModel):
     mode: Literal["dev", "oidc"]
     configured: bool
+    provider: Literal["workos", "oidc"] | None = None
     issuer: str | None = None
     client_id: str | None = None
 
@@ -150,9 +151,13 @@ async def auth_config() -> AuthConfig:
     settings = get_settings()
     if settings.auth_mode == "dev":
         return AuthConfig(mode="dev", configured=True)
+    if settings.workos_client_id:
+        return AuthConfig(
+            mode="oidc", configured=True, provider="workos", client_id=settings.workos_client_id
+        )
     return AuthConfig(
         mode="oidc",
-        configured=bool(settings.oidc_jwks_url),
+        configured=settings.oidc_configured,
         issuer=settings.oidc_issuer or None,
         client_id=settings.oidc_audience or None,
     )

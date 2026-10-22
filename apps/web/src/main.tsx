@@ -4,6 +4,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { api } from './api'
+import { AuthGate } from './app/AuthGate'
 import { ApiProvider } from './app/context'
 import { createAppRouter } from './app/router'
 import './styles.css'
@@ -20,7 +21,9 @@ createRoot(root).render(
   <StrictMode>
     <ApiProvider api={api}>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <AuthGate api={api}>
+          <RouterProvider router={router} />
+        </AuthGate>
       </QueryClientProvider>
     </ApiProvider>
   </StrictMode>,

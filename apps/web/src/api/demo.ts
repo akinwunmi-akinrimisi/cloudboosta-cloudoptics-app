@@ -87,7 +87,7 @@ export class DemoApi implements Api {
   }
 
   async authConfig(): Promise<AuthConfig> {
-    return { mode: 'dev', configured: true, issuer: null, clientId: null }
+    return { mode: 'dev', configured: true, provider: null, issuer: null, clientId: null }
   }
 
   isSignedIn(): boolean {

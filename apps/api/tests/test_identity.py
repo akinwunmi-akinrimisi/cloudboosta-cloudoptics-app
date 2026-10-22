@@ -159,6 +159,7 @@ async def test_auth_config_tells_the_web_app_which_sign_in_to_show(client: Async
     assert (await client.get("/v1/auth/config")).json() == {
         "mode": "dev",
         "configured": True,
+        "provider": None,
         "issuer": None,
         "clientId": None,
     }

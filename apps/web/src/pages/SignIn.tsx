@@ -16,7 +16,8 @@ export function SignIn() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const config = useQuery({ queryKey: ['auth-config'], queryFn: () => api.authConfig() })
-  const pending = config.data?.mode === 'oidc'
+  const pending = config.data?.mode === 'oidc' && !config.data.configured
+  const external = config.data?.mode === 'oidc' && config.data.configured
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -58,7 +59,25 @@ export function SignIn() {
               </Alert>
             </div>
           )}
-          {!pending && (
+          {external && (
+            <div className="mt-6 flex flex-col gap-3">
+              {error && <Alert tone="error">{error}</Alert>}
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true)
+                  api.signIn('').catch(() => {
+                    setError('Sign-in could not start. Try again.')
+                    setBusy(false)
+                  })
+                }}
+              >
+                {busy ? 'Opening sign-in…' : 'Continue to sign in'}
+              </Button>
+              <p className="text-xs text-muted">Email, Google or single sign-on, with multi-factor authentication.</p>
+            </div>
+          )}
+          {!pending && !external && (
             <form className="mt-6 flex flex-col gap-4" onSubmit={submit}>
               <Field
                 label="Work email"
@@ -80,7 +99,7 @@ export function SignIn() {
               </Button>
             </form>
           )}
-          {pending ? null : api.mode === 'demo' ? (
+          {pending || external ? null : api.mode === 'demo' ? (
             <p className="mt-4 text-xs text-muted">
               Demo: no password, no AWS calls. Everything you enter stays in this browser.
             </p>

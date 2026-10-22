@@ -86,8 +86,17 @@ export interface ConnectionCreate {
 export interface AuthConfig {
   mode: 'dev' | 'oidc'
   configured: boolean
+  provider: 'workos' | 'oidc' | null
   issuer: string | null
   clientId: string | null
+}
+
+/** An external identity provider session (WorkOS AuthKit) the HTTP client can use. */
+export interface AuthProvider {
+  signedIn: boolean
+  getToken(): Promise<string>
+  signIn(): Promise<void>
+  signOut(): void
 }
 
 export interface Api {

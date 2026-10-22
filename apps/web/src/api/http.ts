@@ -1,15 +1,25 @@
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
-import type { Api, AuthConfig, Connection, ConnectionCreate, ConnectionSetup, Me, Tenant } from './types'
+import type {
+  Api,
+  AuthConfig,
+  AuthProvider,
+  Connection,
+  ConnectionCreate,
+  ConnectionSetup,
+  Me,
+  Tenant,
+} from './types'
 import { ApiError } from './types'
 
 const TOKEN_KEY = 'co.token'
 
-// Talks to the Cloudoptics API. Sign-in uses the dev token endpoint for now; the OIDC
-// provider (ADR-006) replaces it after the Sprint 0 spike, behind the same interface.
+// Talks to the Cloudoptics API. Signs in through WorkOS AuthKit when the API says so
+// (/v1/auth/config, ADR-006); otherwise uses the development token endpoint.
 export class HttpApi implements Api {
   readonly mode = 'http' as const
   private readonly baseUrl: string
+  private provider: AuthProvider | null = null
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl.replace(/\/$/, '')
@@ -19,17 +29,24 @@ export class HttpApi implements Api {
     return this.request('GET', '/v1/auth/config', undefined, false)
   }
 
+  /** Use an identity provider session for tokens, sign-in and sign-out. */
+  attachProvider(provider: AuthProvider | null): void {
+    this.provider = provider
+  }
+
   isSignedIn(): boolean {
-    return read('session', TOKEN_KEY) !== null
+    return this.provider ? this.provider.signedIn : read('session', TOKEN_KEY) !== null
   }
 
   async signIn(email: string, name?: string): Promise<void> {
+    if (this.provider) return this.provider.signIn()
     const res = await this.request<{ accessToken: string }>('POST', '/v1/dev/token', { email, name }, false)
     write('session', TOKEN_KEY, res.accessToken)
   }
 
   signOut(): void {
     write('session', TOKEN_KEY, null)
+    this.provider?.signOut()
   }
 
   me(): Promise<Me> {
@@ -76,8 +93,8 @@ export class HttpApi implements Api {
   private async request<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
     const headers: Record<string, string> = { accept: 'application/json' }
     if (body !== undefined) headers['content-type'] = 'application/json'
-    const token = read('session', TOKEN_KEY)
-    if (auth && token) headers.authorization = `Bearer ${token}`
+    const token = auth ? (this.provider ? await this.provider.getToken() : read('session', TOKEN_KEY)) : null
+    if (token) headers.authorization = `Bearer ${token}`
     let res: Response
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
@@ -88,7 +105,7 @@ export class HttpApi implements Api {
     } catch {
       throw new ApiError(0, 'Cannot reach the Cloudoptics API. Check your connection and try again.')
     }
-    if (res.status === 401) this.signOut()
+    if (res.status === 401 && !this.provider) this.signOut()
     if (!res.ok) {
       const problem = (await res.json().catch(() => ({}))) as {
         title?: string
