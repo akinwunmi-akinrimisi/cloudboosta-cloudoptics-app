@@ -73,9 +73,13 @@ async def test_email_in_the_token_skips_the_lookup() -> None:
 
 @pytest.mark.parametrize(
     "issuer",
-    ["https://api.workos.com", f"https://api.workos.com/user_management/{CLIENT_ID}"],
+    [
+        "https://api.workos.com",
+        f"https://api.workos.com/user_management/{CLIENT_ID}",
+        "https://appreciative-beauty-51.authkit.app",
+    ],
 )
-async def test_both_issuer_forms_are_accepted(issuer: str) -> None:
+async def test_all_workos_issuer_forms_are_accepted(issuer: str) -> None:
     assert (await verifier().verify(token(iss=issuer, email="a@b.co"))).email == "a@b.co"
 
 
@@ -83,6 +87,8 @@ async def test_both_issuer_forms_are_accepted(issuer: str) -> None:
     ("override", "key"),
     [
         ({"iss": "https://evil.example"}, KEY),
+        ({"iss": "https://x.authkit.app.evil.example"}, KEY),
+        ({"iss": "http://x.authkit.app"}, KEY),
         ({"client_id": "client_someone_else"}, KEY),
         ({"exp": int(time.time()) - 10}, KEY),
         ({}, OTHER_KEY),

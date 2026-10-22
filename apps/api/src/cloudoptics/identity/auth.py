@@ -7,12 +7,16 @@ runs locally and in Codespaces without a provider; settings refuse it in staging
 WorkOS AuthKit access tokens are RS256 JWTs signed with keys published at
 ``/sso/jwks/<client_id>``. They carry ``sub`` and ``client_id`` but not the email by
 default, so the verifier reads the email from the WorkOS API (cached per user) unless a JWT
-template adds it. The issuer appears as both ``https://api.workos.com`` and
-``https://api.workos.com/user_management/<client_id>``; both are accepted.
+template adds it. The issuer appears as ``https://api.workos.com``,
+``https://api.workos.com/user_management/<client_id>`` or, for tokens issued through the
+hosted AuthKit domain, ``https://<name>.authkit.app``; all are accepted. The AuthKit
+domain publishes the same environment keys, so the signature check is unchanged.
 """
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -26,6 +30,9 @@ from starlette.concurrency import run_in_threadpool
 from cloudoptics.platform.settings import Settings, get_settings
 
 DEV_ISSUER = "cloudoptics-dev"
+AUTHKIT_ISSUER = re.compile(r"https://[a-z0-9-]+\.authkit\.app")
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -120,7 +127,8 @@ class WorkOSVerifier:
             algorithms=["RS256"],
             options={"require": ["exp", "sub", "iss"], "verify_aud": False},
         )
-        if payload["iss"] not in self._issuers:
+        iss = payload["iss"]
+        if iss not in self._issuers and not AUTHKIT_ISSUER.fullmatch(iss):
             raise jwt.InvalidIssuerError("unexpected issuer")
         if payload.get("client_id", self.client_id) != self.client_id:
             raise jwt.InvalidTokenError("token was issued to another client")
@@ -184,6 +192,7 @@ async def bearer_claims(request: Request) -> Claims:
     try:
         return await get_verifier().verify(token)
     except jwt.PyJWTError as exc:
+        log.info("rejected bearer token: %s", exc)
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Invalid or expired token",
