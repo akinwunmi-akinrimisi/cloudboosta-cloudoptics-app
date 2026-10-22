@@ -151,6 +151,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - No static egress option → egress proxy droplets.
 
 ### Sprint 1 (Weeks 2–3) — Platform & connection skeleton
+- **Status (22 Oct 2026):** built and tested: migrations with row-level security, auth (OIDC + dev), workspaces, members, audit chain (API-1/2, ADM-2/3); CloudFormation v1, connection API, validation with specific errors, Procrastinate job (CC-3/4/6, OPS-11); web shell, tokens and onboarding steps 1–4 (FE-1/3/4). Hosting follows ADR-012 (GitHub first: Pages demo, GHCR image, Codespaces); Terraform/Helm/Argo CD to DigitalOcean (OPS-2/3/4) and the broker account (CC-2) wait for the Sprint 0 spikes.
 - **Goals:** a deployable platform; users can sign up and create a workspace; the AWS role can be deployed and validated.
 - **Deliverables:**
   - Terraform for staging (OPS-2), Helm + Argo CD to staging (OPS-3), secrets (OPS-4).

@@ -26,3 +26,4 @@ dist/
 
 # Generated fixtures
 .data/
+apps/web/.env.local

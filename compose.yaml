@@ -1,0 +1,36 @@
+# Local full stack: PostgreSQL, API, worker and migrations. The web app runs with
+# `pnpm --filter @cloudoptics/web dev` (see README). Credentials here are local-only.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cloudoptics
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    command: >
+      sh -c "alembic -c apps/api/alembic.ini upgrade head &&
+             python -c \"import psycopg; c = psycopg.connect('postgresql://postgres:postgres@postgres/cloudoptics', autocommit=True); c.execute(\\\"ALTER ROLE cloudoptics_app LOGIN PASSWORD 'app'\\\")\""
+    environment: &env
+      CLOUDOPTICS_DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/cloudoptics
+      CLOUDOPTICS_APP_DATABASE_URL: postgresql+psycopg://cloudoptics_app:app@postgres:5432/cloudoptics
+      CLOUDOPTICS_CORS_ORIGINS: '${CLOUDOPTICS_CORS_ORIGINS:-["http://localhost:5173"]}'
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    environment: *env
+    ports: ["8000:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+volumes:
+  pgdata:
