@@ -445,7 +445,10 @@ CREATE TABLE recommendation (
   id               uuid PRIMARY KEY,
   tenant_id        uuid NOT NULL,
   fingerprint      bytea NOT NULL,                      -- type+resource+target
-  type             text NOT NULL,                       -- R1_unattached_ebs … R8_savings_plan
+  type             text NOT NULL,                       -- R1_unattached_ebs … R8_savings_plan, R6b_extended_support, R10_idle_nat
+  rule_id          text NOT NULL, rule_version int NOT NULL,
+  rule_config      jsonb NOT NULL,                      -- thresholds + lookback in effect when generated (reproducible)
+  generation_id    bigint NOT NULL,                     -- engine run; PATCH with an older generation is rejected
   resource_ref     uuid REFERENCES resource(id),
   account_id       char(12), region_id text,
   title            text NOT NULL,
@@ -454,7 +457,10 @@ CREATE TABLE recommendation (
   cost_after_usd_month numeric(18,6) NOT NULL,
   savings_usd_month    numeric(18,6) GENERATED ALWAYS AS (cost_now_usd_month - cost_after_usd_month) STORED,
   savings_basis    text NOT NULL,                       -- effective_rate|list_price
-  effort           text NOT NULL CHECK (effort IN ('S','M','L')),
+  effort           text NOT NULL CHECK (effort IN ('S','M','L')),   -- S <1 day, M 3–5 days, L 1+ week
+  reversibility    text NOT NULL CHECK (reversibility IN ('reversible','with_snapshot','irreversible')),
+  restart_required boolean NOT NULL DEFAULT false,
+  commitment_note  text,                                -- e.g. "covered by a Savings Plan: real saving lower"
   risk_score       smallint NOT NULL,                   -- 0–100
   risk_level       text NOT NULL,                       -- low|medium|high
   risk_factors     jsonb NOT NULL,                      -- [{code, points, text}]
@@ -473,6 +479,18 @@ CREATE TABLE recommendation (
   UNIQUE (tenant_id, fingerprint)
 );
 CREATE INDEX ON recommendation (tenant_id, status, priority_score DESC);
+
+-- Per-tenant rule settings: type catalogue, thresholds, exclusions (PRD FR-REC-08)
+CREATE TABLE recommendation_rule_setting (
+  tenant_id    uuid NOT NULL,
+  rule_id      text NOT NULL,
+  enabled      boolean NOT NULL DEFAULT true,
+  params       jsonb NOT NULL DEFAULT '{}',             -- validated against the rule's typed parameter schema (min/max/default)
+  exclusions   text[] NOT NULL DEFAULT '{}',            -- tag grammar: Key, Key==V, Key!=V, Key=~/re/, Key!~/re/
+  updated_by   uuid REFERENCES app_user(id),
+  updated_at   timestamptz NOT NULL DEFAULT now(),      -- history kept in audit_log; applies on the next engine run
+  PRIMARY KEY (tenant_id, rule_id)
+);
 
 CREATE TABLE recommendation_event (
   id                uuid PRIMARY KEY,

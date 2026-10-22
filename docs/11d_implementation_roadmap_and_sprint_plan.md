@@ -62,7 +62,9 @@ Story IDs (`CC-x`, `IN-x`, …) are backlog keys; PRD references in brackets. Es
 | AN-14 | Credits runway | S | FR-ANA-11 |
 | AN-15 | Fix snippet templates (console/CLI/Terraform) + CI validation | L | US-4.3, FR-REC-10 |
 | AN-16 | Lifecycle state machine + events + verification service + realised savings | L | US-5.1/5.2 |
-| AN-17 | Tenant rule settings (thresholds, patterns, ignore tag) | M | FR-REC-08 |
+| AN-17 | Tenant rule settings (type catalogue, thresholds, exclusion grammar, patterns, ignore tag) | M | FR-REC-08 |
+| AN-18 | R6b Extended Support charges (CUR-only) | S | FR-ANA-06b |
+| AN-19 | R10 idle NAT gateways (CUR-only) | S | FR-ANA-14 |
 
 ### Epic E-API: API Layer
 | ID | Story / task | Size |
@@ -208,7 +210,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
 ### Sprint 5 (Weeks 10–11) — Plan it: budgets, anomalies, FX, credits
 - **Goals:** finance persona value and proactive alerts.
 - **Deliverables:**
-  - R7 scheduling, R8 SP advisory (AN-9, AN-10).
+  - R7 scheduling, R8 SP advisory (AN-9, AN-10); R6b Extended Support and R10 idle NAT (AN-18, AN-19).
   - Anomaly detection (AN-11); forecast + FX scenario (AN-12); what-changed (AN-13); credits runway (AN-14).
   - Budgets & alerts (API-6, FE-9); notification preferences + de-dup + weekly digest (ADM-8).
   - Overview complete (FE-5); Commitments page (FE-8); Anomalies + Credits views (FE-6).
@@ -311,7 +313,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
 - So the plan is **about 12% over capacity with no buffer**. This is typical for first estimates, but must be resolved before S1.
 
 **Decision (22 Oct 2026): option 1, add one delivery sprint.** The other options are kept for reference.
-1. **Add one delivery sprint (S7, Weeks 14–15) before the beta.** ✅ *Chosen.* This gives ≈ 60 extra person-days, which covers the gap (now ≈ 412 person-days with ADM-10) plus a small buffer. Beta starts in Week 16. Increment 1 alpha stays at the end of S3.
+1. **Add one delivery sprint (S7, Weeks 14–15) before the beta.** ✅ *Chosen.* This gives ≈ 60 extra person-days, which covers the gap (now ≈ 416 person-days with ADM-10, AN-18 and AN-19; the threshold refinements from doc 12 add R1b and RDS gp3 to AN-3/AN-5 and are absorbed by the S7 buffer) plus a small buffer. Beta starts in Week 16. Increment 1 alpha stays at the end of S3.
 2. **Fallback, if S7 is not enough: keep 6 sprints and move ≈ 50 person-days to S7–S8 (after the beta starts).** Candidates:
    - R6 previous-gen/Graviton (4)
    - R7 non-prod scheduling (4)

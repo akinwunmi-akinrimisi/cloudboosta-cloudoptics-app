@@ -204,7 +204,7 @@ These are not differentiators, but a buyer will expect them. Each maps to an exi
 No competitor scores risk on cost recommendations and explains it. We ship every recommendation with:
 
 - **Evidence**: metric, statistic (p95, max), lookback days, observed value vs threshold, and a small chart. Flexera has this in a hidden details bag; Vantage and CloudZero show none.
-- **Risk score (1–5) with the driving reason** in one line: "Memory unknown (no CloudWatch agent): risk raised one level", "Tagged env=prod", "Detached 3 days ago", "Peaks at 92% CPU on the 25th (payroll run)".
+- **Risk score (0–100, shown as Low / Med / High) with the driving reason** in one line: "Memory unknown (no CloudWatch agent): risk raised one level", "Tagged env=prod", "Detached 3 days ago", "Peaks at 92% CPU on the 25th (payroll run)".
 - **Confidence** (Low / Medium / High) from lookback length and data completeness. Detection uses AWS-aligned thresholds; *high* confidence only when the longer window is met (e.g. EBS unattached ≥ 32 d).
 - **Effort** (CloudZero's scale: < 1 day / 3–5 days / 1+ week) and **reversibility** (reversible / reversible with snapshot / irreversible).
 - **Guided fix**: console steps, CLI, Terraform/CloudFormation snippet, **rollback steps**, all generated for the specific resource. No write access, no VCS connection, no in-account Lambda.
@@ -260,11 +260,11 @@ Why it compounds: every executed fix adds to a per-customer, per-rule history of
 
 ## 6. Concrete changes to our build
 
-These are proposals for the PRD (06), data model (09) and component spec (11b). They need PM sign-off before they replace the current PRD text.
+**Approved 22 Oct 2026** and applied to the PRD (06: FR-ANA-01 to FR-ANA-14, FR-REC-01, FR-REC-08, FR-CON-13/14), the data model (09: `recommendation` columns, `recommendation_rule_setting`) and the WBS (11d: AN-18, AN-19).
 
 ### 6.1 Recommendation thresholds (R1–R8)
 
-| Rule | Current PRD | Proposed change | Source |
+| Rule | Previous PRD | Approved change (now in the PRD) | Source |
 |---|---|---|---|
 | **R1 Unattached EBS** (FR-ANA-01) | `available` ≥ 7 d | Keep ≥ 7 d as candidate; **High confidence at ≥ 32 d**. Use our own daily state snapshots for detach time (CloudTrail lookup only covers 90 d). Snapshot-before-delete on by default. | Trusted Advisor, Compute Optimizer, Flexera |
 | **R1b Idle attached EBS** | — | **NEW**: non-root volume with < 1 read+write op/day over 14 d (extend to 32). Medium risk (may be cold DR storage). | Compute Optimizer |
@@ -279,42 +279,34 @@ These are proposals for the PRD (06), data model (09) and component spec (11b). 
 | **R7 Non-prod schedule** (FR-ANA-07) | Weekdays 07:00–20:00 local | Keep. Add Flexera-style schedule tag grammar (`07:00-20:00;MO-FR;Africa/Lagos`) so the guided fix is a single tag plus EventBridge Scheduler. RDS: note 7-day auto-start. | Flexera, nOps |
 | **R8 SP advisory** (FR-ANA-10) | AWS recommendation, 30-day lookback, conservative = × 0.8 | Add our own simulation: **target = 60–80% of the trailing 60-day hourly p10–p20 baseline**, computed **after** R4/R5/R7 savings are netted out (no double counting). Show the SP/RI × term × payment matrix with break-even months, a ladder suggestion (20–35% first step, then ~10% monthly), expiry alerts at 60/30/15 days, and remind about the 7-day return window. Default 1-year No Upfront; FX stress test at 20% and 40%. | DoiT PS4C, Flexera, ProsperOps, COH |
 
-### 6.2 New recommendation types (post-Increment 2, ranked by value ÷ effort)
+### 6.2 New recommendation types
 
-| ID | Type | Rule | Why |
-|---|---|---|---|
-| R9 | **Idle NAT Gateway** | `NatGateway-Hours` > 0 and `NatGateway-Bytes` = 0 over 30 d | Billing-only, trivial, NAT is a top bill line for African startups |
-| R9b | **NAT → VPC gateway endpoint** | NAT bytes to S3/DynamoDB above a floor | Often the single largest quick win |
-| R10 | **CloudWatch Logs retention** | "Never expire" log groups with stored bytes above a floor | Flexera has no AWS template for it |
-| R11 | **S3 incomplete multipart uploads / no lifecycle** | Abort-lifecycle rule as the fix; savings from per-bucket `TimedStorage-ByteHrs` | Low risk |
-| R12 | **Stopped EC2 still paying for EBS and IPv4** | Stopped > 30 d | Common leftover |
-| R13 | **Region trade-off (af-south-1)** | Cost and latency comparison, residency notes | Unique to us |
+R9 is already reserved for region/placement analysis (doc 05, PRD Q9), so the new types start at R10. **R6b and R10 move into Increment 2** (both are billing-only and small); the rest are v1 backlog.
+
+| ID | Type | Rule | When | Why |
+|---|---|---|---|---|
+| R6b | **Extended Support charges** (RDS, EKS) | CUR Extended Support line items | **Increment 2** | Billing-only, often a large surprise line |
+| R10 | **Idle NAT Gateway** | `NatGateway-Hours` > 0 and `NatGateway-Bytes` = 0 over 30 d | **Increment 2** | Billing-only, trivial, NAT is a top bill line for African startups |
+| R10b | **NAT → VPC gateway endpoint** | NAT bytes to S3/DynamoDB above a floor | v1 | Often the single largest quick win |
+| R11 | **CloudWatch Logs retention** | "Never expire" log groups with stored bytes above a floor | v1 | Flexera has no AWS template for it |
+| R12 | **S3 incomplete multipart uploads / no lifecycle** | Abort-lifecycle rule as the fix; savings from per-bucket `TimedStorage-ByteHrs` | v1 | Low risk |
+| R13 | **Stopped EC2 still paying for EBS and IPv4** | Stopped > 30 d | v1 | Common leftover |
+| R9 | **Region / placement trade-off (af-south-1)** | Cost and latency comparison, residency notes | v1 (already planned) | Unique to us |
 
 ### 6.3 Data model changes (doc 09)
 
-Add to the `recommendation` table:
+Our `recommendation` table already had what competitors lack: a 0–100 risk score with listed factors, confidence with notes, evidence, a fix with rollback, effort, and a lifecycle with `verified`. The teardown added these (now in doc 09):
 
-| Column | Type | Purpose | From |
-|---|---|---|---|
-| `rule_id`, `rule_version` | text, int | Which rule and version produced it | Flexera |
-| `rule_config_snapshot` | jsonb | Thresholds and lookback in effect at generation time (reproducibility, tuning later) | Flexera `ruleConfiguration` |
-| `generation_id` | bigint | Reject stale status writes after a refresh | Flexera |
-| `evidence` | jsonb | `{metric, statistic, lookback_days, observed, threshold, series_ref}` | OSS notes, our moat |
-| `risk_score` (1–5), `risk_reasons` (text[]) | smallint, text[] | Score plus the plain-language drivers | **Our addition** |
-| `confidence` (low/med/high) | enum | From lookback length and data completeness | **Our addition** |
-| `effort` (lt_1d / d3_5 / gt_1w) | enum | CloudZero's scale | CloudZero, DoiT |
-| `reversibility` (reversible / with_snapshot / irreversible), `restart_required` | enum, bool | Drives typed confirmation in the UI | Cost Optimization Hub |
-| `savings_method` (billing / list_ratio / aws_api) | enum | How the number was computed | OSS notes |
-| `monthly_savings_usd`, `monthly_savings_local`, `fx_rate_id` | numeric, numeric, fk | Dual currency with the exact rate used | Our FX model |
-| `commitment_interaction` | text | "Covered by SP: real saving lower" | COH |
-| `status` add `on_hold`, `verified` | enum | CloudZero states plus our verification | CloudZero, our moat |
-| `snooze_until`, `status_reason` (required for dismiss/snooze) | date, text | Enforced reasons | Flexera |
+| Column / table | Purpose | From |
+|---|---|---|
+| `rule_id`, `rule_version`, `rule_config` | Which rule and thresholds produced the recommendation (reproducible, needed for tuning) | Flexera `ruleConfiguration` |
+| `generation_id` | Reject stale status writes after a refresh | Flexera |
+| `reversibility` (reversible / with_snapshot / irreversible), `restart_required` | Drives typed confirmation for irreversible fixes (EIP release, snapshot delete) | Cost Optimization Hub |
+| `commitment_note` | "Covered by a Savings Plan: real saving lower" | Cost Optimization Hub |
+| Effort scale defined: S < 1 day, M 3–5 days, L 1+ week | Shared meaning for users | CloudZero |
+| `recommendation_rule_setting` (enabled, typed params, exclusion grammar) | Type catalogue, tuning and exclusions per tenant | CloudZero, Flexera |
 
-Identity rule: `rec_id` = hash of (tenant, rule_id, resource ARN); it must not change when the savings figure changes (Flexera's `hash_exclude` pattern).
-
-Add to the cost fact table: `RateSource` (manual / feed_estimated) and `RateToPresentationCurrency`, alongside the FOCUS cost columns, so reconciliation against AWS Cost Explorer is possible (Flexera's reconciliation cards).
-
-Add an `exclusion` table with Flexera's tag grammar (`Key`, `Key==V`, `Key!=V`, `Key=~/re/`, `Key!~/re/`) at org, account and rule level.
+Identity rule: the `fingerprint` (tenant + type + resource + target config) must not change when the savings figure changes (Flexera's `hash_exclude` pattern). Local-currency savings stay computed at query time from `fx_rate`, so they always use the admin-set rate.
 
 ### 6.4 IAM (doc 10 / connector spec)
 
@@ -346,9 +338,10 @@ Add an `exclusion` table with Flexera's tag grammar (`Key`, `Key==V`, `Key!=V`, 
 
 ---
 
-## 8. Open items
+## 8. Decisions and open items
 
-1. PM sign-off on §6.1 threshold changes before editing FR-ANA-01 to FR-ANA-10.
-2. Decide whether R6b (Extended Support) and R9 (idle NAT) move into Increment 2; both are billing-only and cheap.
-3. Verify the current EBS modification cooldown and Compute Optimizer automation scope in af-south-1 (flagged in research as unverified).
-4. Confirm the competitor price points quoted from third-party sources before using them in sales material.
+Decided 22 Oct 2026: §6.1 thresholds approved and applied to the PRD; R6b and R10 moved into Increment 2 (WBS AN-18, AN-19).
+
+Still open:
+1. Verify the current EBS modification cooldown and Compute Optimizer automation scope in af-south-1 (flagged in research as unverified).
+2. Confirm the competitor price points quoted from third-party sources before using them in sales material (PRD Q11).
