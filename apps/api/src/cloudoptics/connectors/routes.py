@@ -17,7 +17,7 @@ from cloudoptics.audit import log as audit
 from cloudoptics.connectors import aws
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.service import (
-    CONNECTION_COLUMNS,
+    LIST_CONNECTIONS,
     ConnectionNotFoundError,
     get_connection,
     run_validation,
@@ -157,9 +157,7 @@ async def create_connection(
 
 @router.get("", response_model=list[Connection])
 async def list_connections(access: ViewerAccess, session: Session) -> list[Connection]:
-    rows = await session.execute(
-        text(f"SELECT {CONNECTION_COLUMNS} FROM cloud_connection ORDER BY created_at")  # noqa: S608
-    )
+    rows = await session.execute(LIST_CONNECTIONS)
     return [_to_model(r) for r in rows]
 
 

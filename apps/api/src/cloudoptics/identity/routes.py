@@ -118,14 +118,21 @@ class AuditItem(ApiModel):
     occurred_at: datetime
 
 
-TENANT_COLUMNS = (
-    "id, name, country_code, display_currency, time_zone, mfa_required, status, created_at"
+# Literal statements only; request values are always bound parameters.
+SELECT_TENANT = text(
+    "SELECT id, name, country_code, display_currency, time_zone, mfa_required, status, "
+    "created_at FROM tenant WHERE id = :t"
 )
-# Built once from constants; request values are always bound parameters.
-SELECT_TENANT = f"SELECT {TENANT_COLUMNS} FROM tenant WHERE id = :t"  # noqa: S608
-INSERT_TENANT = (
-    "INSERT INTO tenant (id, name, country_code, display_currency, time_zone) "  # noqa: S608
-    f"VALUES (:id, :name, :cc, :ccy, :tz) RETURNING {TENANT_COLUMNS}"
+INSERT_TENANT = text(
+    "INSERT INTO tenant (id, name, country_code, display_currency, time_zone) "
+    "VALUES (:id, :name, :cc, :ccy, :tz) RETURNING id, name, country_code, display_currency, "
+    "time_zone, mfa_required, status, created_at"
+)
+UPDATE_TENANT = text(
+    "UPDATE tenant SET name = COALESCE(:name, name), "
+    "display_currency = COALESCE(:display_currency, display_currency), "
+    "time_zone = COALESCE(:time_zone, time_zone), "
+    "mfa_required = COALESCE(:mfa_required, mfa_required) WHERE id = :t"
 )
 
 
@@ -175,7 +182,7 @@ async def create_tenant(
     await scope(session, user_id=user.id, tenant_id=tenant_id)
     row = (
         await session.execute(
-            text(INSERT_TENANT),
+            INSERT_TENANT,
             {
                 "id": tenant_id,
                 "name": body.name.strip(),
@@ -203,7 +210,7 @@ async def create_tenant(
 
 @router.get("/tenants/{tenant_id}", response_model=Tenant, response_model_by_alias=True)
 async def get_tenant(access: ViewerAccess, session: Session) -> Tenant:
-    row = (await session.execute(text(SELECT_TENANT), {"t": access.tenant_id})).one()
+    row = (await session.execute(SELECT_TENANT, {"t": access.tenant_id})).one()
     return Tenant(**row._mapping, role=access.role)
 
 
@@ -212,12 +219,11 @@ async def patch_tenant(
     body: TenantPatch, request: Request, access: AdminAccess, session: Session
 ) -> Tenant:
     changes = body.model_dump(exclude_none=True)
-    before = (await session.execute(text(SELECT_TENANT), {"t": access.tenant_id})).one()
+    before = (await session.execute(SELECT_TENANT, {"t": access.tenant_id})).one()
     if changes:
-        assignments = ", ".join(f"{k} = :{k}" for k in changes)  # keys come from the model
         await session.execute(
-            text(f"UPDATE tenant SET {assignments} WHERE id = :t"),  # noqa: S608
-            {**changes, "t": access.tenant_id},
+            UPDATE_TENANT,
+            {**body.model_dump(include=set(TenantPatch.model_fields)), "t": access.tenant_id},
         )
         await audit.record(
             session,

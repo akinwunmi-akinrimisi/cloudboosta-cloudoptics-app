@@ -19,10 +19,18 @@ from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.validation import ValidationResult, validate_billing_access
 from cloudoptics.platform.ids import uuid7
 
-CONNECTION_COLUMNS = (
-    "id, tenant_id, aws_account_id, account_type, role_arn, stack_name, create_cur_export, "
-    "cur_bucket, cur_prefix, cur_region, cur_export_arn, status, permission_checks, "
-    "last_error, last_validated_at, created_at"
+# Literal statements only; request values are always bound parameters.
+SELECT_CONNECTION = text(
+    "SELECT id, tenant_id, aws_account_id, account_type, role_arn, stack_name, "
+    "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
+    "permission_checks, last_error, last_validated_at, created_at, external_id_enc "
+    "FROM cloud_connection WHERE id = :c"
+)
+LIST_CONNECTIONS = text(
+    "SELECT id, tenant_id, aws_account_id, account_type, role_arn, stack_name, "
+    "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
+    "permission_checks, last_error, last_validated_at, created_at "
+    "FROM cloud_connection ORDER BY created_at"
 )
 
 _session_factory: SessionFactory | None = None
@@ -49,10 +57,7 @@ class ConnectionNotFoundError(Exception):
 async def get_connection(session: AsyncSession, connection_id: uuid.UUID) -> Any:
     row = (
         await session.execute(
-            text(
-                f"SELECT {CONNECTION_COLUMNS}, external_id_enc FROM cloud_connection "  # noqa: S608
-                "WHERE id = :c"
-            ),
+            SELECT_CONNECTION,
             {"c": connection_id},
         )
     ).one_or_none()

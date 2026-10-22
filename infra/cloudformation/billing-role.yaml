@@ -46,6 +46,9 @@ Conditions:
   HasAnyBucket: !Or [!Condition CreateExport, !Condition HasExistingBucket]
 
 Resources:
+  # SSE-S3 by design: a customer-managed KMS key would add cost and a key policy covering
+  # the export service and our role; the bucket is private and TLS-only.
+  # trivy:ignore:AVD-AWS-0132
   CurBucket:
     Type: AWS::S3::Bucket
     Condition: CreateExport
