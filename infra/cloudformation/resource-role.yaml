@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Cloudoptics stage 2 (optional, per account): read-only access to resource metadata and
+  metrics, used for recommendations. Deploy in each account directly or with a StackSet.
+  No write or data-plane permissions (no S3 object reads, no secrets). PRD FR-CON-03/13.
+
+Metadata:
+  cloudoptics:
+    templateVersion: "1.0.0"
+
+Parameters:
+  ExternalId:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    MaxLength: 128
+    AllowedPattern: "[\\w+=,.@:/-]+"
+  CloudopticsPrincipalArn:
+    Type: String
+    AllowedPattern: "arn:aws:iam::[0-9]{12}:role/[\\w+=,.@-]+"
+
+Resources:
+  ResourceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudopticsResourceReadOnly
+      Description: Read-only resource metadata and metrics for Cloudoptics. No write actions.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Ref CloudopticsPrincipalArn }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { sts:ExternalId: !Ref ExternalId }
+      Policies:
+        - PolicyName: cloudoptics-resource-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Inventory
+                Effect: Allow
+                Action:
+                  - ec2:Describe*
+                  - rds:Describe*
+                  - rds:ListTagsForResource
+                  - elasticloadbalancing:Describe*
+                  - autoscaling:Describe*
+                  - lambda:ListFunctions
+                  - lambda:ListProvisionedConcurrencyConfigs
+                  - lambda:GetFunctionConfiguration
+                  - eks:DescribeCluster
+                  - eks:ListClusters
+                  - logs:DescribeLogGroups
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketLocation
+                  - s3:GetBucketTagging
+                  - s3:GetLifecycleConfiguration
+                  - s3:GetIntelligentTieringConfiguration
+                  - tag:GetResources
+                  - route53:ListHostedZones
+                  - route53:ListResourceRecordSets
+                Resource: "*"
+              - Sid: Metrics
+                Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                Resource: "*"
+              - Sid: AwsNativeRecommendations
+                Effect: Allow
+                Action:
+                  - compute-optimizer:Get*
+                  - compute-optimizer:Describe*
+                  - cost-optimization-hub:Get*
+                  - cost-optimization-hub:List*
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt ResourceRole.Arn

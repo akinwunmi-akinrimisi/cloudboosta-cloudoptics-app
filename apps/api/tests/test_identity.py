@@ -122,5 +122,7 @@ def test_dev_auth_is_refused_outside_dev(env: str) -> None:
 
     with pytest.raises(ValueError, match="auth_mode=dev"):
         Settings(environment=env, auth_mode="dev")
-    with pytest.raises(ValueError, match="data key"):
+    with pytest.raises(ValueError, match="jobs_mode"):
         Settings(environment=env, auth_mode="oidc")
+    with pytest.raises(ValueError, match="data key"):
+        Settings(environment=env, auth_mode="oidc", jobs_mode="queue")

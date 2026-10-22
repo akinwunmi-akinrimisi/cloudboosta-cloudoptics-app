@@ -38,6 +38,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
+      - run: uv run cfn-lint infra/cloudformation/*.yaml
       - run: uv run pytest --cov=cloudoptics --cov=cur_fixture --cov-report=term --cov-fail-under=80
       - run: uv run pip-audit --skip-editable --progress-spinner off
 

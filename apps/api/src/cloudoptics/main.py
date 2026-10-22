@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from cloudoptics import __version__
+from cloudoptics.connectors import routes as connector_routes
 from cloudoptics.identity import dev as dev_routes
 from cloudoptics.identity import routes as identity_routes
 from cloudoptics.platform.settings import get_settings
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
         return {"status": "ready", "environment": settings.environment}
 
     app.include_router(identity_routes.router)
+    app.include_router(connector_routes.router)
     if settings.auth_mode == "dev":
         app.include_router(dev_routes.router)
     return app

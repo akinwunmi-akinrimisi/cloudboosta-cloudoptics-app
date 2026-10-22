@@ -43,11 +43,17 @@ class Settings(BaseSettings):
     )
     aws_region: str = "eu-west-2"
 
+    # "inline" runs background jobs inside the request (local, tests, demo); staging and
+    # production use the Procrastinate queue and a worker process.
+    jobs_mode: Literal["inline", "queue"] = "inline"
+
     @model_validator(mode="after")
     def _guard_production(self) -> Self:
         if self.environment in ("staging", "production"):
             if self.auth_mode == "dev":
                 raise ValueError(f"auth_mode=dev is not allowed in {self.environment}")
+            if self.jobs_mode != "queue":
+                raise ValueError(f"jobs_mode must be 'queue' in {self.environment}")
             if self.local_data_key == DEV_DATA_KEY:
                 raise ValueError(f"the development data key is not allowed in {self.environment}")
         return self
