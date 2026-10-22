@@ -267,11 +267,13 @@ Format: *As a [role], I want [capability], so that [benefit].* Acceptance criter
 
 | ID | Requirement | Pri |
 |---|---|---|
-| FR-FX-01 | Fetch daily FX rates (USD → NGN, KES, ZAR, EGP, GHS, GBP, EUR) from a primary provider with a secondary fallback; store the history (date, rate, source) | M |
-| FR-FX-02 | Rate basis per currency is configurable at the platform level (default: official central-bank or market mid-rate; see open question Q3) | M |
+| FR-FX-01 | **Rates are set by hand.** Cloudoptics staff enter the rate for each currency (USD → NGN, KES, ZAR, EGP, GHS, GBP, EUR) in the platform admin console (FR-FX-06). Each rate is stored with its effective date, basis (official or market), source note, who entered it and when. A daily commercial feed is fetched as a **reference only** | M |
+| FR-FX-02 | A manual rate always wins. The reference feed is used only for a currency that has **never** had a manual rate, and values converted that way are flagged "estimated" | M |
 | FR-FX-03 | Historical costs are converted using the rate for the charge date; forecasts and budgets use the latest rate | M |
 | FR-FX-04 | If a rate is missing for a date, use the last available rate (max 5 days back) and flag the value as estimated | M |
 | FR-FX-05 | FX decomposition: month-over-month local-currency change = usage effect (Δ USD × old rate) + FX effect (new USD × Δ rate) | M |
+| FR-FX-06 | **Platform admin console: Exchange rates page** (Cloudoptics staff only; platform-admin role with MFA). For each currency it shows the current rate, effective date, basis, who set it, days since update, and the reference-feed rate with the % difference. Staff can set a new rate (value, effective date (today or later; back-dating needs a reason), basis, source note, reason). It shows 12 months of history with a chart, and supports CSV import for back-filling | M |
+| FR-FX-07 | **Controls on manual rates:** warn and require confirmation if the new rate differs by more than 5% from the previous rate or the reference feed; changes over 10% need a second admin to approve; every change goes to the platform audit log; alert the rate owner if a currency's rate is more than 3 working days old; caches and open reports refresh within 5 minutes of a change | M |
 
 ### 4.4 Analysis engines
 
@@ -455,7 +457,7 @@ Dashboards (internal) track every metric in Section 1.2.
 |---|---|---|---|
 | Q1 | **Hosting region** on DigitalOcean (LON1 vs AMS3 vs FRA1): latency from Lagos/Nairobi/Johannesburg vs regulatory perception. Is there demand for a later African data-location option (which would mean a different provider for data storage)? | Architect + Security | Phase 9/10 |
 | Q2 | How does our **AWS principal** authenticate from DigitalOcean without long-lived keys (IAM Roles Anywhere with our own CA vs IAM user with rotated keys vs a small AWS-hosted "assume-role broker")? | Architect | Phase 9 |
-| Q3 | **FX rate basis**: official central-bank rates vs market rates (e.g., NGN official vs parallel); should tenants choose? Which provider(s) cover NGN/KES/EGP/GHS reliably, with licence terms that allow display? | PM + Finance advisor | Increment 1 |
+| Q3 | ~~FX rate basis~~ **Resolved 22 Oct 2026:** Cloudoptics staff set rates by hand in the platform admin console (FR-FX-01, -06, -07). Still open: who owns daily rate updates (named person and a backup), and whether tenants may later set their own rate | PM | Before beta |
 | Q4 | Should design partners without a CUR export get a "Cost Explorer only" mode (lower fidelity, higher API cost) rather than being required to create an export? | PM | Increment 1 |
 | Q5 | Exact list of non-prod naming/tag conventions in target customers (to tune R7) | PM + design partners | Increment 2 |
 | Q6 | Do we show recommendations for member accounts without the resource role (cost-only, from CUR) with lower confidence? | PM | Increment 2 |

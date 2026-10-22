@@ -456,6 +456,15 @@ Procrastinate tables (`procrastinate_jobs`, `procrastinate_periodic_defers`, eve
   - An internal admin tool requires a reason and ticket ID, and grants time-boxed access (≤ 2h).
   - Every access is recorded with `actor_type = staff` and is visible to the tenant.
 
+### 7.4a Platform admin console (internal)
+- A separate, staff-only web area at `/admin`. It requires a platform-admin role, SSO plus MFA, and is reachable only through the admin VPN or IP allow-list.
+- **MVP pages:**
+  - **Exchange rates:** manual rate entry with effective date, basis and reason. Shows history, the reference-feed comparison, staleness indicators, and second-admin approval for changes over 10% (PRD FR-FX-06/07).
+  - **Tenants:** list, plan and status.
+  - **Break-glass access** (§7.4).
+  - **Job and DLQ overview.**
+- Every action goes to the platform audit log. A rate change also bumps the FX cache version, so all tenants pick it up within 5 minutes.
+
 ### 7.5 Configuration management per tenant
 - `tenant_settings` (JSONB, validated by a JSON Schema/Pydantic model; version field; change history in audit).
 - Entitlements (`plan`, limits, feature flags) from the billing/plan service (v1); PostHog flags for gradual rollouts (tenant-level targeting).

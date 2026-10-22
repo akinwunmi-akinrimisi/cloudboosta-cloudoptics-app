@@ -3,7 +3,7 @@
 **Product:** Cloudoptics by Cloudboosta · **Phase:** 11 · **Date:** 22 October 2026
 **Inputs:** PRD increments (`06_…` §2.1), components (`11b_…`), stack (`11a_…`), validation plan (`04_…` §4), beta programme (`10_…` C7)
 **Cadence:** 2-week sprints. **Sprint 0** (1 week) for inception, then **S1–S6** (12 weeks) to MVP beta, then **S7–S12** beta hardening → v1 paid launch.
-**Capacity note:** the WBS is about 12% larger than the core team's capacity. §4.2 recommends adding one delivery sprint (beta in Week 16) or deferring the listed items.
+**Capacity decision (22 Oct 2026):** the WBS is about 12% larger than the core team's capacity, so **one delivery sprint (S7) is added before the beta**. The beta now starts in **Week 16**, and Increment 1 alpha stays at the end of S3 (§4.2).
 
 ---
 
@@ -104,6 +104,7 @@ Story IDs (`CC-x`, `IN-x`, …) are backlog keys; PRD references in brackets. Es
 | ADM-7 | Data deletion flows (connection, tenant) with verification | M |
 | ADM-8 | Notifications service: email (Postmark), Slack app (OAuth, channels, DMs, interactivity), de-dup, preferences, digests | L |
 | ADM-9 | Monthly report generation (renderer worker, PDF, email) | M |
+| ADM-10 | **Platform admin console: exchange rates.** Cloudoptics staff set the rate per currency by hand, with an effective date and reason. Includes rate history, a reference feed shown alongside, a staleness alert and audit (PRD FR-FX-06/07) | M |
 
 ### Epic E-OPS: Observability & DevOps
 | ID | Story / task | Size |
@@ -130,7 +131,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
 
 ## 2. Sprint-by-Sprint Plan (MVP)
 
-**Timeline anchor:** Sprint 0 starts Week 1. MVP Increment 1 alpha at the end of S3 (Week 7); Increment 2 beta at the end of S6 (Week 13). Business validation (Phase 4 V1–V8) and UX research (Phase 7) run in parallel.
+**Timeline anchor:** Sprint 0 starts Week 1. MVP Increment 1 alpha at the end of S3 (Week 7); Increment 2 beta at the end of S7 (Week 15), with design partners starting in Week 16. Business validation (Phase 4 V1–V8) and UX research (Phase 7) run in parallel.
 
 ### Sprint 0 (1 week) — Inception & foundations
 - **Goals:** de-risk the two riskiest technical bets; set up the repo, CI and environments skeleton; finalise ADRs.
@@ -217,7 +218,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - Alert noise → minimum thresholds + design-partner tuning.
   - FX data gaps for some currencies → secondary provider + carry-forward flag.
 
-### Sprint 6 (Weeks 12–13) — Reports, admin, hardening → **Increment 2 beta**
+### Sprint 6 (Weeks 12–13) — Reports, admin, hardening → **release candidate**
 - **Goals:** complete the MVP; harden quality, security and operations; start the full beta.
 - **Deliverables:**
   - Monthly report PDF + email (ADM-9, FE-10); exports (API-7).
@@ -228,26 +229,39 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - Load tests; E2E suite green.
   - **Full security-audit skill run** + fixes for all Critical/High findings.
   - Runbooks (11g) and the release checklist (PRD §8).
-- **Release:** **Increment 2 beta** to all 8–12 design partners.
+- **Release:** a release candidate to staging and to the alpha partners. The full beta follows S7.
 - **Dependencies:** usability round 2; legal: ToS, privacy policy, DPA with NDPA/Kenya/POPIA clauses; security pack.
 - **Risks & mitigations:**
-  - Scope creep → strict MVP scope (Phase 5 §A5); defer items to S7+.
-  - Last-minute critical security findings → a reserved 20% capacity buffer in S6.
+  - Scope creep → strict MVP scope (Phase 5 §A5). S7 absorbs carry-over only; new requests go to S8+.
+  - Last-minute critical security findings → S7 buffer.
 
-### Sprints 7–12 (Weeks 14–25) — Beta operations → v1 paid launch (outline)
+### Sprint 7 (Weeks 14–15) — Buffer, admin rates console, hardening → **Increment 2 beta**
+- **Goals:** absorb the ~12% scope overrun; finish the platform admin console for exchange rates; close beta blockers.
+- **Deliverables:**
+  - Carry-over stories from S1–S6, in priority order.
+  - Platform admin console: manual exchange rates (ADM-10).
+  - Fixes from usability round 2.
+  - A second full security-audit skill run; all Critical/High findings fixed.
+  - Load and soak tests at 3× beta load.
+  - Operational readiness checklist (11g §3.3) signed off.
+- **Release:** **Increment 2 beta** to all 8–12 design partners at the end of Week 15 (beta go/no-go).
+- **Dependencies:** legal documents final; first official naira rate entered in the admin console.
+- **Risks & mitigations:** if carry-over exceeds S7 capacity, apply the deferral list in §4.2 option 2 rather than moving the beta date.
+
+### Sprints 8–13 (Weeks 16–27) — Beta operations → v1 paid launch (outline)
 
 | Sprint | Focus |
 |---|---|
-| S7 | Beta support, bug fixes, threshold tuning from outcome data; self-serve billing (Paystack + Stripe) start; Jira integration start |
-| S8 | **Gate G-C prep**; Placement analysis v0 (CBN 2027 use case); Teams alerts; pricing/entitlements |
-| S9 | Opt-in write role design + Temporal evaluation (ADR); advanced allocation (virtual tags UI); SAML SSO |
-| S10 | Approved one-click actions (non-prod schedules, delete unattached volumes) behind flags; AI assistant spike (with Phase 10 T15 controls) |
-| S11 | Partner console (beta); external **pen test**; SOC 2 readiness review |
-| S12 | **v1 paid launch (Nigeria)**; marketing site; onboarding automation; case studies |
+| S8 | Beta support, bug fixes, threshold tuning from outcome data; self-serve billing (Paystack + Stripe) start; Jira integration start |
+| S9 | **Gate G-C prep**; Placement analysis v0 (CBN 2027 use case); Teams alerts; pricing/entitlements |
+| S10 | Opt-in write role design + Temporal evaluation (ADR); advanced allocation (virtual tags UI); SAML SSO |
+| S11 | Approved one-click actions (non-prod schedules, delete unattached volumes) behind flags; AI assistant spike (with Phase 10 T15 controls) |
+| S12 | Partner console (beta); external **pen test**; SOC 2 readiness review |
+| S13 | **v1 paid launch (Nigeria)**; marketing site; onboarding automation; case studies |
 
 ---
 
-## 3. MVP Path Check (acceptance at end of S6)
+## 3. MVP Path Check (acceptance at end of S7)
 
 | Required MVP capability | Delivered in |
 |---|---|
@@ -296,9 +310,9 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
 - The WBS adds up to **≈ 408 person-days**, using S = 2, M = 4, L = 8 days: CC 64 · IN 52 · AN 84 · API 42 · FE 76 · ADM 42 · OPS 48. QA/SDET effort (E2E, load tests) is extra and not counted here.
 - So the plan is **about 12% over capacity with no buffer**. This is typical for first estimates, but must be resolved before S1.
 
-**Recommended resolution (choose in Sprint 0 planning):**
-1. **Add one delivery sprint (S7, Weeks 14–15) before the beta.** This gives ≈ 60 extra person-days, which covers the gap plus ~5% buffer. Beta starts in Week 16. Increment 1 alpha stays at the end of S3. *(Recommended.)*
-2. **Or keep 6 sprints and move ≈ 50 person-days to S7–S8 (after the beta starts).** Candidates:
+**Decision (22 Oct 2026): option 1, add one delivery sprint.** The other options are kept for reference.
+1. **Add one delivery sprint (S7, Weeks 14–15) before the beta.** ✅ *Chosen.* This gives ≈ 60 extra person-days, which covers the gap (now ≈ 412 person-days with ADM-10) plus a small buffer. Beta starts in Week 16. Increment 1 alpha stays at the end of S3.
+2. **Fallback, if S7 is not enough: keep 6 sprints and move ≈ 50 person-days to S7–S8 (after the beta starts).** Candidates:
    - R6 previous-gen/Graviton (4)
    - R7 non-prod scheduling (4)
    - Staff break-glass tool (4; use a manual DB procedure with audit in the meantime)

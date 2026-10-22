@@ -292,7 +292,7 @@ CREATE TABLE tenant (
   name             text NOT NULL,
   country_code     char(2) NOT NULL,                    -- NG, KE, ZA, EG, GH…
   display_currency char(3) NOT NULL,                    -- NGN, KES, ZAR, EGP, GHS, GBP, EUR, USD
-  fx_rate_basis    text NOT NULL DEFAULT 'official',    -- see PRD Q3
+  fx_rate_basis    text NOT NULL DEFAULT 'official',    -- rates set by hand in the platform admin console (PRD FR-FX-06)
   time_zone        text NOT NULL DEFAULT 'Africa/Lagos',
   fiscal_month_start smallint NOT NULL DEFAULT 1,
   mfa_required     boolean NOT NULL DEFAULT false,
@@ -875,7 +875,7 @@ Content-Type: application/problem+json
 | D5 | REST + OpenAPI, cookie sessions for web | Proposed | 11b |
 | O1 | Queue/orchestration technology (Postgres queue vs Valkey vs Temporal) | Open | 11a |
 | O2 | Auth provider (managed vs self-hosted OIDC) | Open | 11a |
-| O3 | FX providers and rate basis per currency (PRD Q3) | Open | 11a + PM |
+| O3 | Exchange rates: set by hand in the platform admin console; a feed is used as reference only (PRD FR-FX-01, -06, -07) | Decided 22 Oct 2026 | 11a ADR-010 |
 | O4 | Confirm DO NAT gateway / static egress option in LON1 | Open | 11a |
 | O5 | Data location messaging for regulated African customers (UK hosting) | Open | 10 |
 
