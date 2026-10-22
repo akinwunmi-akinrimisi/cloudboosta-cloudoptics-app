@@ -1,6 +1,15 @@
 # Handoff: staging next steps (22 Oct 2026)
 
-For the next working session (environment **cba-cloudoptics**, which holds `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_API_KEY` and the DigitalOcean token).
+**Update:** the credentials live in the GitHub environment `github-pages`, so sections 2 and 3 are now automated: run **Actions → Staging setup** from `main` (`.github/workflows/staging-setup.yml`, code in `infra/aws/bootstrap.py` and `infra/digitalocean/provision.py`). WorkOS sign-in is implemented (API `WorkOSVerifier`, web `AuthGate`). What remains manual is listed under "Before running Staging setup" below.
+
+## Before running Staging setup
+
+1. Merge the open PR so `main` has the code and the API image.
+2. Add `DIGITALOCEAN_TOKEN` to the same GitHub environment (and as a repository secret for `deploy-staging.yml`).
+3. In the WorkOS dashboard (Redirects): add `https://cloudoptics.cloudboosta.com/` as a redirect URI, the sign-in endpoint `https://cloudoptics.cloudboosta.com/sign-in`, and `https://cloudoptics.cloudboosta.com` as an allowed origin (CORS).
+4. After a successful run, delete the admin AWS key from the GitHub environment (the app uses the narrowly scoped broker key the workflow creates; re-add the admin key only to run setup again).
+
+The sections below record the design the automation follows.
 
 ## Where things stand
 

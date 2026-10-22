@@ -47,6 +47,9 @@ class Settings(BaseSettings):
         "https://cloudoptics-public.s3.eu-west-2.amazonaws.com/cfn/v1/resource-role.yaml"
     )
     aws_region: str = "eu-west-2"
+    # Cloudoptics' broker role (the principal in customers' trust policies). When set, the
+    # process credentials assume it first and it assumes the customer role (role chaining).
+    aws_broker_role_arn: str = ""
     # Quick-create needs the templates in our S3 bucket. Until that bucket exists, onboarding
     # offers the template as a download for a manual "Upload a template file" in AWS.
     cfn_quick_create_enabled: bool = False

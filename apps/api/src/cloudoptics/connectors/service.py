@@ -18,6 +18,7 @@ from cloudoptics.connectors.aws import SessionFactory, session_name
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.validation import ValidationResult, validate_billing_access
 from cloudoptics.platform.ids import uuid7
+from cloudoptics.platform.settings import get_settings
 
 # Literal statements only; request values are always bound parameters.
 SELECT_CONNECTION = text(
@@ -39,7 +40,9 @@ _session_factory: SessionFactory | None = None
 def get_session_factory() -> SessionFactory:
     global _session_factory
     if _session_factory is None:
-        _session_factory = SessionFactory()
+        _session_factory = SessionFactory(
+            broker_role_arn=get_settings().aws_broker_role_arn or None
+        )
     return _session_factory
 
 

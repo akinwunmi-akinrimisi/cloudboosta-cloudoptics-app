@@ -133,6 +133,57 @@ def app_secrets(cluster: dict[str, Any]) -> dict[str, str]:
     }
 
 
+# Settings that come from the deploy environment (GitHub Actions, staging-setup.yml) rather
+# than from app.yaml. Plain values are visible in the App Platform console; secrets are
+# stored encrypted. When a run does not supply one, the value already on the app is kept.
+RUNTIME_PLAIN = {
+    "CLOUDOPTICS_AWS_BROKER_ROLE_ARN": "CLOUDOPTICS_AWS_BROKER_ROLE_ARN",
+    "CLOUDOPTICS_CLOUDOPTICS_PRINCIPAL_ARN": "CLOUDOPTICS_AWS_BROKER_ROLE_ARN",
+    "CLOUDOPTICS_CFN_BILLING_TEMPLATE_URL": "CLOUDOPTICS_CFN_BILLING_TEMPLATE_URL",
+    "CLOUDOPTICS_CFN_RESOURCE_TEMPLATE_URL": "CLOUDOPTICS_CFN_RESOURCE_TEMPLATE_URL",
+    "CLOUDOPTICS_WORKOS_CLIENT_ID": "WORKOS_CLIENT_ID",
+}
+RUNTIME_SECRET = {
+    "AWS_ACCESS_KEY_ID": "BROKER_AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY": "BROKER_AWS_SECRET_ACCESS_KEY",
+    "CLOUDOPTICS_WORKOS_API_KEY": "WORKOS_API_KEY",
+}
+RUNTIME_COMPONENTS = ("api", "worker")
+
+
+def apply_runtime_config(spec: dict[str, Any], current: dict[str, Any] | None) -> None:
+    supplied: dict[str, dict[str, str]] = {}
+    for key, source in RUNTIME_PLAIN.items():
+        if os.environ.get(source):
+            supplied[key] = {"key": key, "value": os.environ[source], "scope": "RUN_TIME"}
+    for key, source in RUNTIME_SECRET.items():
+        if os.environ.get(source):
+            supplied[key] = {
+                "key": key,
+                "value": os.environ[source],
+                "type": "SECRET",
+                "scope": "RUN_TIME",
+            }
+    if "CLOUDOPTICS_CFN_BILLING_TEMPLATE_URL" in supplied:
+        supplied["CLOUDOPTICS_CFN_QUICK_CREATE_ENABLED"] = {
+            "key": "CLOUDOPTICS_CFN_QUICK_CREATE_ENABLED",
+            "value": "true",
+            "scope": "RUN_TIME",
+        }
+    managed = set(RUNTIME_PLAIN) | set(RUNTIME_SECRET) | {"CLOUDOPTICS_CFN_QUICK_CREATE_ENABLED"}
+    previous: dict[str, dict[str, dict[str, Any]]] = {}
+    for comp in (current or {}).get("services", []) + (current or {}).get("workers", []):
+        previous[comp["name"]] = {e["key"]: e for e in comp.get("envs", []) if e["key"] in managed}
+    for comp in spec.get("services", []) + spec.get("workers", []):
+        if comp["name"] not in RUNTIME_COMPONENTS:
+            continue
+        merged = {**previous.get(comp["name"], {}), **supplied}
+        comp["envs"] = [e for e in comp.get("envs", []) if e["key"] not in merged]
+        comp["envs"] += list(merged.values())
+    if supplied:
+        print("runtime config supplied:", ", ".join(sorted(supplied)))
+
+
 def find_app() -> dict[str, Any] | None:
     for a in call("GET", "/apps?per_page=200").get("apps") or []:
         if a["spec"]["name"] == APP_NAME:
@@ -161,6 +212,7 @@ def deploy_app(branch: str = "main") -> None:
                 if env["key"] == "CLOUDOPTICS_LOCAL_DATA_KEY" and env.get("value"):
                     values["LOCAL_DATA_KEY"] = env["value"]  # encrypted value, passed back as-is
     spec = render_spec(values)
+    apply_runtime_config(spec, existing["spec"] if existing else None)
     for site in spec.get("static_sites", []):
         site["git"]["branch"] = branch  # main normally; a feature branch for a trial deploy
     proposal: dict[str, Any] = {"spec": spec}
