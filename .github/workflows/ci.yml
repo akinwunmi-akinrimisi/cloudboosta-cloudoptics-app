@@ -21,13 +21,14 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_PASSWORD: postgres
+          # Throwaway test database on the runner: trust auth, no password to leak.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s
           --health-timeout 5s --health-retries 10
     env:
-      CLOUDOPTICS_TEST_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      CLOUDOPTICS_TEST_ADMIN_URL: postgresql://postgres@localhost:5432/postgres
       CLOUDOPTICS_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
