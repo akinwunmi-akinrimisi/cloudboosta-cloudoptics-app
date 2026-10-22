@@ -1,0 +1,70 @@
+# One-off / occasional setup of staging's external services (ADR-007, ADR-013, ADR-006):
+#   1. Cloudoptics' AWS account: template bucket, broker role, broker user (key rotated).
+#   2. App Platform: broker key, template URLs, WorkOS client ID and API key.
+# Run it by hand from main (Actions -> Staging setup -> Run workflow). It reads credentials
+# from a GitHub environment (secrets or variables with the names below); none are logged.
+name: Staging setup
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub environment that holds the credentials
+        default: github-pages
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-setup
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: AWS account, sign-in and App Platform settings
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID || vars.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY || vars.AWS_SECRET_ACCESS_KEY }}
+      WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID || vars.WORKOS_CLIENT_ID }}
+      WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY || vars.WORKOS_API_KEY }}
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN || vars.DIGITALOCEAN_TOKEN }}
+      APP_URL: https://cloudoptics.cloudboosta.com
+    steps:
+      - name: Check the credentials are present
+        run: |
+          missing=""
+          for v in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY WORKOS_CLIENT_ID WORKOS_API_KEY DIGITALOCEAN_TOKEN; do
+            [ -n "${!v}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing in environment '${{ inputs.environment }}':$missing (add as secrets or variables)"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - run: uv sync --all-packages --locked
+      - name: Set up Cloudoptics' AWS account
+        run: uv run python infra/aws/bootstrap.py
+      - name: Apply settings to App Platform and deploy
+        run: uv run python infra/digitalocean/provision.py app
+      - name: Wait for the deployment
+        run: |
+          app=3294882e-35ce-45b0-bb33-e7ce55062f22
+          for i in $(seq 1 60); do
+            phase=$(curl -sSf -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+              "https://api.digitalocean.com/v2/apps/$app/deployments?per_page=1" | jq -r '.deployments[0].phase')
+            echo "phase: $phase"
+            case "$phase" in ACTIVE) break ;; ERROR|CANCELED) exit 1 ;; esac
+            sleep 20
+          done
+          [ "$phase" = ACTIVE ]
+      - name: Smoke test
+        run: |
+          curl -sSf "$APP_URL/api/readyz"
+          echo
+          curl -sSf "$APP_URL/api/v1/auth/config" | tee /dev/stderr | jq -e '.provider == "workos"'
+          curl -sSf -o /dev/null "$CLOUDOPTICS_CFN_BILLING_TEMPLATE_URL"
+          echo "templates reachable at $CLOUDOPTICS_CFN_BILLING_TEMPLATE_URL"

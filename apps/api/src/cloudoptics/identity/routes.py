@@ -16,6 +16,7 @@ from cloudoptics.identity.deps import AdminAccess, Role, Session, User, ViewerAc
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.db import scope
 from cloudoptics.platform.ids import uuid7
+from cloudoptics.platform.settings import get_settings
 
 router = APIRouter(prefix="/v1", tags=["identity"])
 
@@ -134,6 +135,32 @@ UPDATE_TENANT = text(
     "time_zone = COALESCE(:time_zone, time_zone), "
     "mfa_required = COALESCE(:mfa_required, mfa_required) WHERE id = :t"
 )
+
+
+class AuthConfig(ApiModel):
+    mode: Literal["dev", "oidc"]
+    configured: bool
+    provider: Literal["workos", "oidc"] | None = None
+    issuer: str | None = None
+    client_id: str | None = None
+
+
+@router.get("/auth/config", response_model=AuthConfig, response_model_by_alias=True)
+async def auth_config() -> AuthConfig:
+    """Public: tells the web app which sign-in to show (no secrets)."""
+    settings = get_settings()
+    if settings.auth_mode == "dev":
+        return AuthConfig(mode="dev", configured=True)
+    if settings.workos_client_id:
+        return AuthConfig(
+            mode="oidc", configured=True, provider="workos", client_id=settings.workos_client_id
+        )
+    return AuthConfig(
+        mode="oidc",
+        configured=settings.oidc_configured,
+        issuer=settings.oidc_issuer or None,
+        client_id=settings.oidc_audience or None,
+    )
 
 
 @router.get("/me", response_model=Me, response_model_by_alias=True)

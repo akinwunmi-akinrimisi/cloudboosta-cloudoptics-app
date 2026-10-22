@@ -1,0 +1,88 @@
+# Cloudoptics staging on DigitalOcean App Platform (ADR-013). Applied by provision.py, which
+# replaces the __PLACEHOLDERS__ with secrets read from the DigitalOcean API (never committed).
+name: cloudoptics-staging
+region: lon
+
+domains:
+  - domain: cloudoptics.cloudboosta.com
+    type: PRIMARY
+    zone: cloudboosta.com
+
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+
+ingress:
+  rules:
+    - match: { path: { prefix: /api } }
+      component: { name: api, preserve_path_prefix: false }
+    - match: { path: { prefix: / } }
+      component: { name: web }
+
+services:
+  - name: api
+    image: &image
+      registry_type: GHCR
+      registry: akinwunmi-akinrimisi
+      repository: cloudoptics-api
+      tag: main
+    instance_size_slug: apps-s-1vcpu-1gb-fixed
+    instance_count: 1
+    http_port: 8000
+    health_check:
+      http_path: /readyz
+      initial_delay_seconds: 10
+      period_seconds: 15
+    envs:
+      - &env_environment { key: CLOUDOPTICS_ENVIRONMENT, value: staging }
+      - &env_auth { key: CLOUDOPTICS_AUTH_MODE, value: oidc }
+      - &env_jobs { key: CLOUDOPTICS_JOBS_MODE, value: queue }
+      - &env_app_db
+        key: CLOUDOPTICS_APP_DATABASE_URL
+        type: SECRET
+        value: __APP_DATABASE_URL__
+      - &env_data_key
+        key: CLOUDOPTICS_LOCAL_DATA_KEY
+        type: SECRET
+        value: __LOCAL_DATA_KEY__
+      - key: CLOUDOPTICS_CORS_ORIGINS
+        value: '["https://cloudoptics.cloudboosta.com"]'
+      - key: CLOUDOPTICS_CFN_TEMPLATE_DOWNLOAD_BASE
+        value: https://cloudoptics.cloudboosta.com/cfn
+
+workers:
+  - name: worker
+    image: *image
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_count: 1
+    run_command: python -m cloudoptics.worker
+    envs: [*env_environment, *env_auth, *env_jobs, *env_app_db, *env_data_key]
+
+jobs:
+  - name: migrate
+    kind: PRE_DEPLOY
+    image: *image
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    run_command: alembic -c apps/api/alembic.ini upgrade head
+    envs:
+      - *env_environment
+      - *env_auth
+      - *env_jobs
+      - *env_app_db
+      - *env_data_key
+      - key: CLOUDOPTICS_DATABASE_URL
+        type: SECRET
+        value: __OWNER_DATABASE_URL__
+
+static_sites:
+  - name: web
+    git:
+      repo_clone_url: https://github.com/akinwunmi-akinrimisi/cloudboosta-cloudoptics-app.git
+      branch: main
+    dockerfile_path: apps/web/Dockerfile
+    output_dir: /src/apps/web/dist
+    catchall_document: index.html
+    envs:
+      - key: VITE_API_URL
+        value: /api
+        scope: BUILD_TIME

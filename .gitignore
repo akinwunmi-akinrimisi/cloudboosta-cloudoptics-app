@@ -27,3 +27,4 @@ dist/
 # Generated fixtures
 .data/
 apps/web/.env.local
+apps/web/public/cfn/

@@ -195,6 +195,7 @@
 | ADR-010 | Exchange rates: set by hand by Cloudoptics staff in the platform admin console; a commercial feed is shown as a reference and used only if no manual rate exists | **Decided 22 Oct 2026** |
 | ADR-011 | Static egress approach in LON1 | Open (Sprint 0 verification) |
 | ADR-012 | GitHub first (Pages demo, GHCR image, Codespaces), then DigitalOcean | **Decided 22 Oct 2026** |
+| ADR-013 | Staging on DigitalOcean App Platform (API, worker, web, managed PostgreSQL) at cloudoptics.cloudboosta.com; DOKS later | **Decided 22 Oct 2026** |
 
 ## 11. Skills & Team Fit
 

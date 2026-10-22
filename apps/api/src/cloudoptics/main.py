@@ -4,12 +4,14 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from cloudoptics import __version__
 from cloudoptics.connectors import routes as connector_routes
 from cloudoptics.identity import dev as dev_routes
 from cloudoptics.identity import routes as identity_routes
+from cloudoptics.platform.db import get_engine
 from cloudoptics.platform.settings import get_settings
 
 PROBLEM_JSON = "application/problem+json"
@@ -65,9 +67,14 @@ def create_app() -> FastAPI:
         return {"status": "ok", "version": __version__}
 
     @app.get("/readyz", tags=["platform"])
-    async def readyz() -> dict[str, str]:
-        """Readiness: dependency checks (database, queue) are added with the deployment."""
-        return {"status": "ready", "environment": settings.environment}
+    async def readyz(request: Request) -> JSONResponse:
+        """Readiness: the app can reach PostgreSQL as its runtime role."""
+        try:
+            async with get_engine().connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        except Exception:  # any failure means not ready; details go to logs, not the response
+            return _problem(request, 503, "Database unavailable")
+        return JSONResponse({"status": "ready", "environment": settings.environment})
 
     app.include_router(identity_routes.router)
     app.include_router(connector_routes.router)

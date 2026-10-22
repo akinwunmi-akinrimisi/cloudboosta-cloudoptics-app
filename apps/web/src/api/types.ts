@@ -67,9 +67,12 @@ export interface Connection {
 export interface ConnectionSetup {
   connection: Connection
   externalId: string
-  quickCreateUrl: string
+  /** Null until the templates are hosted in our S3 bucket (CloudFormation quick-create needs S3). */
+  quickCreateUrl: string | null
   templateUrl: string
+  templateDownloadUrl: string
   resourceTemplateUrl: string
+  resourceTemplateDownloadUrl: string
   stackRegion: string
   principalArn: string
 }
@@ -80,8 +83,25 @@ export interface ConnectionCreate {
   createCurExport: boolean
 }
 
+export interface AuthConfig {
+  mode: 'dev' | 'oidc'
+  configured: boolean
+  provider: 'workos' | 'oidc' | null
+  issuer: string | null
+  clientId: string | null
+}
+
+/** An external identity provider session (WorkOS AuthKit) the HTTP client can use. */
+export interface AuthProvider {
+  signedIn: boolean
+  getToken(): Promise<string>
+  signIn(): Promise<void>
+  signOut(): void
+}
+
 export interface Api {
   readonly mode: 'http' | 'demo'
+  authConfig(): Promise<AuthConfig>
   isSignedIn(): boolean
   signIn(email: string, name?: string): Promise<void>
   signOut(): void

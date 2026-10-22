@@ -126,3 +126,47 @@ def test_dev_auth_is_refused_outside_dev(env: str) -> None:
         Settings(environment=env, auth_mode="oidc")
     with pytest.raises(ValueError, match="data key"):
         Settings(environment=env, auth_mode="oidc", jobs_mode="queue")
+
+
+def test_digitalocean_style_database_urls_get_the_psycopg_driver() -> None:
+    from cloudoptics.platform.settings import Settings
+
+    s = Settings(
+        database_url="postgresql://doadmin:x@db.example:25060/cloudoptics?sslmode=require",
+        app_database_url="postgres://cloudoptics_app:y@db.example:25060/cloudoptics",
+    )
+    assert s.database_url.startswith("postgresql+psycopg://doadmin:")
+    assert s.database_url.endswith("?sslmode=require")
+    assert s.app_database_url.startswith("postgresql+psycopg://cloudoptics_app:")
+
+
+async def test_oidc_without_configuration_is_a_clear_503(client: AsyncClient) -> None:
+    from cloudoptics.platform.settings import get_settings
+
+    settings = get_settings()
+    settings.auth_mode = "oidc"
+    try:
+        r = await client.get("/v1/me", headers={"Authorization": "Bearer x.y.z"})
+    finally:
+        settings.auth_mode = "dev"
+    assert r.status_code == 503
+    assert r.json()["title"] == "Sign-in is not configured yet"
+
+
+async def test_auth_config_tells_the_web_app_which_sign_in_to_show(client: AsyncClient) -> None:
+    from cloudoptics.platform.settings import get_settings
+
+    assert (await client.get("/v1/auth/config")).json() == {
+        "mode": "dev",
+        "configured": True,
+        "provider": None,
+        "issuer": None,
+        "clientId": None,
+    }
+    settings = get_settings()
+    settings.auth_mode = "oidc"
+    try:
+        body = (await client.get("/v1/auth/config")).json()
+    finally:
+        settings.auth_mode = "dev"
+    assert body["mode"] == "oidc" and body["configured"] is False
