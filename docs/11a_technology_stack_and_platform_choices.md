@@ -172,7 +172,7 @@
 |---|---|---|
 | Email | Postmark (separate message streams: transactional vs broadcast) | SPF/DKIM/DMARC `p=reject` |
 | Slack | Slack app (OAuth v2, Bolt for Python) | Signing-secret verification on interactivity |
-| FX rates | Commercial API (e.g., Open Exchange Rates) for daily mid-market rates + central-bank sources (CBN, CBK, SARB, CBE, BoG) where they publish official rates | **Default basis per PRD Q3 (PM decision in Sprint 1):** proposal = official central-bank rate where reliably published, market mid-rate otherwise; store basis with every rate |
+| FX rates | **Set by hand by Cloudoptics staff** in the platform admin console (ADR-010; PRD FR-FX-06/07). A commercial API (e.g., Open Exchange Rates) is fetched daily as a **reference and fallback only** | Each rate stores value, effective date, basis, source note and author; changes are audited |
 | PDF | Playwright (Chromium) in a dedicated `renderer` worker | Reuses web components and ECharts for brand-consistent reports |
 | Payments (v1) | Paystack (local currencies, subscriptions) + Stripe (USD/GBP/EUR) | Bank transfer/invoice fallback for cards that can't auto-renew |
 | Feature flags | PostHog flags (server + client SDKs) | OpenFeature interface in code to allow switching |
@@ -192,7 +192,7 @@
 | ADR-007 | IAM Roles Anywhere + AWS Private CA; Secrets Manager + KMS | Proposed (spike in Sprint 0) |
 | ADR-008 | DOKS + Argo CD + Terraform | Proposed |
 | ADR-009 | Grafana Cloud + Sentry + PostHog | Proposed |
-| ADR-010 | FX providers and default rate basis | Open (PM + finance advisor, Sprint 1) |
+| ADR-010 | Exchange rates: set by hand by Cloudoptics staff in the platform admin console; a commercial feed is shown as a reference and used only if no manual rate exists | **Decided 22 Oct 2026** |
 | ADR-011 | Static egress approach in LON1 | Open (Sprint 0 verification) |
 
 ## 11. Skills & Team Fit

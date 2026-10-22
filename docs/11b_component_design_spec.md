@@ -24,10 +24,16 @@ class CloudProvider(Protocol):
     def list_accounts(self, conn: Connection) -> list[CloudAccountInfo]: ...
     def list_billing_files(self, conn: Connection, since: datetime) -> list[BillingFileRef]: ...
     def fetch_billing_file(self, conn: Connection, ref: BillingFileRef) -> StreamingBody: ...
-    def scan_inventory(self, acct: CloudAccount, region: str, types: set[ResourceType]) -> Iterator[ResourceRecord]: ...
-    def fetch_metrics(self, acct: CloudAccount, region: str, queries: list[MetricQuery]) -> list[MetricSeries]: ...
+    def scan_inventory(
+        self, acct: CloudAccount, region: str, types: set[ResourceType]
+    ) -> Iterator[ResourceRecord]: ...
+    def fetch_metrics(
+        self, acct: CloudAccount, region: str, queries: list[MetricQuery]
+    ) -> list[MetricSeries]: ...
     def fetch_native_recommendations(self, acct: CloudAccount) -> list[NativeRecommendation]: ...
-    def cost_summary(self, conn: Connection, period: DateRange) -> CostSummary: ...   # Cost Explorer (budgeted)
+    def cost_summary(
+        self, conn: Connection, period: DateRange
+    ) -> CostSummary: ...  # Cost Explorer (budgeted)
 ```
 - **AwsProvider (MVP):** implements all methods using boto3 clients built from a `SessionFactory`.
 - **AzureProvider / GcpProvider (v2):** same protocol; exports in FOCUS format.
@@ -187,17 +193,19 @@ Generate explainable, risk-scored recommendations (R1–R8), anomalies, forecast
 ```python
 @dataclass(frozen=True)
 class EngineContext:
-    tenant: TenantSettings           # thresholds, non-prod patterns, ignore tags, currency
-    inventory: InventorySnapshot     # resources for the tenant (by account/region)
-    metrics: MetricStore             # daily summaries (avg/p95/max), coverage
-    prices: PriceCatalog             # region/SKU on-demand prices
-    rates: EffectiveRateProvider     # tenant effective rates from CUR (discount-aware)
-    native: NativeRecs               # COH / Compute Optimizer findings
+    tenant: TenantSettings  # thresholds, non-prod patterns, ignore tags, currency
+    inventory: InventorySnapshot  # resources for the tenant (by account/region)
+    metrics: MetricStore  # daily summaries (avg/p95/max), coverage
+    prices: PriceCatalog  # region/SKU on-demand prices
+    rates: EffectiveRateProvider  # tenant effective rates from CUR (discount-aware)
+    native: NativeRecs  # COH / Compute Optimizer findings
     now: date
 
+
 class Engine(Protocol):
-    id: str                          # "R5_ec2_rightsizing"
-    version: str                     # "1.3.0"
+    id: str  # "R5_ec2_rightsizing"
+    version: str  # "1.3.0"
+
     def run(self, ctx: EngineContext) -> list[Candidate]: ...
 ```
 - Engines are **pure functions** (no I/O): a deterministic output for given inputs, which makes them easy to unit test with fixtures.
@@ -209,10 +217,10 @@ class Engine(Protocol):
 | Module | Logic summary (thresholds per PRD §4.4) | Key inputs |
 |---|---|---|
 | **Right-sizing (R5)** | Merge Compute Optimizer options with own checks: p95/max CPU over 14–30 days, memory if present, network, burst credits; project utilisation on the target size (vCPU ratio); accept only if projected p95 ≤ 60% and max ≤ 85%. Prefer same family, smaller size; show Graviton as an alternative (R6 overlap via dedupe) | Inventory, metrics, Compute Optimizer, prices |
-| **Idle/underutilised (R1, R2, R4)** | Unattached EBS ≥ 7 days; snapshots > 90 days, orphaned and not used by AMIs/Backup; unassociated EIPs ≥ 3 days; LBs with no healthy targets or < 100 req/day for 14 days; EC2 idle (CPU p95 < 5% and net < 5 MB/day for 14 days); RDS zero connections for 7 days | Inventory, metrics |
-| **Modernisation (R3, R6)** | gp2→gp3 with IOPS/throughput adjustments; previous-generation mapping table (versioned) with price deltas | Inventory, prices |
+| **Idle/underutilised (R1, R1b, R2, R4, R10)** | Unattached EBS ≥ 7 days (High confidence ≥ 32); idle attached EBS < 1 op/day for 14 days; snapshots > 90 days, orphaned, not used by AMIs/Backup/DLM or retain tags; unassociated EIPs ≥ 3 days (High ≥ 7) incl. CUR `PublicIPv4:IdleAddress`; LBs ≥ 7 days old with no listeners/healthy targets or low requests/flows; EC2 idle (max CPU < 5% and net < 5 MB/day for 14 days; p95-only = low-utilisation candidate); RDS zero connections for 7 days plus low CPU/IOPS; idle NAT (hours billed, 0 bytes for 30 days). Exact rules: PRD FR-ANA-01 to -04b, -14 | Inventory, metrics, CUR |
+| **Modernisation (R3, R6, R6b)** | gp2→gp3 (EBS and RDS, plus io1 that fits gp3) with IOPS/throughput adjustments; previous-generation mapping table (versioned) with price deltas and region availability; Extended Support charges from CUR | Inventory, prices, CUR |
 | **Scheduling (R7)** | Non-prod detection (tags/regex) + 24/7 running; hours saved under the default schedule | Inventory, metrics, settings |
-| **Pricing model (R8)** | Savings Plan advisory from CE recommendations + coverage/utilisation; conservative option (×0.8); payback; FX exposure (local currency at current and scenario rates). **Advisory only** | CE SP APIs, FX |
+| **Pricing model (R8)** | Savings Plan advisory from CE recommendations + own simulation on the CUR hourly baseline after netting R4/R5/R7; SP/RI × term × payment matrix; ladder; payback; FX stress test (20% / 40%). **Advisory only** (PRD FR-ANA-10) | CE SP APIs, FX |
 | **Architectural hints (v1)** | Storage class/lifecycle (S3 Intelligent-Tiering candidates from storage-class mix and access patterns via CUR), NAT Gateway data-processing hotspots (CUR usage types), cross-AZ/inter-region data transfer patterns, log retention, region placement (af-south-1 vs EU vs Local Zones) | CUR aggregates, prices |
 | **Anomalies** | Per (account, service) daily: baseline = median of the same weekday over 4 weeks; MAD threshold; anomaly if cost > baseline + max(3×MAD, 30%) and excess ≥ tenant minimum; suppression after "Expected" | `cost_daily` |
 | **Forecast** | Month-end: MTD + 7-day average × remaining days + known monthly fixed charges; 3-month: bounded linear trend ± range | `cost_daily` |
@@ -455,6 +463,15 @@ Procrastinate tables (`procrastinate_jobs`, `procrastinate_periodic_defers`, eve
 - Staff break-glass:
   - An internal admin tool requires a reason and ticket ID, and grants time-boxed access (≤ 2h).
   - Every access is recorded with `actor_type = staff` and is visible to the tenant.
+
+### 7.4a Platform admin console (internal)
+- A separate, staff-only web area at `/admin`. It requires a platform-admin role, SSO plus MFA, and is reachable only through the admin VPN or IP allow-list.
+- **MVP pages:**
+  - **Exchange rates:** manual rate entry with effective date, basis and reason. Shows history, the reference-feed comparison, staleness indicators, and second-admin approval for changes over 10% (PRD FR-FX-06/07).
+  - **Tenants:** list, plan and status.
+  - **Break-glass access** (§7.4).
+  - **Job and DLQ overview.**
+- Every action goes to the platform audit log. A rate change also bumps the FX cache version, so all tenants pick it up within 5 minutes.
 
 ### 7.5 Configuration management per tenant
 - `tenant_settings` (JSONB, validated by a JSON Schema/Pydantic model; version field; change history in audit).

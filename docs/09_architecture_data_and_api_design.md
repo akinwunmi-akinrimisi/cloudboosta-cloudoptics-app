@@ -292,7 +292,7 @@ CREATE TABLE tenant (
   name             text NOT NULL,
   country_code     char(2) NOT NULL,                    -- NG, KE, ZA, EG, GH…
   display_currency char(3) NOT NULL,                    -- NGN, KES, ZAR, EGP, GHS, GBP, EUR, USD
-  fx_rate_basis    text NOT NULL DEFAULT 'official',    -- see PRD Q3
+  fx_rate_basis    text NOT NULL DEFAULT 'official',    -- rates set by hand in the platform admin console (PRD FR-FX-06)
   time_zone        text NOT NULL DEFAULT 'Africa/Lagos',
   fiscal_month_start smallint NOT NULL DEFAULT 1,
   mfa_required     boolean NOT NULL DEFAULT false,
@@ -445,7 +445,10 @@ CREATE TABLE recommendation (
   id               uuid PRIMARY KEY,
   tenant_id        uuid NOT NULL,
   fingerprint      bytea NOT NULL,                      -- type+resource+target
-  type             text NOT NULL,                       -- R1_unattached_ebs … R8_savings_plan
+  type             text NOT NULL,                       -- R1_unattached_ebs … R8_savings_plan, R6b_extended_support, R10_idle_nat
+  rule_id          text NOT NULL, rule_version int NOT NULL,
+  rule_config      jsonb NOT NULL,                      -- thresholds + lookback in effect when generated (reproducible)
+  generation_id    bigint NOT NULL,                     -- engine run; PATCH with an older generation is rejected
   resource_ref     uuid REFERENCES resource(id),
   account_id       char(12), region_id text,
   title            text NOT NULL,
@@ -454,7 +457,10 @@ CREATE TABLE recommendation (
   cost_after_usd_month numeric(18,6) NOT NULL,
   savings_usd_month    numeric(18,6) GENERATED ALWAYS AS (cost_now_usd_month - cost_after_usd_month) STORED,
   savings_basis    text NOT NULL,                       -- effective_rate|list_price
-  effort           text NOT NULL CHECK (effort IN ('S','M','L')),
+  effort           text NOT NULL CHECK (effort IN ('S','M','L')),   -- S <1 day, M 3–5 days, L 1+ week
+  reversibility    text NOT NULL CHECK (reversibility IN ('reversible','with_snapshot','irreversible')),
+  restart_required boolean NOT NULL DEFAULT false,
+  commitment_note  text,                                -- e.g. "covered by a Savings Plan: real saving lower"
   risk_score       smallint NOT NULL,                   -- 0–100
   risk_level       text NOT NULL,                       -- low|medium|high
   risk_factors     jsonb NOT NULL,                      -- [{code, points, text}]
@@ -473,6 +479,18 @@ CREATE TABLE recommendation (
   UNIQUE (tenant_id, fingerprint)
 );
 CREATE INDEX ON recommendation (tenant_id, status, priority_score DESC);
+
+-- Per-tenant rule settings: type catalogue, thresholds, exclusions (PRD FR-REC-08)
+CREATE TABLE recommendation_rule_setting (
+  tenant_id    uuid NOT NULL,
+  rule_id      text NOT NULL,
+  enabled      boolean NOT NULL DEFAULT true,
+  params       jsonb NOT NULL DEFAULT '{}',             -- validated against the rule's typed parameter schema (min/max/default)
+  exclusions   text[] NOT NULL DEFAULT '{}',            -- tag grammar: Key, Key==V, Key!=V, Key=~/re/, Key!~/re/
+  updated_by   uuid REFERENCES app_user(id),
+  updated_at   timestamptz NOT NULL DEFAULT now(),      -- history kept in audit_log; applies on the next engine run
+  PRIMARY KEY (tenant_id, rule_id)
+);
 
 CREATE TABLE recommendation_event (
   id                uuid PRIMARY KEY,
@@ -875,7 +893,7 @@ Content-Type: application/problem+json
 | D5 | REST + OpenAPI, cookie sessions for web | Proposed | 11b |
 | O1 | Queue/orchestration technology (Postgres queue vs Valkey vs Temporal) | Open | 11a |
 | O2 | Auth provider (managed vs self-hosted OIDC) | Open | 11a |
-| O3 | FX providers and rate basis per currency (PRD Q3) | Open | 11a + PM |
+| O3 | Exchange rates: set by hand in the platform admin console; a feed is used as reference only (PRD FR-FX-01, -06, -07) | Decided 22 Oct 2026 | 11a ADR-010 |
 | O4 | Confirm DO NAT gateway / static egress option in LON1 | Open | 11a |
 | O5 | Data location messaging for regulated African customers (UK hosting) | Open | 10 |
 

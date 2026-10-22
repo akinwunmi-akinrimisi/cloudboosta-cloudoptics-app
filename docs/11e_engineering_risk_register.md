@@ -28,7 +28,7 @@
 | R-07 | **Cost totals don't match the AWS invoice** (amortisation, credits, refunds, taxes, restatements) → trust lost | M | H | **High** | Reconciliation (±1%) per period with banner; golden fixtures from real accounts; FinOps SME review of mappings; atomic version replacement; month-end restatement handling; per-partner accuracy review before alpha | Data/Backend Engineer |
 | R-08 | **Inaccurate or unsafe recommendations** (e.g., rightsizing a memory-bound server, deleting a needed volume) cause incidents or credibility loss | M | H | **High** | Conservative thresholds; explainable risk factors; confidence capped without memory metrics; snapshot pre-steps; per-engine feature flags and kill switch; golden-dataset regression tests; outcome monitoring (dismissal "wrong/unsafe" rate ≤ 15%); ToS disclaimers | Data/Backend Engineer + FinOps SME |
 | R-09 | **Savings estimates overstated** (list price vs discounted effective rates; double counting overlapping recommendations) | M | M | Medium | Effective-rate pricing from CUR; dedupe by resource; "estimated" labels; verification shows realised vs estimated; track realised ÷ estimated per engine | Data/Backend Engineer |
-| R-10 | **FX data wrong, missing or contested** (official vs market rates, especially NGN) | M | M | Medium | Two providers; stored basis and source per rate; carry-forward flag; rate disclosure in UI/reports; PM decision on basis (ADR-010); tenant-level basis option in v1 | Data/Backend Engineer + PM |
+| R-10 | **FX data wrong, missing or contested** (official vs market rates, especially NGN) | M | M | Medium | **Rates are set by hand in the platform admin console (ADR-010).** Validation bounds (warn if more than 5% from the reference feed or the previous rate); second-person check for changes over 10%; staleness alert if a rate is more than 3 working days old; full history and audit; rate and date shown in UI and reports | Data/Backend Engineer + PM (rate owner) |
 | R-11 | **Price catalogue gaps** for `af-south-1` / Local Zones / new instance types | M | M | Medium | Weekly Price List refresh; fall back to effective rates; alert on unknown SKUs; unit tests for African regions | Data/Backend Engineer |
 | R-12 | **Verification false positives/negatives** (changes not detected; savings credited wrongly) | M | M | Medium | Combine resource state and cost signals; ≥ 7 days post-change data; "not confirmed" state; manual override with audit | Data/Backend Engineer |
 
@@ -65,7 +65,7 @@
 
 | ID | Risk | L | I | Priority | Mitigation strategies | Owner |
 |---|---|---|---|---|---|---|
-| R-27 | **Plan is ~12% over capacity** (11d §4.2) | H | M | **High** | Add S7 before beta or apply the deferral list; re-estimate in Sprint 0; track velocity; adjust dates at the end of S2 | Engineering Manager / Tech Lead |
+| R-27 | **Plan is ~12% over capacity** (11d §4.2) | M | M | Medium | **Decided 22 Oct: S7 added, beta moves to Week 16.** Re-estimate in Sprint 0; track velocity; if S7 overflows, apply the deferral list instead of moving the date again | Engineering Manager / Tech Lead |
 | R-28 | **Key-person dependency** (Tech Lead on IAM/security; analysis engineer on engines) | M | H | **High** | Pairing; ADRs and design docs; runbooks; code ownership spread across ≥ 2 people per critical area | Engineering Manager |
 | R-29 | **Skill gaps** in Kubernetes/GitOps, AWS billing domain or accessibility | M | M | Medium | App Platform fallback; Cloudboosta training; FinOps SME pairing; design-system components built early with accessibility checks | Engineering Manager |
 | R-30 | **Hiring delays** in target hubs | M | M | Medium | Start with contractors and Cloudboosta alumni; staggered start (DevOps + Tech Lead first) | Engineering Manager |
@@ -90,7 +90,7 @@
 |---|---|---|
 | 1 | R-08 Unsafe recommendations | Trust is the core differentiator (Pillar 1); one incident could end design-partner trust |
 | 2 | R-07 Cost accuracy | Every screen depends on it; finance personas will check invoices |
-| 3 | R-27 Capacity vs scope | Directly threatens the beta date |
+| 3 | R-27 Capacity vs scope | Mitigated by the added S7; watch velocity at the end of S2 |
 | 4 | R-03 Roles Anywhere / broker | Foundation for all data access; must be proven in Sprint 0 |
 | 5 | R-17/R-18 Tenant isolation & access path | Catastrophic impact for a security-sensitive product |
 | 6 | R-05 Onboarding misconfiguration | Activation metric O1 depends on it |

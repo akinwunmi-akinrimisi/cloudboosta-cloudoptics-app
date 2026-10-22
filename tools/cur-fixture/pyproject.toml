@@ -1,0 +1,16 @@
+[project]
+name = "cur-fixture"
+version = "0.1.0"
+description = "Synthetic AWS CUR 2.0 (BCM Data Exports) fixture generator for Cloudoptics tests (WBS IN-1)"
+requires-python = ">=3.12"
+dependencies = ["pyarrow>=17"]
+
+[project.scripts]
+cur-fixture = "cur_fixture.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cur_fixture"]
