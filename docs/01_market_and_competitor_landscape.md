@@ -399,7 +399,7 @@ The resource in `extra.md` ([morluto/rea](https://github.com/morluto/rea), "Reve
 
 **Open items to verify before Phase 2/10:**
 1. Current Vantage list prices (vantage.sh/pricing).
-2. Whether AWS invoices in NGN, KES and EGP as well as ZAR.
+2. ~~Whether AWS invoices in NGN, KES and EGP as well as ZAR.~~ Resolved in Phase 2: ZAR invoicing; NGN/EGP card payment only (since Jan 2025); KES unconfirmed.
 3. Exact data-residency and cross-border transfer rules under Nigeria's NDPA, Kenya's DPA and South Africa's POPIA.
 4. A list of African AWS partners/MSPs offering cost optimisation (AWS Partner Finder), as the likely local competitors and channel partners.
 5. The primary State of FinOps 2026 report (data.finops.org) for exact figures.
