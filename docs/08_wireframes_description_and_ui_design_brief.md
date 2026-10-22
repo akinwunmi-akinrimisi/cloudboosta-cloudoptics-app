@@ -342,7 +342,7 @@ Common layout: a Settings sub-nav on the left (Connections, Users & roles, Notif
 |---|---|
 | **Personality** | Modern, confident, warm-professional. "A sharp finance analyst who is also a great engineer." |
 | **Brand alignment** | Cloudoptics is a Cloudboosta product: use Cloudboosta's brand colours and logo system if they exist (designer to obtain brand guidelines). Cloudoptics needs a distinct product mark ("optics": lens/clarity motif) |
-| **Colour** | Neutral base (near-white/near-black surfaces, cool greys). One primary brand colour for actions and selection. **Semantic colours reserved for meaning:** green = savings/realised/healthy, amber = at risk/medium, red = over budget/high risk/failure, blue = information. **Chart palette:** 8 categorical colours, colour-blind safe, distinct from semantic colours; sequential palette for heat/intensity |
+| **Colour** | Cloudboosta brand palette (§2.2.1) on a neutral base (near-white surfaces, cool greys). **Semantic colours reserved for meaning:** green = savings/realised/healthy, amber = at risk/medium, red = over budget/high risk/failure, blue = information. **Chart palette:** 8 categorical colours, colour-blind safe, distinct from semantic colours; sequential palette for heat/intensity |
 | **Dark mode** | Supported via design tokens from the start (engineers expect it); light mode is the default |
 | **Typography** | A highly legible sans-serif with **tabular numerals** (e.g., Inter, IBM Plex Sans; final choice with brand). Monospace for IDs, ARNs and code snippets. Scale: 12/14/16/20/24/32; body 14px in data views, 16px in reading content |
 | **Iconography** | One consistent outline icon set (e.g., Lucide or Phosphor); AWS service icons used only in tables/legends (respect AWS trademark guidelines) |
@@ -350,6 +350,31 @@ Common layout: a Settings sub-nav on the left (Connections, Users & roles, Notif
 | **Density** | Two density modes for tables (comfortable / compact). Default comfortable |
 | **Motion** | Subtle (150–250 ms) for transitions and feedback; respect `prefers-reduced-motion` |
 | **Tone of voice** | Plain English, direct, specific ("Delete 14 unattached volumes to save $420/month"). Avoid jargon or explain it inline. Never blame users |
+
+### 2.2.1 Brand palette (confirmed 22 Oct 2026)
+
+Cloudboosta's two brand colours plus a complementary deep navy. Contrast ratios are WCAG 2.x values (AA needs ≥ 4.5:1 for normal text, ≥ 3:1 for large text and UI parts).
+
+| Token | Hex | Role | Use / don't use |
+|---|---|---|---|
+| `brand.blue` (Boosta Blue) | **#2C68FC** | Primary: buttons, links, selected states, active nav, focus ring, primary chart series | White text on blue = 4.67:1 ✓. Blue text on white = 4.67:1 ✓ (normal text OK). Hover/pressed: `#1F54D6` (6.37:1 on white) |
+| `brand.yellow` (Boosta Yellow) | **#FAC812** | Accent: "savings found" highlights, Top-5 badge, onboarding progress, marketing moments, KPI spotlight | **Never as text or icons on white** (1.57:1 ✗). Use as a fill with navy text (10.17:1 ✓). Not used for warnings, so it doesn't get confused with "at risk" |
+| `brand.navy` (Optics Navy — the complement) | **#0B1F4B** | Anchor neutral: headings and body text, side navigation background, report covers, dark-mode base | White on navy = 16.01:1 ✓; yellow on navy = 10.17:1 ✓. Blue on navy is only 3.42:1, so use `#5B8CFF` for links/accents on dark surfaces |
+
+**Why navy:** blue + yellow is a high-energy complementary pair. A deep, slightly desaturated navy from the same hue family as Boosta Blue calms it down, reads as "finance-grade trust", gives the strongest text contrast, and lets yellow work as a highlight without clashing.
+
+**Supporting semantic colours** (chosen to pass AA on white and to stay distinct from the brand colours):
+
+| Token | Light mode (on white) | Dark mode (on navy/near-black) |
+|---|---|---|
+| `success` (savings, verified, healthy) | `#0A7F5A` (5.0:1) | `#3DD598` (8.5:1 on navy) |
+| `danger` (over budget, high risk, failed) | `#B42318` (6.6:1) | `#FF6B5B` (5.7:1 on navy) |
+| `warning` (at risk, medium risk) | text `#B54708` (5.4:1) on tint `#FEF0C7` | `#FCD34D` text on navy (11.1:1) |
+| `info` | `brand.blue` | `#5B8CFF` |
+
+**Suggested proportions:** ~70% neutrals (white/greys), ~15% navy (text, nav), ~10% blue (actions, data), ≤ 5% yellow (highlights only). The chart palette starts with Boosta Blue, then colour-blind-safe hues (e.g., teal, orange, purple, pink, slate) that avoid the success/danger greens and reds.
+
+**Currency display:** the global currency toggle switches between **USD**, **local currency** and **both** (USD + local side by side). It is persisted per user, and every money value (`MoneyValue` component) follows it.
 
 ## 2.3 Component library expectations
 
@@ -441,5 +466,5 @@ Cloudoptics — MVP Product (product file)
 1. Final label for the main section: "Recommendations" vs "Savings" (Phase 7 card sort).
 2. Primary/secondary currency order by role: should Finance default to **local first**? (Proposed: yes.)
 3. Chart library choice and its accessibility support (decision with engineering in Phase 11).
-4. Cloudboosta brand guidelines availability and how strongly Cloudoptics should share the parent identity.
+4. ~~Cloudboosta brand guidelines availability.~~ Resolved: brand colours #2C68FC and #FAC812, with #0B1F4B navy as the complement (§2.2.1). Still open: logo and typography guidelines, and how strongly Cloudoptics shares the parent identity.
 5. Whether the Savings tracker should be a Kanban board or a funnel/list (test in round 1 usability).
