@@ -123,7 +123,9 @@ def app_secrets(cluster: dict[str, Any]) -> dict[str, str]:
     """Database URLs and a fresh data key. Only used to fill SECRET env vars in the spec."""
     cid = cluster["id"]
     users = {u["name"]: u for u in call("GET", f"/databases/{cid}/users")["users"]}
-    conn = cluster["private_connection"] or cluster["connection"]
+    # App Platform apps are not in the database VPC, so use the public host; the database
+    # firewall (set below) admits only this app, and connections require TLS.
+    conn = cluster["connection"]
     return {
         "OWNER_DATABASE_URL": _url(conn, "doadmin", users["doadmin"]["password"]),
         "APP_DATABASE_URL": _url(conn, DB_APP_USER, users[DB_APP_USER]["password"]),
@@ -161,7 +163,10 @@ def deploy_app(branch: str = "main") -> None:
     spec = render_spec(values)
     for site in spec.get("static_sites", []):
         site["git"]["branch"] = branch  # main normally; a feature branch for a trial deploy
-    call("POST", "/apps/propose", {"spec": spec})  # validates the spec
+    proposal: dict[str, Any] = {"spec": spec}
+    if existing:
+        proposal["app_id"] = existing["id"]  # lets already-encrypted secrets validate
+    call("POST", "/apps/propose", proposal)  # validates the spec
     if existing:
         app = call("PUT", f"/apps/{existing['id']}", {"spec": spec})["app"]
         print(f"updated app {APP_NAME} ({app['id']})")

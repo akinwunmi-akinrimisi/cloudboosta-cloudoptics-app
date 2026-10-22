@@ -1,0 +1,67 @@
+# Redeploys staging on DigitalOcean App Platform (ADR-013) after main publishes a new image.
+# Needs the repository secret DIGITALOCEAN_TOKEN; skips cleanly when it is not set.
+name: Deploy staging
+
+on:
+  workflow_run:
+    workflows: [Container]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  APP_ID: 3294882e-35ce-45b0-bb33-e7ce55062f22
+  APP_URL: https://cloudoptics.cloudboosta.com
+
+jobs:
+  deploy:
+    name: Deploy to App Platform
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    environment:
+      name: staging
+      url: https://cloudoptics.cloudboosta.com
+    steps:
+      - name: Start deployment
+        id: start
+        env:
+          TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::DIGITALOCEAN_TOKEN is not set; skipping the staging deploy."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          id=$(curl -sSf -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"force_build": true}' "https://api.digitalocean.com/v2/apps/$APP_ID/deployments" \
+            | jq -r .deployment.id)
+          echo "deployment=$id" >> "$GITHUB_OUTPUT"
+      - name: Wait until active
+        if: steps.start.outputs.skip != 'true'
+        env:
+          TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          DEPLOYMENT: ${{ steps.start.outputs.deployment }}
+        run: |
+          for i in $(seq 1 60); do
+            phase=$(curl -sSf -H "Authorization: Bearer $TOKEN" \
+              "https://api.digitalocean.com/v2/apps/$APP_ID/deployments/$DEPLOYMENT" | jq -r .deployment.phase)
+            echo "phase: $phase"
+            case "$phase" in
+              ACTIVE) break ;;
+              ERROR|CANCELED|SUPERSEDED) exit 1 ;;
+            esac
+            sleep 20
+          done
+          [ "$phase" = ACTIVE ]
+      - name: Smoke test
+        if: steps.start.outputs.skip != 'true'
+        run: |
+          curl -sSf "$APP_URL/api/readyz"
+          curl -sSf -o /dev/null "$APP_URL/"
