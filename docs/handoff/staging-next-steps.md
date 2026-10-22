@@ -1,0 +1,47 @@
+# Handoff: staging next steps (22 Oct 2026)
+
+For the next working session (environment **cba-cloudoptics**, which holds `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_API_KEY` and the DigitalOcean token).
+
+## Where things stand
+
+| Item | State |
+|---|---|
+| Public demo | https://akinwunmi-akinrimisi.github.io/cloudboosta-cloudoptics-app/ (GitHub Pages, demo data) |
+| Staging | https://cloudoptics.cloudboosta.com: DigitalOcean App Platform `cloudoptics-staging` (id `3294882e-35ce-45b0-bb33-e7ce55062f22`), London, API under `/api` |
+| Database | Managed PostgreSQL 16 `cloudoptics-pg`, database `cloudoptics`, app user `cloudoptics_app`; firewall admits only the app |
+| Deploys | `uv run python infra/digitalocean/provision.py app` (idempotent; `--branch` for trial deploys). After PR #6 merges, `deploy-staging.yml` redeploys on every merge once the repository secret `DIGITALOCEAN_TOKEN` exists |
+| Sign-in on staging | Not configured: API answers 503 on signed-in routes, the sign-in page says "being set up" |
+| CloudFormation | Quick-create disabled (`CLOUDOPTICS_CFN_QUICK_CREATE_ENABLED=false`); onboarding offers the template download from `/cfn/` |
+
+## 1. Check the credentials (read-only)
+
+```bash
+uv run python -c "import boto3; print(boto3.client('sts').get_caller_identity()['Arn'])"
+```
+
+The keys must be ordinary environment variables. If their values start with `prox`, they were saved as network secrets, which cannot work for AWS request signing.
+
+## 2. AWS: Cloudoptics' own account (ADR-007)
+
+In the account behind the keys (region `eu-west-2` for our resources; CloudFormation for customers stays in `us-east-1`):
+
+1. **Template bucket** `cloudoptics-public-<account-id>`: public read of `cfn/v1/*.yaml` only, versioning, TLS-only policy. Upload `infra/cloudformation/billing-role.yaml` and `resource-role.yaml`. Add a CI step that uploads them on merge when they change.
+2. **Broker role** `CloudopticsBroker`: may only `sts:AssumeRole` on `arn:aws:iam::*:role/CloudopticsBillingReadOnly` and `.../CloudopticsResourceReadOnly`. For staging, a dedicated IAM user `cloudoptics-staging-broker` whose only permission is assuming `CloudopticsBroker` (access key stored as App Platform secrets `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` on `api` and `worker`). Replace with IAM Roles Anywhere when we move to DOKS (spike CC-1).
+3. Update `infra/digitalocean/app.yaml` envs: `CLOUDOPTICS_CLOUDOPTICS_PRINCIPAL_ARN` (the broker role ARN), `CLOUDOPTICS_CFN_BILLING_TEMPLATE_URL`, `CLOUDOPTICS_CFN_RESOURCE_TEMPLATE_URL`, `CLOUDOPTICS_CFN_QUICK_CREATE_ENABLED=true`. `SessionFactory` must assume the broker role first, then the customer role (role chaining keeps the customer trust policy pointing at one stable ARN).
+4. Test end to end against a real account with `infra/cloudformation/billing-role.yaml`.
+
+Never commit keys. Rotate the admin key you were given once the broker user exists.
+
+## 3. WorkOS AuthKit sign-in (ADR-006)
+
+1. In the WorkOS dashboard: add redirect URI `https://cloudoptics.cloudboosta.com/auth/callback` (and `http://localhost:5173/auth/callback`). Add a JWT template that includes `email` (AuthKit access tokens do not carry it by default), or have the API fetch the user's email with the WorkOS API key on first sign-in.
+2. Web: add `@workos-inc/authkit-react` (pin an exact version) behind the existing `Api` interface; `HttpApi.signIn` redirects to AuthKit when `/v1/auth/config` says `oidc`.
+3. API: set `CLOUDOPTICS_OIDC_ISSUER`, `CLOUDOPTICS_OIDC_AUDIENCE` (client ID) and `CLOUDOPTICS_OIDC_JWKS_URL` (`https://api.workos.com/sso/jwks/<client_id>`) in `app.yaml`; check the issuer value against a real token before relying on it. Keep the API key as an App Platform secret only if the email lookup path is used.
+4. Tests: an OIDC verifier test with a locally generated RSA key and a fake JWKS endpoint.
+
+## 4. Other open items
+
+- Resolve the GitGuardian incident 38868057 (placeholder password in old commits) in the dashboard.
+- Branch protection on `main` (README).
+- Exchange rates: owner of daily updates and a backup (PRD Q3).
+- Sprint 2: billing ingestion (CUR 2.0 → normalised Parquet → daily aggregates), using `tools/cur-fixture` until a real export exists.
