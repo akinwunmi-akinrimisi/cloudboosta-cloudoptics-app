@@ -4,9 +4,17 @@ version = "0.1.0"
 description = "Cloudoptics backend (API, workers, engines) - modular monolith"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.14",
+    "boto3>=1.35",
+    "cryptography>=43",
+    "email-validator>=2.2",
     "fastapi>=0.115",
+    "procrastinate>=3.0",
+    "psycopg[binary,pool]>=3.2",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "pyjwt[crypto]>=2.10",
+    "sqlalchemy[asyncio]>=2.0.36",
     "structlog>=24.4",
     "uvicorn[standard]>=0.32",
 ]
