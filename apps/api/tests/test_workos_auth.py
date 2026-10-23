@@ -76,6 +76,8 @@ async def test_email_in_the_token_skips_the_lookup() -> None:
     [
         "https://api.workos.com",
         f"https://api.workos.com/user_management/{CLIENT_ID}",
+        # The environment's first client, as WorkOS publishes for every client in it.
+        "https://api.workos.com/user_management/client_01M5JKNXDQ23KT03A9NX7VTFAW",
         "https://appreciative-beauty-51.authkit.app",
     ],
 )
@@ -89,6 +91,8 @@ async def test_all_workos_issuer_forms_are_accepted(issuer: str) -> None:
         ({"iss": "https://evil.example"}, KEY),
         ({"iss": "https://x.authkit.app.evil.example"}, KEY),
         ({"iss": "http://x.authkit.app"}, KEY),
+        ({"iss": "https://api.workos.com/user_management/client_x/../evil"}, KEY),
+        ({"iss": "https://api.workos.com.evil.example/user_management/client_x"}, KEY),
         ({"client_id": "client_someone_else"}, KEY),
         ({"exp": int(time.time()) - 10}, KEY),
         ({}, OTHER_KEY),
