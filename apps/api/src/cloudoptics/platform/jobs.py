@@ -21,6 +21,7 @@ def get_job_app() -> procrastinate.App:
     from cloudoptics.connectors.jobs import blueprint as connector_jobs
     from cloudoptics.fx.feed import blueprint as fx_jobs
     from cloudoptics.ingestion.jobs import blueprint as ingestion_jobs
+    from cloudoptics.inventory.jobs import blueprint as inventory_jobs
 
     app = procrastinate.App(
         connector=procrastinate.PsycopgConnector(
@@ -30,6 +31,7 @@ def get_job_app() -> procrastinate.App:
     app.add_tasks_from(connector_jobs, namespace="connectors")
     app.add_tasks_from(ingestion_jobs, namespace="ingestion")
     app.add_tasks_from(fx_jobs, namespace="fx")
+    app.add_tasks_from(inventory_jobs, namespace="inventory")
     return app
 
 
