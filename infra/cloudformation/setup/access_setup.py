@@ -204,14 +204,13 @@ def bucket(kind, props):
     return {"BucketName": name, "Reused": str(reused).lower()}
 
 
-def is_management(account):
+def organization():
     try:
-        org = client("organizations").describe_organization()["Organization"]
+        return client("organizations").describe_organization()["Organization"]
     except ClientError as exc:
         if _code(exc) == "AWSOrganizationsNotInUseException":
-            return False
+            return None
         raise
-    return org["MasterAccountId"] == account
 
 
 def trusted_access():
@@ -221,22 +220,9 @@ def trusted_access():
     StackSets will create a service-managed stack set, and asking again is harmless.
     """
     cfn = client("cloudformation")
-    try:
-        cfn.activate_organizations_access()
-    except ClientError as exc:
-        if _code(exc) not in DENIED:
-            raise
-        # The same result by hand: the StackSets service-linked role, then trusted access.
-        try:
-            client("iam").create_service_linked_role(
-                AWSServiceName="stacksets.cloudformation.amazonaws.com"
-            )
-        except ClientError as iam_exc:
-            if _code(iam_exc) != "InvalidInput":  # the role already exists
-                raise
-        client("organizations").enable_aws_service_access(
-            ServicePrincipal="member.org.stacksets.cloudformation.amazonaws.com"
-        )
+    # Only CloudFormation can turn it on (enabling the service in Organizations is not enough).
+    # It needs iam:CreateServiceLinkedRole and iam:GetRole for the StackSets service-linked role.
+    cfn.activate_organizations_access()
     for _ in range(12):
         if cfn.describe_organizations_access()["Status"] == "ENABLED" or time_left() < 60:
             break
@@ -401,7 +387,8 @@ def callback(kind, props, management, rollout=None):
 
 
 def setup(kind, props):
-    management = is_management(props["AccountId"])
+    org = organization()
+    management = org is not None and org["MasterAccountId"] == props["AccountId"]
     if kind == "Delete":
         if management:
             # A rollout left behind is taken over by the next stack, so it never blocks a delete.
@@ -411,8 +398,15 @@ def setup(kind, props):
                 print(f"member rollout not removed: {type(exc).__name__}: {exc}")
         callback(kind, props, management)
         return None
-    rollout = "not an Organization's management account"
-    if management:
+    if not management:
+        rollout = "not an Organization's management account"
+    elif org.get("FeatureSet") != "ALL":
+        # Service-managed StackSets need all features, not only consolidated billing.
+        rollout = (
+            "skipped: turn on all features in AWS Organizations, then update this stack "
+            "to give member accounts their read-only role"
+        )
+    else:
         # Billing and this account's resource role work without it, so a failed rollout
         # does not undo the whole stack; updating the stack tries the rollout again.
         try:

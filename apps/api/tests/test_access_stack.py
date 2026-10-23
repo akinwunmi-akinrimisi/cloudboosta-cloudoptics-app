@@ -281,7 +281,9 @@ def test_standalone_account_reports_back_without_a_rollout(setup_step: Any) -> N
 
 def test_management_account_rolls_the_role_out_to_members(setup_step: Any) -> None:
     setup_step.clients["organizations"] = Fake(
-        describe_organization={"Organization": {"MasterAccountId": PROPS["AccountId"]}},
+        describe_organization={
+            "Organization": {"MasterAccountId": PROPS["AccountId"], "FeatureSet": "ALL"}
+        },
         list_roots={"Roots": [{"Id": "r-ab12"}]},
     )
     cfn = Fake(
@@ -309,7 +311,9 @@ def test_management_account_rolls_the_role_out_to_members(setup_step: Any) -> No
 
 def test_update_refreshes_the_existing_rollout(setup_step: Any) -> None:
     setup_step.clients["organizations"] = Fake(
-        describe_organization={"Organization": {"MasterAccountId": PROPS["AccountId"]}},
+        describe_organization={
+            "Organization": {"MasterAccountId": PROPS["AccountId"], "FeatureSet": "ALL"}
+        },
         list_roots={"Roots": [{"Id": "r-ab12"}]},
     )
     cfn = Fake(
@@ -328,7 +332,9 @@ def test_update_refreshes_the_existing_rollout(setup_step: Any) -> None:
 
 def test_delete_removes_the_rollout_and_tells_cloudoptics(setup_step: Any) -> None:
     setup_step.clients["organizations"] = Fake(
-        describe_organization={"Organization": {"MasterAccountId": PROPS["AccountId"]}},
+        describe_organization={
+            "Organization": {"MasterAccountId": PROPS["AccountId"], "FeatureSet": "ALL"}
+        },
         list_roots={"Roots": [{"Id": "r-ab12"}]},
     )
     cfn = Fake(
@@ -389,25 +395,34 @@ def test_access_denied_is_retried_while_iam_catches_up(setup_step: Any) -> None:
     assert len(setup_step.clients["organizations"].calls) == 3
 
 
-def test_trusted_access_falls_back_when_activation_is_refused(setup_step: Any) -> None:
-    orgs = Fake(
-        describe_organization={"Organization": {"MasterAccountId": PROPS["AccountId"]}},
-        list_roots={"Roots": [{"Id": "r-ab12"}]},
+def test_refused_trusted_access_is_reported_and_billing_still_connects(
+    setup_step: Any,
+) -> None:
+    """AWS allows turning it on only through CloudFormation, so there is no other route."""
+    cfn = _management(
+        setup_step, activate_organizations_access=client_error("AccessDeniedException")
     )
-    iam = Fake(create_service_linked_role=client_error("InvalidInput"))  # already there
-    cfn = Fake(
-        describe_organizations_access={"Status": "DISABLED"},
-        activate_organizations_access=client_error("AccessDeniedException"),
-        describe_stack_set=client_error("StackSetNotFoundException"),
-    )
-    setup_step.clients.update(organizations=orgs, iam=iam, cloudformation=cfn)
-    assert run(setup_step, "setup")["status"] == "SUCCESS"
-    assert cfn.names().count("activate_organizations_access") == 12
-    assert (
-        "enable_aws_service_access",
-        {"ServicePrincipal": "member.org.stacksets.cloudformation.amazonaws.com"},
-    ) in orgs.calls
-    assert "create_stack_set" in cfn.names()
+    reply = run(setup_step, "setup")
+    assert reply["status"] == "SUCCESS"
+    assert reply["data"]["MemberRollout"].startswith("failed: ClientError")
+    assert cfn.names().count("activate_organizations_access") == 12  # IAM propagation retries
+    assert "create_stack_set" not in cfn.names()
+    assert setup_step.posted[0]["memberRollout"].startswith("failed")
+
+
+def test_consolidated_billing_only_skips_the_member_rollout(setup_step: Any) -> None:
+    cfn = _management(setup_step)
+    setup_step.clients["organizations"].answers["describe_organization"] = {
+        "Organization": {
+            "MasterAccountId": PROPS["AccountId"],
+            "FeatureSet": "CONSOLIDATED_BILLING",
+        }
+    }
+    reply = run(setup_step, "setup")
+    assert reply["status"] == "SUCCESS"
+    assert reply["data"]["MemberRollout"].startswith("skipped: turn on all features")
+    assert "create_stack_set" not in cfn.names()
+    assert setup_step.posted[0]["management"] is True
 
 
 NO_ORG_ACCESS = ClientError(
@@ -424,7 +439,9 @@ NO_ORG_ACCESS = ClientError(
 
 def _management(setup_step: Any, **cfn_answers: Any) -> Any:
     setup_step.clients["organizations"] = Fake(
-        describe_organization={"Organization": {"MasterAccountId": PROPS["AccountId"]}},
+        describe_organization={
+            "Organization": {"MasterAccountId": PROPS["AccountId"], "FeatureSet": "ALL"}
+        },
         list_roots={"Roots": [{"Id": "r-ab12"}]},
     )
     answers = {
@@ -489,11 +506,8 @@ def test_setup_answers_before_the_function_times_out(setup_step: Any) -> None:
     cfn = _management(
         setup_step,
         describe_organizations_access={"Status": "DISABLED"},
-        activate_organizations_access=client_error("AccessDeniedException"),
         create_stack_set=NO_ORG_ACCESS,
     )
-    setup_step.clients["iam"] = Fake(create_service_linked_role=client_error("InvalidInput"))
-    setup_step.clients["organizations"].answers["enable_aws_service_access"] = {}
     event = {"RequestType": "Create", "ResourceProperties": {**PROPS, "Action": "setup"}}
     setup_step.module.handler(event, Context(900))
     reply = setup_step.sent[-1]
@@ -510,3 +524,10 @@ def test_trusted_access_may_read_the_stacksets_service_linked_roles() -> None:
     ][0]["PolicyDocument"]["Statement"]
     [read] = [s for s in statements if s["Sid"] == "StackSetsServiceLinkedRoleRead"]
     assert read["Action"] == "iam:GetRole"
+
+
+def test_custom_resources_time_out_soon_after_the_function() -> None:
+    resources = load("cloudoptics-access.yaml")["Resources"]
+    timeout = resources["SetupFunction"]["Properties"]["Timeout"]
+    for name in ("CleanUp", "CurBucket", "Setup"):
+        assert timeout < int(resources[name]["Properties"]["ServiceTimeout"]) <= timeout + 120

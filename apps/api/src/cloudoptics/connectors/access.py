@@ -331,7 +331,7 @@ async def stack_callback(body: StackCallback, session: Session) -> CallbackResul
             before={"stack": conn.stack_name},
             after={"stack": body.stack_name, "version": body.template_version},
         )
-    if body.member_rollout and body.member_rollout.startswith("failed"):
+    if body.member_rollout and body.member_rollout.startswith(("failed", "skipped")):
         # Shown in the audit log, so the reason is visible without the customer's AWS logs.
         await audit.record(
             session,
