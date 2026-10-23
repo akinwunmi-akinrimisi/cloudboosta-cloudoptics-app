@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     # "rates": {"NGN": 1530.2, ...}}, as open.er-api.com does. Empty: no feed.
     fx_feed_url: str = ""
 
+    # Email through Postmark (docs/11a). Without a server token, emails are logged and not
+    # sent. The sender's address or domain must be verified in Postmark.
+    postmark_server_token: str = ""
+    email_from: str = "CloudOptics <alerts@cloudboosta.com>"
+    # Public address of the web app, for links in emails.
+    app_url: str = "http://localhost:5173"
+
     @property
     def oidc_configured(self) -> bool:
         return bool(self.workos_client_id or self.oidc_jwks_url)

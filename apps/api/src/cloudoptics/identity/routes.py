@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Literal
 from zoneinfo import available_timezones
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Request, status
 from pydantic import EmailStr, Field, field_validator
 from sqlalchemy import text
 
@@ -105,18 +105,6 @@ class Member(ApiModel):
     display_name: str | None
     role: Role
     joined_at: datetime
-
-
-class AuditItem(ApiModel):
-    id: int
-    actor_type: str
-    actor_id: uuid.UUID | None
-    action: str
-    target_type: str | None
-    target_id: str | None
-    before: dict[str, object] | None
-    after: dict[str, object] | None
-    occurred_at: datetime
 
 
 # Literal statements only; request values are always bound parameters.
@@ -278,15 +266,3 @@ async def list_members(access: ViewerAccess, session: Session) -> list[Member]:
         {"t": access.tenant_id},
     )
     return [Member.model_validate(r._mapping) for r in rows]
-
-
-@router.get(
-    "/tenants/{tenant_id}/audit-log", response_model=list[AuditItem], response_model_by_alias=True
-)
-async def audit_log(
-    access: AdminAccess,
-    session: Session,
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
-) -> list[AuditItem]:
-    entries = await audit.list_entries(session, access.tenant_id, limit)
-    return [AuditItem.model_validate(e) for e in entries]

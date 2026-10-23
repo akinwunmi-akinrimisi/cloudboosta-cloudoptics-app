@@ -39,6 +39,8 @@ class ValidationResult:
     cur_export_arn: str | None = None
     est_cost_usd: float = 0.0
     error: dict[str, str] | None = field(default=None)
+    # Set by run_validation: a connection that was working got worse (alert the admins).
+    health_worsened: bool = False
 
     def checks_json(self) -> list[dict[str, Any]]:
         return [asdict(c) for c in self.checks]

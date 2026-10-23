@@ -45,6 +45,7 @@ services:
         key: CLOUDOPTICS_LOCAL_DATA_KEY
         type: SECRET
         value: __LOCAL_DATA_KEY__
+      - &env_app_url { key: CLOUDOPTICS_APP_URL, value: https://cloudoptics.cloudboosta.com }
       - key: CLOUDOPTICS_CORS_ORIGINS
         value: '["https://cloudoptics.cloudboosta.com"]'
       - key: CLOUDOPTICS_CFN_TEMPLATE_DOWNLOAD_BASE
@@ -56,7 +57,7 @@ workers:
     instance_size_slug: apps-s-1vcpu-0.5gb
     instance_count: 1
     run_command: python -m cloudoptics.worker
-    envs: [*env_environment, *env_auth, *env_jobs, *env_app_db, *env_data_key]
+    envs: [*env_environment, *env_auth, *env_jobs, *env_app_db, *env_data_key, *env_app_url]
 
 jobs:
   - name: migrate

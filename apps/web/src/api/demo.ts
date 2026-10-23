@@ -3,6 +3,8 @@ import { read, write } from '../lib/storage'
 import type {
   AccountList,
   Api,
+  AuditEntry,
+  AuditPage,
   CloudAccount,
   AuthConfig,
   Connection,
@@ -711,6 +713,52 @@ export class DemoApi implements Api {
     this.state.recommendationStatus[`${tenantId}:${id}`] = change.status
     this.save()
     return this.getRecommendation(tenantId, id)
+  }
+
+  // The demo has no stored audit trail: it lists what this browser's state implies.
+  async auditLog(tenantId: string): Promise<AuditPage> {
+    await this.tick()
+    const tenant = this.tenant(tenantId)
+    const me = this.requireMe()
+    const actor = { type: 'user' as const, email: me.email, name: me.displayName }
+    const entries: Omit<AuditEntry, 'id'>[] = [
+      {
+        occurredAt: tenant.createdAt,
+        actor,
+        action: 'tenant.created',
+        targetType: 'tenant',
+        targetId: tenant.id,
+        before: null,
+        after: { name: tenant.name, countryCode: tenant.countryCode },
+        ip: null,
+      },
+    ]
+    for (const c of this.state.connections[tenantId] ?? []) {
+      entries.push({
+        occurredAt: c.createdAt,
+        actor,
+        action: 'connection.created',
+        targetType: 'cloud_connection',
+        targetId: c.id,
+        before: null,
+        after: { awsAccountId: c.awsAccountId, accountType: c.accountType },
+        ip: null,
+      })
+      if (c.lastValidatedAt && c.status !== 'pending') {
+        entries.push({
+          occurredAt: c.lastValidatedAt,
+          actor,
+          action: 'connection.status_changed',
+          targetType: 'cloud_connection',
+          targetId: c.id,
+          before: { status: 'pending' },
+          after: { status: c.status },
+          ip: null,
+        })
+      }
+    }
+    entries.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
+    return { entries: entries.map((e, i) => ({ ...e, id: entries.length - i })), nextBefore: null, verified: true }
   }
 
   private hasData(tenantId: string): boolean {

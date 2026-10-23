@@ -3,6 +3,7 @@ import { read, write } from '../lib/storage'
 import type {
   AccountList,
   Api,
+  AuditPage,
   AuthConfig,
   AuthProvider,
   Connection,
@@ -115,6 +116,11 @@ export class HttpApi implements Api {
 
   updateRecommendation(tenantId: string, id: string, change: StatusChange): Promise<Recommendation> {
     return this.request('PATCH', `/v1/tenants/${tenantId}/recommendations/${id}`, change)
+  }
+
+  auditLog(tenantId: string, before?: number): Promise<AuditPage> {
+    const query = before === undefined ? '' : `?before=${before}`
+    return this.request('GET', `/v1/tenants/${tenantId}/audit-log${query}`)
   }
 
   listAccounts(tenantId: string): Promise<AccountList> {

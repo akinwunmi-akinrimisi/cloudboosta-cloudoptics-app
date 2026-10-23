@@ -103,7 +103,9 @@ async def test_admin_update_is_audited(client: AsyncClient, login) -> None:
     )
     assert r.status_code == 200
     assert r.json()["displayCurrency"] == "USD" and r.json()["mfaRequired"] is True
-    log = (await client.get(f"/v1/tenants/{tenant['id']}/audit-log", headers=headers)).json()
+    log = (await client.get(f"/v1/tenants/{tenant['id']}/audit-log", headers=headers)).json()[
+        "entries"
+    ]
     assert [e["action"] for e in log] == ["tenant.updated", "tenant.created"]
     assert log[0]["before"] == {"display_currency": "NGN", "mfa_required": False}
 

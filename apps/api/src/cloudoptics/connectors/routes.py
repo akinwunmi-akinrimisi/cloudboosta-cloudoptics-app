@@ -23,6 +23,7 @@ from cloudoptics.connectors.service import (
     run_validation,
 )
 from cloudoptics.identity.deps import AdminAccess, Session, ViewerAccess
+from cloudoptics.notifications.alerts import send_connection_alert
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
@@ -197,12 +198,14 @@ async def validate(
 ) -> Connection | ValidationAccepted:
     await _load(session, connection_id)
     if get_settings().jobs_mode == "inline":
-        await run_validation(
+        result = await run_validation(
             session,
             tenant_id=access.tenant_id,
             connection_id=connection_id,
             actor=user_actor(request, access.user.id),
         )
+        if result.health_worsened:
+            await send_connection_alert(session, access.tenant_id, connection_id)
         return _to_model(await _load(session, connection_id))
 
     from cloudoptics.platform.jobs import get_job_app
