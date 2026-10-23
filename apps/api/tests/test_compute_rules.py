@@ -205,3 +205,67 @@ def test_sizes_and_types() -> None:
     assert compute.split_type("db.r6g.2xlarge") == ("r6g", "2xlarge")
     assert compute.split_type("weird") is None
     assert compute.percentile([1.0, 2.0, 3.0, 100.0], 50) in (2.0, 3.0)
+
+
+def busy_server(ctx: Context, r: Resource, cpu: float, days: int = 33) -> None:
+    fill(ctx, r, "cpu_max", cpu, days)
+    fill(ctx, r, "network_in", 1e9, days)
+    fill(ctx, r, "network_out", 1e9, days)
+
+
+def test_rightsizing_one_size_down_with_headroom() -> None:
+    ctx = context()
+    r = server("m5.xlarge")
+    busy_server(ctx, r, 20.0)
+    [c] = run(compute.rightsizing, ctx, r)
+    assert c.rule_id == "R5_rightsize_ec2"
+    assert c.recommended_config == {"instanceType": "m5.large"}
+    assert c.savings == pytest.approx(0.096 * 730)
+    assert c.confidence == "medium" and "no_memory_data" in c.confidence_notes
+    projected = next(e for e in c.evidence if e["kind"] == "projectedCpuPercent")
+    assert projected["value"] == pytest.approx(52.0)  # p95 20% x 2 x 1.3 headroom
+    assert "Value=m5.large" in c.fix["steps"][2]
+
+    ctx = context()
+    busy_server(ctx, r, 20.0, days=20)
+    [c] = run(compute.rightsizing, ctx, r)
+    assert c.confidence == "low" and "short_history" in c.confidence_notes
+
+    # Production uses p99.5 with 20% headroom: 20 x 2 x 1.2 = 48%.
+    ctx = context()
+    prod = server("m5.xlarge", env="prod")
+    busy_server(ctx, prod, 20.0)
+    assert run(compute.rightsizing, ctx, prod)[0].rule_config["percentile"] == 99.5
+
+
+@pytest.mark.parametrize(
+    "change", ["too_busy", "spike", "optimized", "smallest", "burstable", "idle", "history"]
+)
+def test_rightsizing_is_cautious(change: str) -> None:
+    ctx = context()
+    kind = {"smallest": "m5.large", "burstable": "t3.xlarge"}.get(change, "m5.xlarge")
+    r = server(kind)
+    busy_server(
+        ctx, r, 30.0 if change == "too_busy" else 20.0, days=10 if change == "history" else 33
+    )
+    if change == "spike":
+        ctx.usage[r.id]["cpu_max"][NOW.date() - timedelta(days=5)][3] = 50.0
+    if change == "optimized":
+        r.config["computeOptimizer"] = {"finding": "Optimized", "options": []}
+    if change == "idle":
+        quiet_server(ctx, r)
+    assert run(compute.rightsizing, ctx, r) == []
+
+
+def test_rightsizing_shows_compute_optimizer_side_by_side() -> None:
+    ctx = context()
+    r = server("m5.xlarge")
+    r.config["computeOptimizer"] = {
+        "finding": "Overprovisioned",
+        "options": [{"instanceType": "m6g.large", "performanceRisk": 1.0, "rank": 1}],
+    }
+    busy_server(ctx, r, 10.0)
+    [c] = run(compute.rightsizing, ctx, r)
+    assert "compute_optimizer_agrees" in c.confidence_notes
+    optimizer = next(e for e in c.evidence if e["kind"] == "computeOptimizer")
+    assert optimizer["options"][0]["instanceType"] == "m6g.large"

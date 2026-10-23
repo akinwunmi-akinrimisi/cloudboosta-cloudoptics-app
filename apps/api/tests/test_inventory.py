@@ -170,6 +170,28 @@ class FakeCloudWatch:
         return {"MetricDataResults": results[1:]}
 
 
+class FakeComputeOptimizer:
+    def __init__(self, region: str, world: "World") -> None:
+        self.region = region
+        self.world = world
+
+    def get_ec2_instance_recommendations(self, **_: Any) -> dict[str, Any]:
+        if not self.world.optimizer:
+            raise client_error("OptInRequiredException")
+        return {
+            "instanceRecommendations": [
+                {
+                    "instanceArn": f"arn:aws:ec2:{self.region}:1:instance/i-{self.region}-1",
+                    "finding": self.world.optimizer,
+                    "recommendationOptions": [
+                        {"instanceType": "t3.nano", "performanceRisk": 1.0, "rank": 2},
+                        {"instanceType": "t4g.nano", "performanceRisk": 1.5, "rank": 1},
+                    ],
+                }
+            ]
+        }
+
+
 class World:
     def __init__(self) -> None:
         self.regions = ["eu-west-1", "af-south-1"]
@@ -179,6 +201,7 @@ class World:
         self.assumed: list[str] = []
         self.metric_calls: list[dict[str, Any]] = []
         self.metric_values: dict[str, float] = {}
+        self.optimizer: str | None = None
 
 
 class FakeSession:
@@ -192,6 +215,7 @@ class FakeSession:
             "elb": FakeElb,
             "rds": FakeRds,
             "cloudwatch": lambda: FakeCloudWatch(region, self.world),
+            "compute-optimizer": lambda: FakeComputeOptimizer(region, self.world),
         }[service]()
 
 
@@ -274,6 +298,25 @@ async def test_scan_stores_resources_and_access(
         connection,
     )[0][0]
     assert (lb["targets"], lb["healthyTargets"]) == (1, 0)
+    # Compute Optimizer is not turned on in this account: no findings, no failure.
+    instance = owner_sql(
+        "SELECT config FROM resource WHERE resource_id = 'i-eu-west-1-1' AND connection_id = %s",
+        connection,
+    )[0][0]
+    assert "computeOptimizer" not in instance
+    world.optimizer = "Overprovisioned"
+    assert await scanner.scan_connection(tid, cid) == "succeeded"
+    instance = owner_sql(
+        "SELECT config FROM resource WHERE resource_id = 'i-eu-west-1-1' AND connection_id = %s",
+        connection,
+    )[0][0]
+    assert instance["computeOptimizer"] == {
+        "finding": "Overprovisioned",
+        "options": [
+            {"instanceType": "t4g.nano", "performanceRisk": 1.5, "rank": 1},
+            {"instanceType": "t3.nano", "performanceRisk": 1.0, "rank": 2},
+        ],
+    }
 
     access = dict(
         owner_sql(

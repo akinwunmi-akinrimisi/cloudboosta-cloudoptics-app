@@ -17,6 +17,7 @@ const RULES: Record<string, string> = {
   R3_gp2_gp3: 'gp2 to gp3',
   R4_idle_ec2: 'Idle server',
   R4_idle_rds: 'Unused database',
+  R5_rightsize_ec2: 'Smaller server size',
   R6_newer_generation: 'Older server type',
   R6_graviton: 'Move to Graviton (Arm)',
 }
@@ -32,6 +33,7 @@ const FACTORS: Record<string, string> = {
   deletes_database: 'Removes a database (a final snapshot is kept)',
   restart_needed: 'The server restarts',
   architecture_change: 'Needs software built for Arm',
+  less_headroom: 'Less spare capacity after the change',
 }
 
 const NOTES: Record<string, string> = {
@@ -49,6 +51,10 @@ const NOTES: Record<string, string> = {
   needs_nitro_drivers: 'Newer types need the ENA and NVMe drivers; most current images already have them.',
   t3_unlimited_by_default:
     't3 servers can burst without limit by default, which can cost extra; set credits to "standard" to match t2.',
+  no_memory_data:
+    'AWS does not report memory use unless the CloudWatch agent is installed, so check memory before you resize.',
+  short_history: 'Based on less than a month of usage; month-end peaks may not be included yet.',
+  compute_optimizer_agrees: 'AWS Compute Optimizer also says this server is bigger than it needs to be.',
   arm64_build_needed: 'Your software needs an Arm version, so plan time to build and test it.',
 }
 

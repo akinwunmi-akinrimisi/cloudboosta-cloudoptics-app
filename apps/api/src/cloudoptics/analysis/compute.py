@@ -1,8 +1,9 @@
-"""Usage-based rules: R4 idle EC2 and RDS, R6 previous-generation and Graviton.
+"""Usage-based rules: R4 idle EC2 and RDS, R5 rightsizing, R6 previous-generation and
+Graviton.
 
-R4 (PRD FR-ANA-04/04b) reads the hourly CloudWatch values the metrics puller stores. R6
-(FR-ANA-06) needs only the inventory. Prices are on-demand list prices per family, scaled
-by size (migration 0013), so savings are labelled ``list_price``.
+R4 (PRD FR-ANA-04/04b) and R5 (FR-ANA-05) read the hourly CloudWatch values the metrics
+puller stores. R6 (FR-ANA-06) needs only the inventory. Prices are on-demand list prices
+per family, scaled by size (migration 0013), so savings are labelled ``list_price``.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from cloudoptics.analysis.rules import (
     _cli,
     _region_args,
     env_factor,
+    environment,
     parse_time,
     volume_month_cost,
 )
@@ -473,8 +475,119 @@ def previous_generation(ctx: Context, resources: list[Resource]) -> Iterator[Can
                 )
 
 
+# --- R5: EC2 rightsizing (FR-ANA-05) -----------------------------------------------------
+
+SIZE_ORDER = ["medium", "large", "xlarge", "2xlarge", "4xlarge", "8xlarge", "12xlarge",
+              "16xlarge", "24xlarge", "32xlarge", "48xlarge"]  # fmt: skip
+RIGHTSIZE_MIN_DAYS = 14
+RIGHTSIZE_DAYS = 32
+MAX_PROJECTED_PERCENTILE = 60.0
+MAX_PROJECTED_PEAK = 85.0
+
+
+def smaller_size(family: str, size: str) -> str | None:
+    if size not in SIZE_ORDER or SIZE_ORDER.index(size) == 0:
+        return None
+    target = SIZE_ORDER[SIZE_ORDER.index(size) - 1]
+    if target == "medium" and not family.endswith("g"):
+        return None  # x86 m/c/r families start at large
+    return target
+
+
+def rightsizing(ctx: Context, resources: list[Resource]) -> Iterator[Candidate]:
+    for r in resources:
+        if r.resource_type != "ec2_instance" or r.state != "running":
+            continue
+        if ignored(r) or ASG_TAG in r.tags:
+            continue
+        kind = str(r.config.get("instanceType"))
+        split = split_type(kind)
+        # Burstable types (t2/t3/t4g) depend on CPU credits, not a fixed share: left out.
+        if split is None or split[0].startswith("t"):
+            continue
+        family, size = split
+        target_size = smaller_size(family, size)
+        if target_size is None:
+            continue
+        days = RIGHTSIZE_DAYS
+        cpu = complete_days(ctx, r, "cpu_max", RIGHTSIZE_DAYS)
+        if not cpu:
+            days, cpu = RIGHTSIZE_MIN_DAYS, complete_days(ctx, r, "cpu_max", RIGHTSIZE_MIN_DAYS)
+        if not cpu or _idle_ec2(ctx, r, IDLE_DAYS) is not None:
+            continue  # too little history, or idle (R4 covers it)
+        optimizer = r.config.get("computeOptimizer") or {}
+        if optimizer.get("finding") in ("Optimized", "Underprovisioned"):
+            continue  # AWS disagrees: never recommend against its own finding
+        prod = environment(r.tags) == "prod"
+        pct, headroom = (99.5, 1.2) if prod else (95.0, 1.3)
+        ratio = (size_factor(size) or 1) / (size_factor(target_size) or 1)
+        projected = percentile(cpu, pct) * ratio * headroom
+        peak = max(cpu) * ratio
+        if projected > MAX_PROJECTED_PERCENTILE or peak > MAX_PROJECTED_PEAK:
+            continue
+        now = hourly_price(ctx.prices, r.region_id, "ec2_", family, size)
+        after = hourly_price(ctx.prices, r.region_id, "ec2_", family, target_size)
+        if now is None or after is None:
+            continue
+        target = f"{family}.{target_size}"
+        # No memory data (the CloudWatch agent is optional): confidence is at most medium.
+        confidence: Confidence = "medium" if days == RIGHTSIZE_DAYS else "low"
+        notes = ["no_memory_data", *_price_notes(now[1])]
+        if days < RIGHTSIZE_DAYS:
+            notes.append("short_history")
+        evidence: list[dict[str, Any]] = [
+            {"kind": "cpuPercentile", "percentile": pct, "value": round(percentile(cpu, pct), 2),
+             "days": days},
+            {"kind": "peakCpuPercent", "value": round(max(cpu), 2), "days": days},
+            {"kind": "projectedCpuPercent", "value": round(projected, 2), "headroom": headroom},
+        ]  # fmt: skip
+        if optimizer.get("finding"):
+            notes.append("compute_optimizer_agrees")
+            evidence.append(
+                {"kind": "computeOptimizer", "value": optimizer.get("finding"),
+                 "options": optimizer.get("options", [])}
+            )  # fmt: skip
+        name = r.name or r.resource_id
+        yield Candidate(
+            rule_id="R5_rightsize_ec2",
+            rule_version=1,
+            type="rightsize_instance",
+            resource=r,
+            title=f"Make server {name} one size smaller: {kind} to {target}",
+            current_config={"instanceType": kind},
+            recommended_config={"instanceType": target},
+            cost_now=now[0] * HOURS_PER_MONTH,
+            cost_after=after[0] * HOURS_PER_MONTH,
+            basis="list_price",
+            effort="S",
+            reversibility="reversible",
+            confidence=confidence,
+            confidence_notes=notes,
+            risk_factors=[
+                *env_factor(r.tags),
+                {"factor": "restart_needed", "points": 10},
+                {"factor": "less_headroom", "points": 15},
+            ],
+            evidence=evidence,
+            rule_config={
+                "percentile": pct,
+                "headroom": headroom,
+                "maxProjectedPercentile": MAX_PROJECTED_PERCENTILE,
+                "maxProjectedPeak": MAX_PROJECTED_PEAK,
+                "days": days,
+            },
+            restart_required=True,
+            fix={
+                **_change_type(r, target),
+                "notes": "The server stops for a few minutes while its size changes. Watch it "
+                "for a few days afterwards; going back is the same change in reverse.",
+            },
+        )
+
+
 COMPUTE_RULES: list[Callable[[Context, list[Resource]], Iterator[Candidate]]] = [
     idle_instances,
     idle_databases,
+    rightsizing,
     previous_generation,
 ]

@@ -268,10 +268,48 @@ def _db_instances(rds: Any) -> Iterator[ResourceRecord]:
         )
 
 
+def compute_optimizer_findings(optimizer: Any) -> dict[str, dict[str, Any]]:
+    """AWS Compute Optimizer's EC2 findings by instance ID (WBS CC-12, FR-ANA-05).
+
+    Empty when the account has not turned Compute Optimizer on: CloudOptics is read-only and
+    does not opt accounts in, so rightsizing then relies on its own check.
+    """
+    findings: dict[str, dict[str, Any]] = {}
+    try:
+        pages = _paged(
+            optimizer.get_ec2_instance_recommendations,
+            "instanceRecommendations",
+            "nextToken",
+            "nextToken",
+        )
+        for rec in pages:
+            instance_id = str(rec.get("instanceArn", "")).rsplit("/", 1)[-1]
+            options = sorted(rec.get("recommendationOptions", []), key=lambda o: o.get("rank", 99))
+            findings[instance_id] = {
+                "finding": rec.get("finding"),
+                "options": [
+                    {
+                        "instanceType": o.get("instanceType"),
+                        "performanceRisk": o.get("performanceRisk"),
+                        "rank": o.get("rank"),
+                    }
+                    for o in options[:3]
+                ],
+            }
+    except (ClientError, BotoCoreError):
+        return {}
+    return findings
+
+
 def scan_region(aws: Any, region: str) -> list[ResourceRecord]:
     ec2 = aws.client("ec2", region)
     records: list[ResourceRecord] = []
-    for lister in (_instances, _volumes, _snapshots, _addresses):
+    findings = compute_optimizer_findings(aws.client("compute-optimizer", region))
+    for instance in _instances(ec2):
+        if instance.resource_id in findings:
+            instance.config["computeOptimizer"] = findings[instance.resource_id]
+        records.append(instance)
+    for lister in (_volumes, _snapshots, _addresses):
         records.extend(lister(ec2))
     records.extend(_load_balancers(aws.client("elbv2", region), aws.client("elb", region)))
     records.extend(_db_instances(aws.client("rds", region)))
