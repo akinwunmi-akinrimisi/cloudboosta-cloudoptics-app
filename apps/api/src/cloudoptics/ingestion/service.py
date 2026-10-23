@@ -68,6 +68,7 @@ class IngestResult:
     rejected: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     records: int = 0
+    loaded_periods: list[date] = field(default_factory=list)
 
 
 def _discover(source: ExportSource, conn: Any) -> tuple[list[Manifest], list[str]]:
@@ -143,6 +144,7 @@ async def ingest_connection(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> I
             await _store(session, tenant_id, conn, loaded)
         if loaded.ok:
             result.loaded.append(label)
+            result.loaded_periods.append(manifest.billing_period)
             result.records += loaded.row_count
         else:
             result.rejected.append(label)

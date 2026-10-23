@@ -50,7 +50,7 @@ class Snapshot:
     calls: int = 0
 
 
-def _pages(ce: Any, **request: Any) -> tuple[list[dict[str, Any]], int]:
+def pages(ce: Any, **request: Any) -> tuple[list[dict[str, Any]], int]:
     results, calls, token = [], 0, None
     while True:
         page = ce.get_cost_and_usage(**request, **({"NextPageToken": token} if token else {}))
@@ -61,7 +61,7 @@ def _pages(ce: Any, **request: Any) -> tuple[list[dict[str, Any]], int]:
             return results, calls
 
 
-def _amount(metrics: dict[str, Any], name: str) -> float:
+def amount(metrics: dict[str, Any], name: str) -> float:
     metric = metrics.get(name) or {}
     unit = metric.get("Unit", "USD")
     if unit != "USD":
@@ -77,7 +77,7 @@ def fetch_snapshot(ce: Any, today: date) -> Snapshot | None:
     period = {"Start": start.isoformat(), "End": today.isoformat()}
     snap = Snapshot(period_start=start, through_date=today - timedelta(days=1))
 
-    daily, calls = _pages(
+    daily, calls = pages(
         ce,
         TimePeriod=period,
         Granularity="DAILY",
@@ -88,14 +88,14 @@ def fetch_snapshot(ce: Any, today: date) -> Snapshot | None:
     for result in daily:
         day = date.fromisoformat(result["TimePeriod"]["Start"])
         for group in result.get("Groups", []):
-            effective = _amount(group["Metrics"], "AmortizedCost")
+            effective = amount(group["Metrics"], "AmortizedCost")
             snap.daily[day] = snap.daily.get(day, 0.0) + effective
             snap.effective += effective
-            snap.billed += _amount(group["Metrics"], "UnblendedCost")
+            snap.billed += amount(group["Metrics"], "UnblendedCost")
             if group["Keys"][0] == "Credit":
                 snap.credits += effective
 
-    services, calls = _pages(
+    services, calls = pages(
         ce,
         TimePeriod=period,
         Granularity="MONTHLY",
@@ -106,7 +106,7 @@ def fetch_snapshot(ce: Any, today: date) -> Snapshot | None:
     by_service: dict[str, float] = defaultdict(float)
     for result in services:
         for group in result.get("Groups", []):
-            by_service[group["Keys"][0]] += _amount(group["Metrics"], "AmortizedCost")
+            by_service[group["Keys"][0]] += amount(group["Metrics"], "AmortizedCost")
     snap.by_service = {k: v for k, v in by_service.items() if round(v, 2) != 0}
     return snap
 

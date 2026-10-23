@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DemoApi } from '../api/demo'
 import { ApiProvider } from './context'
@@ -151,5 +151,34 @@ describe('Cloudoptics web app', () => {
     expect(screen.getByText(/^1 USD = ₦1,530.25$/)).toBeTruthy()
     expect(screen.getByText(/Official rate set by Cloudoptics staff/)).toBeTruthy()
     expect(screen.getAllByText(/^\$[\d,.]+ · ₦[\d,.]+$/).length).toBe(2)
+  })
+
+  it('warns when totals do not reconcile with AWS', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('nia@example.com')
+    const tenant = await api.createTenant({ name: 'Kigali Kloud', countryCode: 'RW' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '121212121212',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const real = await api.costSummary(tenant.id)
+    vi.spyOn(api, 'costSummary').mockResolvedValue({
+      ...real,
+      reconciliation: {
+        status: 'mismatch',
+        month: '2026-09',
+        differencePct: -1.83,
+        accountsMismatched: 1,
+        checkedAt: '2026-10-02T06:00:00Z',
+      },
+    })
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'nia@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(
+      await screen.findByText("September totals differ from AWS Cost Explorer by 1.8%. We're reconciling; figures may change."),
+    ).toBeTruthy()
   })
 })

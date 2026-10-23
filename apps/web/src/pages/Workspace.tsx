@@ -127,6 +127,11 @@ export function Overview() {
           recommendations appear here as soon as it lands.
         </Alert>
       )}
+      {summary.data?.reconciliation?.status === 'mismatch' && (
+        <Alert tone="warning">
+          {reconciliationMessage(summary.data.reconciliation.month, summary.data.reconciliation.differencePct)}
+        </Alert>
+      )}
       {summary.data?.status === 'provisional' && (
         <Alert tone="info">
           Provisional figures from AWS Cost Explorer. Full detail arrives with the first Cost and Usage
@@ -215,6 +220,12 @@ function TopSpend({ tenantId }: { tenantId: string }) {
       {items.length > 0 && <p className="mt-4 text-xs text-muted">Excludes tax</p>}
     </Card>
   )
+}
+
+function reconciliationMessage(month: string, differencePct: number | null): string {
+  const name = new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' })
+  const by = differencePct === null ? '' : ` by ${Math.abs(differencePct).toFixed(1)}%`
+  return `${name} totals differ from AWS Cost Explorer${by}. We're reconciling; figures may change.`
 }
 
 /** The exchange-rate tile: today's rate for the workspace currency, and where it came from. */

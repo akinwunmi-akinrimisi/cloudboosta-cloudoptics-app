@@ -120,6 +120,14 @@ export interface CostSummary {
   monthToDate: { effective: number; billed: number; credits: number } | null
   forecast: { amount: number; method: 'run_rate'; daysCovered: number; daysInMonth: number } | null
   previousMonth: number | null
+  /** The latest check of this or last month's totals against AWS Cost Explorer. */
+  reconciliation?: {
+    status: 'ok' | 'mismatch' | 'failed'
+    month: string
+    differencePct: number | null
+    accountsMismatched: number
+    checkedAt: string
+  } | null
 }
 
 export interface DailyCosts {

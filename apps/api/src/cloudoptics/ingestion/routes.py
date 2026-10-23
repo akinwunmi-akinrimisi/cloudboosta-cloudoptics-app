@@ -35,6 +35,16 @@ class Forecast(ApiModel):
 Source = Literal["cur", "cost_explorer"]
 
 
+class Reconciliation(ApiModel):
+    """``mismatch``: CUR totals differ from Cost Explorer by over 1% (show a banner)."""
+
+    status: Literal["ok", "mismatch", "failed"]
+    month: str
+    difference_pct: float | None
+    accounts_mismatched: int
+    checked_at: datetime
+
+
 class CostSummary(ApiModel):
     """``provisional``: no CUR data for the month yet, figures come from Cost Explorer."""
 
@@ -48,6 +58,7 @@ class CostSummary(ApiModel):
     month_to_date: MonthToDate | None
     forecast: Forecast | None
     previous_month: float | None
+    reconciliation: Reconciliation | None = None
 
 
 class DailyPoint(ApiModel):
