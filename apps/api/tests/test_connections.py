@@ -244,11 +244,15 @@ async def test_queue_mode_defers_a_job_that_the_worker_completes(
     assert status == "healthy"
     conn = (await client.get(f"/v1/tenants/{tenant}/connections/{cid}", headers=headers)).json()
     assert conn["status"] == "healthy"
-    # A healthy connection queues provisional Cost Explorer costs and, with an export, its
-    # first billing ingest straight away.
+    # A healthy connection queues provisional Cost Explorer costs, its first billing ingest
+    # (it has an export) and account discovery (which skips non-management accounts).
     queued = owner_sql(
         "SELECT task_name FROM procrastinate_jobs WHERE status = 'todo'"
         " AND args->>'connection_id' = %s ORDER BY id",
         cid,
     )
-    assert queued[-2:] == [("ingestion:ce.snapshot",), ("ingestion:cur.ingest",)]
+    assert queued[-3:] == [
+        ("ingestion:ce.snapshot",),
+        ("ingestion:cur.ingest",),
+        ("connectors:accounts.discover",),
+    ]

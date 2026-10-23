@@ -161,6 +161,25 @@ export interface CurrentRate {
   quote: FxQuote | null
 }
 
+export interface CloudAccount {
+  awsAccountId: string
+  name: string | null
+  accountType: 'management' | 'member' | 'standalone'
+  /** Status in the AWS Organization (ACTIVE, SUSPENDED, NOT_LISTED…); null if never discovered. */
+  orgStatus: string | null
+  orgSeenAt: string | null
+  /** The resource read-only role is deployed in this account. */
+  resourceAccess: boolean
+  /** The Cost and Usage Report has costs for it this month or last. */
+  hasCostData: boolean
+}
+
+export interface AccountList {
+  /** Counts accounts still in the organization. */
+  coverage: { accounts: number; withCostData: number; withResourceAccess: number }
+  accounts: CloudAccount[]
+}
+
 export interface Api {
   readonly mode: 'http' | 'demo'
   authConfig(): Promise<AuthConfig>
@@ -179,6 +198,7 @@ export interface Api {
   costDaily(tenantId: string): Promise<DailyCosts>
   costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown>
   fxCurrent(tenantId: string): Promise<CurrentRate>
+  listAccounts(tenantId: string): Promise<AccountList>
 }
 
 export class ApiError extends Error {

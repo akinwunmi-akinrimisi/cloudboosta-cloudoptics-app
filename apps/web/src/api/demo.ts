@@ -1,7 +1,9 @@
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
+  AccountList,
   Api,
+  CloudAccount,
   AuthConfig,
   Connection,
   ConnectionCreate,
@@ -366,6 +368,43 @@ export class DemoApi implements Api {
             estimated: false,
           }
         : null,
+    }
+  }
+
+  async listAccounts(tenantId: string): Promise<AccountList> {
+    await this.tick()
+    this.tenant(tenantId)
+    const now = new Date().toISOString()
+    const accounts: CloudAccount[] = []
+    for (const c of this.state.connections[tenantId] ?? []) {
+      if (c.status === 'disconnected' || c.status === 'pending') continue
+      const usable = c.status === 'healthy' || c.status === 'degraded'
+      const own: CloudAccount = {
+        awsAccountId: c.awsAccountId,
+        name: c.accountType === 'management' ? 'payer' : null,
+        accountType: c.accountType,
+        orgStatus: c.accountType === 'management' && usable ? 'ACTIVE' : null,
+        orgSeenAt: c.accountType === 'management' && usable ? now : null,
+        resourceAccess: false,
+        hasCostData: usable,
+      }
+      accounts.push(own)
+      if (c.accountType === 'management' && usable) {
+        accounts.push(
+          { ...own, awsAccountId: '111111111111', name: 'demo-prod', accountType: 'member' },
+          { ...own, awsAccountId: '333333333333', name: 'demo-dev', accountType: 'member' },
+          { ...own, awsAccountId: '444444444444', name: 'sandbox', accountType: 'member', hasCostData: false },
+        )
+      }
+    }
+    const current = accounts.filter((a) => a.orgStatus !== 'NOT_LISTED')
+    return {
+      coverage: {
+        accounts: current.length,
+        withCostData: current.filter((a) => a.hasCostData).length,
+        withResourceAccess: current.filter((a) => a.resourceAccess).length,
+      },
+      accounts,
     }
   }
 

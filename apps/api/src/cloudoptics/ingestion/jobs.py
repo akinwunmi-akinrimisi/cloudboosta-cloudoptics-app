@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import contextlib
 import uuid
 
 import procrastinate
-from procrastinate.exceptions import AlreadyEnqueued, AppNotOpen
 from sqlalchemy import text
 
 from cloudoptics.ingestion.explorer import refresh_snapshot
 from cloudoptics.ingestion.service import INGESTABLE, ingest_connection
 from cloudoptics.platform.db import get_sessionmaker, scheduler_scope
+from cloudoptics.platform.jobs import defer_once
 
 blueprint = procrastinate.Blueprint()
 
@@ -19,23 +18,9 @@ INGEST_TASK = "ingestion:cur.ingest"
 SNAPSHOT_TASK = "ingestion:ce.snapshot"
 
 
-async def _defer(app: procrastinate.App, name: str, lock: str, **kwargs: str) -> None:
-    """Queue a task once; a second request while one is queued is a no-op.
-
-    Works from a worker (the app is open) and from anywhere else (opened for the call).
-    """
-    task = app.configure_task(name, queueing_lock=lock)
-    with contextlib.suppress(AlreadyEnqueued):
-        try:
-            await task.defer_async(**kwargs)
-        except AppNotOpen:
-            async with app.open_async():
-                await task.defer_async(**kwargs)
-
-
 async def defer_ingest(app: procrastinate.App, tenant_id: str, connection_id: str) -> None:
     """Queue one ingest per connection."""
-    await _defer(
+    await defer_once(
         app,
         INGEST_TASK,
         f"ingest:{connection_id}",
@@ -46,7 +31,7 @@ async def defer_ingest(app: procrastinate.App, tenant_id: str, connection_id: st
 
 async def defer_snapshot(app: procrastinate.App, tenant_id: str, connection_id: str) -> None:
     """Queue one Cost Explorer snapshot per connection."""
-    await _defer(
+    await defer_once(
         app,
         SNAPSHOT_TASK,
         f"ce:{connection_id}",

@@ -233,7 +233,7 @@ function rateTile(currency: string, current: CurrentRate | undefined): { label: 
 }
 
 export function Connections() {
-  const { connections } = useWorkspace()
+  const { tenantId, connections } = useWorkspace()
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -278,7 +278,61 @@ export function Connections() {
           )}
         </Card>
       ))}
+      {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}
     </div>
+  )
+}
+
+function orgStatusLabel(status: string | null): string | null {
+  if (!status || status === 'ACTIVE') return null
+  if (status === 'NOT_LISTED') return 'No longer in the organization'
+  return status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, ' ')
+}
+
+/** Accounts from the AWS Organization and the bills, with coverage (PRD US-1.3). */
+function Accounts({ tenantId }: { tenantId: string }) {
+  const api = useApi()
+  const list = useQuery({ queryKey: ['accounts', tenantId], queryFn: () => api.listAccounts(tenantId) })
+  if (!list.data || list.data.accounts.length === 0) return null
+  const { coverage, accounts } = list.data
+  return (
+    <Card>
+      <h2 className="text-base font-semibold">AWS accounts</h2>
+      <p className="mt-1 text-sm text-secondary">
+        {coverage.withCostData} of {coverage.accounts} accounts have cost data ·{' '}
+        {coverage.withResourceAccess} of {coverage.accounts} have resource access for recommendations
+      </p>
+      <ul className="mt-4 divide-y divide-border">
+        {accounts.map((a) => {
+          const status = orgStatusLabel(a.orgStatus)
+          return (
+            <li key={a.awsAccountId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+              <div>
+                <p className="text-sm">
+                  {a.name ?? 'Unnamed account'} <span className="text-muted tabular-nums">{a.awsAccountId}</span>
+                </p>
+                <p className="text-xs text-muted">
+                  {a.accountType === 'management'
+                    ? 'Management (payer)'
+                    : a.accountType === 'member'
+                      ? 'Member'
+                      : 'Standalone'}
+                  {status && ` · ${status}`}
+                </p>
+              </div>
+              <div className="flex gap-2 text-xs">
+                <span className={a.hasCostData ? 'text-good-ink' : 'text-muted'}>
+                  {a.hasCostData ? 'Costs' : 'No costs yet'}
+                </span>
+                <span className={a.resourceAccess ? 'text-good-ink' : 'text-muted'}>
+                  {a.resourceAccess ? 'Resources' : 'No resource access'}
+                </span>
+              </div>
+            </li>
+          )
+        })}
+      </ul>
+    </Card>
   )
 }
 

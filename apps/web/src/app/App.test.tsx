@@ -101,6 +101,25 @@ describe('Cloudoptics web app', () => {
     await user.click(await screen.findByRole('link', { name: 'Connections' }))
     expect(await screen.findByText('AWS account 210987654321')).toBeTruthy()
     expect(screen.getByText('Read Savings Plans')).toBeTruthy()
+    expect(await screen.findByText('1 of 1 accounts have cost data', { exact: false })).toBeTruthy()
+  })
+
+  it('lists the accounts discovered in the organization', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('zola@example.com')
+    const tenant = await api.createTenant({ name: 'Joburg Group', countryCode: 'ZA' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '999988887777',
+      accountType: 'management',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'zola@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText('3 of 4 accounts have cost data', { exact: false })).toBeTruthy()
+    expect(screen.getByText('sandbox')).toBeTruthy()
   })
 
   it('fills the spend and forecast tiles once cost data exists', async () => {

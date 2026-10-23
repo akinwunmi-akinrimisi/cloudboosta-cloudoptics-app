@@ -80,6 +80,7 @@ def create_app() -> FastAPI:
 
     app.include_router(identity_routes.router)
     app.include_router(connector_routes.router)
+    app.include_router(connector_routes.accounts_router)
     app.include_router(ingestion_routes.router)
     app.include_router(fx_routes.router)
     if settings.auth_mode == "dev":

@@ -1,6 +1,7 @@
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
+  AccountList,
   Api,
   AuthConfig,
   AuthProvider,
@@ -92,6 +93,10 @@ export class HttpApi implements Api {
 
   costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown> {
     return this.request('GET', `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}`)
+  }
+
+  listAccounts(tenantId: string): Promise<AccountList> {
+    return this.request('GET', `/v1/tenants/${tenantId}/accounts`)
   }
 
   fxCurrent(tenantId: string): Promise<CurrentRate> {
