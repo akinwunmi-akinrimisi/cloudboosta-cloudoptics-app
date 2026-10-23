@@ -30,6 +30,14 @@ PREFS = {
 }
 DENIED = ("AccessDenied", "AccessDeniedException")
 ORG_ACCESS_TRIES = 12  # about 6 minutes, inside the function's 15
+# Kept back from the function's timeout for the callback and the reply to CloudFormation:
+# without a reply the stack waits an hour and then fails with no reason.
+RESERVE_SECONDS = 120
+_deadline = None
+
+
+def time_left():
+    return float("inf") if _deadline is None else _deadline - time.time()
 
 
 class _Retrying:
@@ -49,7 +57,7 @@ class _Retrying:
                 try:
                     return attr(*args, **kwargs)
                 except ClientError as exc:
-                    if _code(exc) not in DENIED or attempt == 11:
+                    if _code(exc) not in DENIED or attempt == 11 or time_left() < 30:
                         raise
                     time.sleep(10)
             return None
@@ -66,6 +74,9 @@ def _code(exc):
 
 
 def handler(event, context):
+    global _deadline
+    if context is not None:
+        _deadline = time.time() + context.get_remaining_time_in_millis() / 1000 - RESERVE_SECONDS
     props = event["ResourceProperties"]
     physical = event.get("PhysicalResourceId") or "cloudoptics-" + props["Action"]
     try:
@@ -193,14 +204,13 @@ def bucket(kind, props):
     return {"BucketName": name, "Reused": str(reused).lower()}
 
 
-def is_management(account):
+def organization():
     try:
-        org = client("organizations").describe_organization()["Organization"]
+        return client("organizations").describe_organization()["Organization"]
     except ClientError as exc:
         if _code(exc) == "AWSOrganizationsNotInUseException":
-            return False
+            return None
         raise
-    return org["MasterAccountId"] == account
 
 
 def trusted_access():
@@ -210,24 +220,11 @@ def trusted_access():
     StackSets will create a service-managed stack set, and asking again is harmless.
     """
     cfn = client("cloudformation")
-    try:
-        cfn.activate_organizations_access()
-    except ClientError as exc:
-        if _code(exc) not in DENIED:
-            raise
-        # The same result by hand: the StackSets service-linked role, then trusted access.
-        try:
-            client("iam").create_service_linked_role(
-                AWSServiceName="stacksets.cloudformation.amazonaws.com"
-            )
-        except ClientError as iam_exc:
-            if _code(iam_exc) != "InvalidInput":  # the role already exists
-                raise
-        client("organizations").enable_aws_service_access(
-            ServicePrincipal="member.org.stacksets.cloudformation.amazonaws.com"
-        )
-    for _ in range(30):
-        if cfn.describe_organizations_access()["Status"] == "ENABLED":
+    # Only CloudFormation can turn it on (enabling the service in Organizations is not enough).
+    # It needs iam:CreateServiceLinkedRole and iam:GetRole for the StackSets service-linked role.
+    cfn.activate_organizations_access()
+    for _ in range(12):
+        if cfn.describe_organizations_access()["Status"] == "ENABLED" or time_left() < 60:
             break
         time.sleep(5)
 
@@ -242,7 +239,7 @@ def with_org_access(call, tries=ORG_ACCESS_TRIES):
         try:
             return call()
         except ClientError as exc:
-            if not _no_org_access(exc) or attempt == tries - 1:
+            if not _no_org_access(exc) or attempt == tries - 1 or time_left() < 120:
                 raise
         trusted_access()
         time.sleep(30)
@@ -259,6 +256,8 @@ def wait_operation(cfn, operation_id):
         op = cfn.describe_stack_set_operation(StackSetName=STACKSET, OperationId=operation_id)
         if op["StackSetOperation"]["Status"] not in ("RUNNING", "QUEUED", "STOPPING"):
             return
+        if time_left() < 60:
+            raise TimeoutError(f"StackSet operation {operation_id} is still running")
         time.sleep(10)
 
 
@@ -345,7 +344,7 @@ def remove_stackset():
     cfn.delete_stack_set(StackSetName=STACKSET)
 
 
-def callback(kind, props, management):
+def callback(kind, props, management, rollout=None):
     body = json.dumps(
         {
             "requestType": kind,
@@ -358,6 +357,7 @@ def callback(kind, props, management):
             "curPrefix": props["CurPrefix"],
             "stackName": props["StackName"],
             "templateVersion": props["TemplateVersion"],
+            "memberRollout": rollout,
         }
     ).encode()
     error = "no answer"
@@ -387,14 +387,26 @@ def callback(kind, props, management):
 
 
 def setup(kind, props):
-    management = is_management(props["AccountId"])
+    org = organization()
+    management = org is not None and org["MasterAccountId"] == props["AccountId"]
     if kind == "Delete":
         if management:
-            remove_stackset()
+            # A rollout left behind is taken over by the next stack, so it never blocks a delete.
+            try:
+                remove_stackset()
+            except Exception as exc:
+                print(f"member rollout not removed: {type(exc).__name__}: {exc}")
         callback(kind, props, management)
         return None
-    rollout = "not an Organization's management account"
-    if management:
+    if not management:
+        rollout = "not an Organization's management account"
+    elif org.get("FeatureSet") != "ALL":
+        # Service-managed StackSets need all features, not only consolidated billing.
+        rollout = (
+            "skipped: turn on all features in AWS Organizations, then update this stack "
+            "to give member accounts their read-only role"
+        )
+    else:
         # Billing and this account's resource role work without it, so a failed rollout
         # does not undo the whole stack; updating the stack tries the rollout again.
         try:
@@ -403,7 +415,7 @@ def setup(kind, props):
         except Exception as exc:
             rollout = f"failed: {type(exc).__name__}: {exc}"[:400]
             print(f"member rollout {rollout}")
-    callback(kind, props, management)
+    callback(kind, props, management, rollout)
     return {"Management": str(management).lower(), "MemberRollout": rollout}
 
 

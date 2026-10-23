@@ -126,6 +126,8 @@ class StackCallback(ApiModel):
     cur_prefix: str | None = Field(default=None, max_length=512)
     stack_name: str = Field(max_length=128)
     template_version: str = Field(pattern=r"^\d+(\.\d+){0,3}$")
+    # How rolling the resource role out to member accounts went ("started", "failed: ...").
+    member_rollout: str | None = Field(default=None, max_length=500)
 
 
 class CallbackResult(ApiModel):
@@ -328,6 +330,17 @@ async def stack_callback(body: StackCallback, session: Session) -> CallbackResul
             target_id=str(conn.id),
             before={"stack": conn.stack_name},
             after={"stack": body.stack_name, "version": body.template_version},
+        )
+    if body.member_rollout and body.member_rollout.startswith(("failed", "skipped")):
+        # Shown in the audit log, so the reason is visible without the customer's AWS logs.
+        await audit.record(
+            session,
+            tenant_id=body.tenant_id,
+            actor=Actor(type="system"),
+            action="connection.member_rollout_failed",
+            target_type="cloud_connection",
+            target_id=str(conn.id),
+            after={"reason": body.member_rollout},
         )
     await start_validation(session, body.tenant_id, conn.id, Actor(type="system"))
     return CallbackResult(connection_id=conn.id, status="accepted")
