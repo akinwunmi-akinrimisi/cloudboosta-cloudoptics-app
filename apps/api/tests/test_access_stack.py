@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from botocore.exceptions import ClientError
 from fake_aws import client_error
 from test_cloudformation import TEMPLATES, WRITE_VERBS, load
 
@@ -262,7 +263,10 @@ def test_standalone_account_reports_back_without_a_rollout(setup_step: Any) -> N
     reply = run(setup_step, "setup")
     assert reply == {
         "status": "SUCCESS",
-        "data": {"Management": "false"},
+        "data": {
+            "Management": "false",
+            "MemberRollout": "not an Organization's management account",
+        },
         "physical": "cloudoptics-setup",
         "reason": None,
     }
@@ -286,7 +290,7 @@ def test_management_account_rolls_the_role_out_to_members(setup_step: Any) -> No
     )
     setup_step.clients["cloudformation"] = cfn
     reply = run(setup_step, "setup")
-    assert reply["data"] == {"Management": "true"}
+    assert reply["data"] == {"Management": "true", "MemberRollout": "started"}
     calls = dict(cfn.calls)
     assert calls["create_stack_set"]["PermissionModel"] == "SERVICE_MANAGED"
     assert calls["create_stack_set"]["AutoDeployment"]["Enabled"] is True
@@ -404,3 +408,61 @@ def test_trusted_access_falls_back_when_activation_is_refused(setup_step: Any) -
         {"ServicePrincipal": "member.org.stacksets.cloudformation.amazonaws.com"},
     ) in orgs.calls
     assert "create_stack_set" in cfn.names()
+
+
+NO_ORG_ACCESS = ClientError(
+    {
+        "Error": {
+            "Code": "ValidationError",
+            "Message": "You must enable organizations access to operate a service managed "
+            "stack set",
+        }
+    },
+    "CreateStackSet",
+)
+
+
+def _management(setup_step: Any, **cfn_answers: Any) -> Any:
+    setup_step.clients["organizations"] = Fake(
+        describe_organization={"Organization": {"MasterAccountId": PROPS["AccountId"]}},
+        list_roots={"Roots": [{"Id": "r-ab12"}]},
+    )
+    cfn = Fake(
+        describe_organizations_access={"Status": "ENABLED"},
+        describe_stack_set=client_error("StackSetNotFoundException"),
+        **cfn_answers,
+    )
+    setup_step.clients["cloudformation"] = cfn
+    return cfn
+
+
+def test_trusted_access_is_asked_for_even_when_it_reads_as_on(setup_step: Any) -> None:
+    cfn = _management(setup_step)
+    assert run(setup_step, "setup")["status"] == "SUCCESS"
+    assert "activate_organizations_access" in cfn.names()
+
+
+def test_stackset_waits_for_trusted_access_to_reach_stacksets(setup_step: Any) -> None:
+    tries = iter([NO_ORG_ACCESS, NO_ORG_ACCESS])
+
+    def create(**_: Any) -> Any:
+        error = next(tries, None)
+        if error:
+            raise error
+        return {"StackSetId": "s1"}
+
+    cfn = _management(setup_step, create_stack_set=create)
+    reply = run(setup_step, "setup")
+    assert reply["data"]["MemberRollout"] == "started"
+    assert cfn.names().count("create_stack_set") == 3
+    assert cfn.names().count("activate_organizations_access") == 3
+    assert "create_stack_instances" in cfn.names()
+
+
+def test_a_failed_rollout_keeps_the_stack_and_still_connects(setup_step: Any) -> None:
+    cfn = _management(setup_step, create_stack_set=NO_ORG_ACCESS)
+    reply = run(setup_step, "setup")
+    assert reply["status"] == "SUCCESS"
+    assert reply["data"]["MemberRollout"].startswith("failed: ClientError")
+    assert cfn.names().count("create_stack_set") == setup_step.module.ORG_ACCESS_TRIES
+    assert setup_step.posted[0]["requestType"] == "Create"
