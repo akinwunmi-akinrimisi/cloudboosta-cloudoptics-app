@@ -45,13 +45,19 @@ async def validate_connection(tenant_id: str, connection_id: str) -> str:
         await defer_snapshot(app, tenant_id, connection_id)
         if result.cur_bucket:
             await defer_ingest(app, tenant_id, connection_id)
+        # Discovery runs first so the inventory scan it queues covers every member account.
         await defer_discovery(app, tenant_id, connection_id)
     return result.status
 
 
 @blueprint.task(name="accounts.discover", queue="connections", retry=2)
 async def discover(tenant_id: str, connection_id: str) -> str:
-    return await discover_accounts(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    status = await discover_accounts(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    from cloudoptics.inventory.jobs import defer_scan
+    from cloudoptics.platform.jobs import get_job_app
+
+    await defer_scan(get_job_app(), tenant_id, connection_id)
+    return status
 
 
 @blueprint.periodic(cron="23 */12 * * *")

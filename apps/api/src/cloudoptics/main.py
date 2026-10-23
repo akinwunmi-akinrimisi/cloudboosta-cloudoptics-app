@@ -13,6 +13,7 @@ from cloudoptics.fx import routes as fx_routes
 from cloudoptics.identity import dev as dev_routes
 from cloudoptics.identity import routes as identity_routes
 from cloudoptics.ingestion import routes as ingestion_routes
+from cloudoptics.inventory import routes as inventory_routes
 from cloudoptics.platform.db import get_engine
 from cloudoptics.platform.settings import get_settings
 
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(connector_routes.accounts_router)
     app.include_router(ingestion_routes.router)
     app.include_router(fx_routes.router)
+    app.include_router(inventory_routes.router)
     if settings.auth_mode == "dev":
         app.include_router(dev_routes.router)
     return app
