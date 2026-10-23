@@ -2,9 +2,9 @@
 
 For every account of a connection, assume ``CloudopticsResourceReadOnly`` (the optional
 stage-2 stack, same External ID as the billing role) and list, in each enabled region, the
-resources the first recommendation rules need: EC2 instances, EBS volumes and snapshots,
-Elastic IPs and load balancers (ALB/NLB/GWLB and Classic). An account whose role cannot
-be assumed is marked without resource access and skipped. Regions are scanned four at a
+resources the recommendation rules need: EC2 instances, EBS volumes and snapshots, Elastic
+IPs, load balancers (ALB/NLB/GWLB and Classic) and RDS DB instances. An account whose role
+cannot be assumed is marked without resource access and skipped. Regions are scanned four at a
 time (docs/11b §1.4). Only a region that scanned completely can mark resources deleted.
 """
 
@@ -246,12 +246,35 @@ def _load_balancers(elbv2: Any, elb: Any) -> Iterator[ResourceRecord]:
         )
 
 
+def _db_instances(rds: Any) -> Iterator[ResourceRecord]:
+    for db in _paged(rds.describe_db_instances, "DBInstances", "Marker", "Marker"):
+        yield ResourceRecord(
+            "rds_instance",
+            db["DBInstanceIdentifier"],
+            db.get("DBInstanceStatus"),
+            {
+                "instanceClass": db.get("DBInstanceClass"),
+                "engine": db.get("Engine"),
+                "engineVersion": db.get("EngineVersion"),
+                "multiAz": db.get("MultiAZ", False),
+                "storageType": db.get("StorageType"),
+                "allocatedStorageGiB": db.get("AllocatedStorage"),
+                "createTime": db.get("InstanceCreateTime"),
+                "clusterId": db.get("DBClusterIdentifier"),
+                "readReplicaOf": db.get("ReadReplicaSourceDBInstanceIdentifier"),
+            },
+            _tags(db.get("TagList")),
+            arn=db.get("DBInstanceArn"),
+        )
+
+
 def scan_region(aws: Any, region: str) -> list[ResourceRecord]:
     ec2 = aws.client("ec2", region)
     records: list[ResourceRecord] = []
     for lister in (_instances, _volumes, _snapshots, _addresses):
         records.extend(lister(ec2))
     records.extend(_load_balancers(aws.client("elbv2", region), aws.client("elb", region)))
+    records.extend(_db_instances(aws.client("rds", region)))
     return records
 
 

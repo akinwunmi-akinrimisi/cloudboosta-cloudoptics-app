@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # "rates": {"NGN": 1530.2, ...}}, as open.er-api.com does. Empty: no feed.
     fx_feed_url: str = ""
 
+    # GetMetricData metric queries each tenant may spend per day (WBS CC-13). AWS bills
+    # $0.01 per 1,000 metrics, so 20,000 is about $0.20 a day in the customer's account.
+    metrics_daily_budget: int = 20_000
+
     # Email through Postmark (docs/11a). Without a server token, emails are logged and not
     # sent. The sender's address or domain must be verified in Postmark.
     postmark_server_token: str = ""

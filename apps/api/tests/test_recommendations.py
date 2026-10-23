@@ -274,18 +274,25 @@ async def test_scan_job_queues_analysis(
     import cloudoptics.platform.jobs as platform_jobs
     from cloudoptics.analysis import jobs as analysis_jobs
     from cloudoptics.inventory import jobs
+    from cloudoptics.metrics import jobs as metrics_jobs
 
     tenant, connection, _, _ = await setup(client, login, owner_sql)
     world.no_access = {"555555555555"}
     queued: list[str] = []
 
-    async def fake_defer(app, tenant_id):  # type: ignore[no-untyped-def]
-        queued.append(tenant_id)
+    async def fake_pull(app, tenant_id, connection_id):  # type: ignore[no-untyped-def]
+        queued.append(f"pull {connection_id}")
 
+    async def fake_defer(app, tenant_id):  # type: ignore[no-untyped-def]
+        queued.append(f"analysis {tenant_id}")
+
+    monkeypatch.setattr(metrics_jobs, "defer_pull", fake_pull)
     monkeypatch.setattr(analysis_jobs, "defer_analysis", fake_defer)
     monkeypatch.setattr(platform_jobs, "get_job_app", lambda: None)
     assert await jobs.scan(tenant, connection) == "succeeded"
-    assert queued == [tenant]
+    assert queued == [f"pull {connection}"]
+    assert await metrics_jobs.pull(tenant, connection) == "succeeded"
+    assert queued == [f"pull {connection}", f"analysis {tenant}"]
     assert await analysis_jobs.run(tenant) == 10
 
 
