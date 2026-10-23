@@ -6,6 +6,7 @@ import type {
   Connection,
   ConnectionCreate,
   ConnectionSetup,
+  CostSummary,
   Me,
   PermissionCheck,
   Tenant,
@@ -237,6 +238,41 @@ export class DemoApi implements Api {
     })
     this.save()
     return structuredClone(conn)
+  }
+
+  async costSummary(tenantId: string): Promise<CostSummary> {
+    await this.tick()
+    this.tenant(tenantId)
+    const now = new Date()
+    const month = now.toISOString().slice(0, 7)
+    const connected = (this.state.connections[tenantId] ?? []).filter((c) => c.status !== 'disconnected')
+    const empty: CostSummary = {
+      status: connected.length ? 'waiting' : 'no_connection',
+      month,
+      currency: 'USD',
+      dataThrough: null,
+      lastLoadAt: null,
+      lastLoadStatus: null,
+      monthToDate: null,
+      forecast: null,
+      previousMonth: null,
+    }
+    if (!connected.some((c) => c.status === 'healthy' || c.status === 'degraded')) return empty
+    // Illustrative figures in the shape of tools/cur-fixture: about USD 41 a day.
+    const days = Math.max(now.getUTCDate() - 1, 1)
+    const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate()
+    const daily = 41.26
+    const through = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), days))
+    return {
+      ...empty,
+      status: 'ready',
+      dataThrough: through.toISOString().slice(0, 10),
+      lastLoadAt: now.toISOString(),
+      lastLoadStatus: 'succeeded',
+      monthToDate: { effective: daily * days, billed: daily * days, credits: -2 * days },
+      forecast: { amount: daily * daysInMonth, method: 'run_rate', daysCovered: days, daysInMonth },
+      previousMonth: 1237.75,
+    }
   }
 
   private connection(tenantId: string, connectionId: string): Connection {
