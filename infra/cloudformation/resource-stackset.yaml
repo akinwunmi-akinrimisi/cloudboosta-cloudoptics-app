@@ -2,27 +2,20 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   Cloudoptics stage 2 for an AWS Organization: deploy from the management account to roll
   the read-only resource role (resource-role.yaml) out to every member account, including
-  accounts added later, with a service-managed StackSet. The management account itself is
-  not covered by the StackSet; it uses resource-role.yaml directly. Needs trusted access for
-  CloudFormation StackSets turned on in AWS Organizations (one time). PRD FR-CON-03/13.
+  accounts added later, with a service-managed StackSet. A setup step turns on trusted
+  access for CloudFormation StackSets in AWS Organizations (if it is off) and finds the
+  organization root, so nothing has to be done by hand. The management account itself is
+  not covered by the StackSet; it uses resource-role.yaml directly. PRD FR-CON-03/13.
 
 Metadata:
   cloudoptics:
-    templateVersion: "1.0.0"
+    templateVersion: "1.1.0"
   AWS::CloudFormation::Interface:
     ParameterGroups:
-      - Label: { default: Your organization }
-        Parameters: [OrganizationRootId]
       - Label: { default: Connection (pre-filled by Cloudoptics) }
         Parameters: [ExternalId, CloudopticsPrincipalArn, ResourceTemplateUrl]
 
 Parameters:
-  OrganizationRootId:
-    Type: String
-    AllowedPattern: "r-[0-9a-z]{4,32}"
-    Description: >-
-      The root of your organization, from AWS Organizations > AWS accounts (starts with r-).
-      Every account under it gets the role.
   ExternalId:
     Type: String
     NoEcho: true
@@ -38,6 +31,87 @@ Parameters:
     Description: The Cloudoptics resource-role.yaml template in S3.
 
 Resources:
+  # Runs once while the stack is created, in this (the customer's) account. It is not
+  # Cloudoptics access: Cloudoptics never assumes this role.
+  OrgSetupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Lets the Cloudoptics setup step turn on StackSets trusted access.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: stacksets-trusted-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # These Organizations and CloudFormation actions have no resource-level scope.
+              - Sid: TrustedAccessAndRoot
+                Effect: Allow
+                Action:
+                  - cloudformation:ActivateOrganizationsAccess
+                  - cloudformation:DescribeOrganizationsAccess
+                  - organizations:EnableAWSServiceAccess
+                  - organizations:ListAWSServiceAccessForOrganization
+                  - organizations:DescribeOrganization
+                  - organizations:ListRoots
+                Resource: "*"
+              - Sid: StackSetsServiceLinkedRole
+                Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: "*"
+                Condition:
+                  StringLike:
+                    iam:AWSServiceName: "*stacksets.cloudformation.amazonaws.com"
+
+  OrgSetupFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Cloudoptics setup step for the organization-wide resource role.
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 300
+      Role: !GetAtt OrgSetupRole.Arn
+      Code:
+        ZipFile: |
+          import time
+          import boto3
+          import cfnresponse
+
+
+          def handler(event, context):
+              if event["RequestType"] == "Delete":
+                  # Trusted access stays on: other StackSets may use it.
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, "cloudoptics-org-setup")
+                  return
+              try:
+                  cfn = boto3.client("cloudformation")
+                  if cfn.describe_organizations_access()["Status"] != "ENABLED":
+                      cfn.activate_organizations_access()
+                      for _ in range(30):
+                          if cfn.describe_organizations_access()["Status"] == "ENABLED":
+                              break
+                          time.sleep(5)
+                      time.sleep(15)  # let the new access reach the StackSets service
+                  roots = boto3.client("organizations").list_roots()["Roots"]
+                  data = {"RootId": roots[0]["Id"]}
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, data, "cloudoptics-org-setup")
+              except Exception as exc:  # report every failure to CloudFormation
+                  cfnresponse.send(
+                      event, context, cfnresponse.FAILED, {}, "cloudoptics-org-setup",
+                      reason=f"{type(exc).__name__}: {exc}"[:200],
+                  )
+
+  OrgSetup:
+    Type: Custom::CloudopticsOrgSetup
+    Properties:
+      ServiceToken: !GetAtt OrgSetupFunction.Arn
+
   ResourceStackSet:
     Type: AWS::CloudFormation::StackSet
     Properties:
@@ -56,7 +130,7 @@ Resources:
       # IAM is global: one region is enough.
       StackInstancesGroup:
         - DeploymentTargets:
-            OrganizationalUnitIds: [!Ref OrganizationRootId]
+            OrganizationalUnitIds: [!GetAtt OrgSetup.RootId]
           Regions: [us-east-1]
       OperationPreferences:
         RegionConcurrencyType: PARALLEL
@@ -66,3 +140,5 @@ Resources:
 Outputs:
   StackSetId:
     Value: !Ref ResourceStackSet
+  OrganizationRootId:
+    Value: !GetAtt OrgSetup.RootId
