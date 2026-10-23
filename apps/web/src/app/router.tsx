@@ -12,6 +12,8 @@ import {
 import type { Api, Me } from '../api/types'
 import { Onboarding } from '../pages/Onboarding'
 import { SignIn } from '../pages/SignIn'
+import { Costs } from '../pages/Costs'
+import { RecommendationDetail, Recommendations } from '../pages/Recommendations'
 import { ComingSoon, Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
 
@@ -25,14 +27,21 @@ const root = createRootRouteWithContext<RouterContext>()({ component: Outlet })
 async function loadMe({ api, queryClient }: RouterContext): Promise<Me> {
   if (!api.isSignedIn()) throw redirect({ to: '/sign-in' })
   try {
-    return await queryClient.ensureQueryData({ queryKey: ['me'], queryFn: () => api.me() })
+    return await queryClient.ensureQueryData({
+      queryKey: ['me'],
+      queryFn: () => api.me(),
+    })
   } catch {
     api.signOut()
     throw redirect({ to: '/sign-in' })
   }
 }
 
-const signIn = createRoute({ getParentRoute: () => root, path: '/sign-in', component: SignIn })
+const signIn = createRoute({
+  getParentRoute: () => root,
+  path: '/sign-in',
+  component: SignIn,
+})
 
 const index = createRoute({
   getParentRoute: () => root,
@@ -67,7 +76,11 @@ const app = createRoute({
   component: AppShell,
 })
 
-const overview = createRoute({ getParentRoute: () => app, path: '/overview', component: Overview })
+const overview = createRoute({
+  getParentRoute: () => app,
+  path: '/overview',
+  component: Overview,
+})
 const connections = createRoute({
   getParentRoute: () => app,
   path: '/settings/connections',
@@ -76,24 +89,20 @@ const connections = createRoute({
 const costs = createRoute({
   getParentRoute: () => app,
   path: '/costs',
-  component: () => (
-    <ComingSoon
-      title="Cost Explorer"
-      sprint="Sprint 3"
-      what="Spend by service, account, region and tag, in USD and local currency."
-    />
-  ),
+  component: Costs,
 })
 const recommendations = createRoute({
   getParentRoute: () => app,
   path: '/recommendations',
-  component: () => (
-    <ComingSoon
-      title="Recommendations"
-      sprint="Sprints 3–4"
-      what="Savings ranked by impact and risk, each with evidence, a guided fix and a rollback."
-    />
-  ),
+  component: Recommendations,
+})
+const recommendation = createRoute({
+  getParentRoute: () => app,
+  path: '/recommendations/$recommendationId',
+  component: function RecommendationRoute() {
+    const { recommendationId } = recommendation.useParams()
+    return <RecommendationDetail recommendationId={recommendationId} />
+  },
 })
 const anomalies = createRoute({
   getParentRoute: () => app,
@@ -126,7 +135,17 @@ const routeTree = root.addChildren([
   signIn,
   index,
   onboarding,
-  app.addChildren([overview, connections, costs, recommendations, anomalies, budgets, reports, settings]),
+  app.addChildren([
+    overview,
+    connections,
+    costs,
+    recommendations,
+    recommendation,
+    anomalies,
+    budgets,
+    reports,
+    settings,
+  ]),
 ])
 
 export function createAppRouter(context: RouterContext, history?: RouterHistory) {

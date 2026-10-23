@@ -4,13 +4,13 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
-import type { CostDimension, CostSummary, CurrentRate } from '../api/types'
+import type { CostDimension, CostSummary, CurrentRate, RecommendationSummary } from '../api/types'
 import { DailySpendChart, ShareList } from '../components/charts'
 import { Alert, Card, StatusPill, cx } from '../components/ui'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
 
-function useWorkspace() {
+export function useWorkspace() {
   const api = useApi()
   const { data: me } = useMe()
   const [tenantId] = useCurrentTenantId(me)
@@ -27,7 +27,37 @@ function useWorkspace() {
   return { me, tenantId, tenant, connections }
 }
 
-function Kpi({ label, value, note }: { label: string; value: string; note: string }) {
+/** Formats USD amounts in the viewer's currency mode, with today's rate for the workspace. */
+export function useMoney(): {
+  money: (usd: number) => string
+  rate: CurrentRate | undefined
+  currency: string
+} {
+  const api = useApi()
+  const { me, tenantId, tenant } = useWorkspace()
+  const rate = useQuery({
+    queryKey: ['fx-current', tenantId],
+    queryFn: () => api.fxCurrent(tenantId as string),
+    enabled: tenantId !== null,
+  })
+  const view = me?.preferredCurrencyView ?? 'both'
+  const quote = rate.data?.quote
+  const fx: FxRate | null =
+    quote && quote.currency !== 'USD'
+      ? {
+          currency: quote.currency,
+          rate: quote.rate,
+          estimated: quote.estimated,
+        }
+      : null
+  return {
+    money: (usd: number) => formatDual(usd, view, fx),
+    rate: rate.data,
+    currency: tenant.data?.displayCurrency ?? 'USD',
+  }
+}
+
+export function Kpi({ label, value, note }: { label: string; value: string; note: string }) {
   return (
     <Card className="p-5">
       <p className="text-sm text-secondary">{label}</p>
@@ -83,26 +113,19 @@ function costTiles(
 
 export function Overview() {
   const api = useApi()
-  const { me, tenantId, tenant, connections } = useWorkspace()
+  const { tenantId, tenant, connections } = useWorkspace()
+  const { money, rate, currency } = useMoney()
   const summary = useQuery({
     queryKey: ['cost-summary', tenantId],
     queryFn: () => api.costSummary(tenantId as string),
     enabled: tenantId !== null,
   })
-  const rate = useQuery({
-    queryKey: ['fx-current', tenantId],
-    queryFn: () => api.fxCurrent(tenantId as string),
+  const savings = useQuery({
+    queryKey: ['recommendation-summary', tenantId],
+    queryFn: () => api.recommendationSummary(tenantId as string),
     enabled: tenantId !== null,
   })
   const waiting = summary.data?.status === 'waiting'
-  const view = me?.preferredCurrencyView ?? 'both'
-  const currency = tenant.data?.displayCurrency ?? 'USD'
-  const quote = rate.data?.quote
-  const fx: FxRate | null =
-    quote && quote.currency !== 'USD'
-      ? { currency: quote.currency, rate: quote.rate, estimated: quote.estimated }
-      : null
-  const money = (usd: number) => formatDual(usd, view, fx)
 
   return (
     <div className="flex flex-col gap-6">
@@ -123,8 +146,8 @@ export function Overview() {
       )}
       {waiting && connections.data?.some((c) => c.status === 'healthy' || c.status === 'degraded') && (
         <Alert tone="info">
-          Connected. AWS delivers the first Cost and Usage Report within 24 hours; your costs and
-          recommendations appear here as soon as it lands.
+          Connected. AWS delivers the first Cost and Usage Report within 24 hours; your costs and recommendations appear
+          here as soon as it lands.
         </Alert>
       )}
       {summary.data?.reconciliation?.status === 'mismatch' && (
@@ -134,16 +157,16 @@ export function Overview() {
       )}
       {summary.data?.status === 'provisional' && (
         <Alert tone="info">
-          Provisional figures from AWS Cost Explorer. Full detail arrives with the first Cost and Usage
-          Report, within 24 hours of connecting.
+          Provisional figures from AWS Cost Explorer. Full detail arrives with the first Cost and Usage Report, within
+          24 hours of connecting.
         </Alert>
       )}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {costTiles(summary.data, money).map((tile) => (
           <Kpi key={tile.label} {...tile} />
         ))}
-        <Kpi label="Savings identified" value="—" note="Recommendations start after first data" />
-        <Kpi {...rateTile(currency, rate.data)} />
+        <Kpi {...savingsTile(savings.data, money)} />
+        <Kpi {...rateTile(currency, rate)} />
       </div>
       {tenantId !== null && (summary.data?.status === 'ready' || summary.data?.status === 'provisional') && (
         <div className="grid gap-4 lg:grid-cols-3">
@@ -157,7 +180,10 @@ export function Overview() {
 
 function SpendTrend({ tenantId }: { tenantId: string }) {
   const api = useApi()
-  const daily = useQuery({ queryKey: ['cost-daily', tenantId], queryFn: () => api.costDaily(tenantId) })
+  const daily = useQuery({
+    queryKey: ['cost-daily', tenantId],
+    queryFn: () => api.costDaily(tenantId),
+  })
   const points = daily.data?.points ?? []
   return (
     <Card className="p-5 lg:col-span-2">
@@ -173,7 +199,7 @@ function SpendTrend({ tenantId }: { tenantId: string }) {
   )
 }
 
-const DIMENSIONS: { id: CostDimension; label: string }[] = [
+export const DIMENSIONS: { id: CostDimension; label: string }[] = [
   { id: 'service', label: 'Service' },
   { id: 'account', label: 'Account' },
   { id: 'region', label: 'Region' },
@@ -222,8 +248,32 @@ function TopSpend({ tenantId }: { tenantId: string }) {
   )
 }
 
+function savingsTile(
+  summary: RecommendationSummary | undefined,
+  money: (usd: number) => string,
+): { label: string; value: string; note: string } {
+  const label = 'Savings identified'
+  if (!summary || summary.lastEvaluatedAt === null) {
+    return {
+      label,
+      value: '—',
+      note: 'Needs the resource read-only stack (see Connections)',
+    }
+  }
+  if (summary.openCount === 0) return { label, value: money(0), note: 'No open recommendations' }
+  const n = summary.openCount
+  return {
+    label,
+    value: `${money(summary.savingsUsdMonth)}/mo`,
+    note: `${n} open recommendation${n === 1 ? '' : 's'}`,
+  }
+}
+
 function reconciliationMessage(month: string, differencePct: number | null): string {
-  const name = new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-GB', { month: 'long', timeZone: 'UTC' })
+  const name = new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-GB', {
+    month: 'long',
+    timeZone: 'UTC',
+  })
   const by = differencePct === null ? '' : ` by ${Math.abs(differencePct).toFixed(1)}%`
   return `${name} totals differ from AWS Cost Explorer${by}. We're reconciling; figures may change.`
 }
@@ -234,7 +284,12 @@ function rateTile(currency: string, current: CurrentRate | undefined): { label: 
   if (currency === 'USD') return { label, value: 'USD', note: 'Amounts are shown in US dollars' }
   const quote = current?.quote
   if (!current) return { label, value: '—', note: 'Loading…' }
-  if (!quote) return { label, value: '—', note: `No ${currency} rate set yet; amounts show in USD` }
+  if (!quote)
+    return {
+      label,
+      value: '—',
+      note: `No ${currency} rate set yet; amounts show in USD`,
+    }
   const value = `1 USD = ${quote.estimated ? '≈' : ''}${formatMoney(quote.rate, currency)}`
   const note =
     quote.source === 'feed'
@@ -303,15 +358,18 @@ function orgStatusLabel(status: string | null): string | null {
 /** Accounts from the AWS Organization and the bills, with coverage (PRD US-1.3). */
 function Accounts({ tenantId }: { tenantId: string }) {
   const api = useApi()
-  const list = useQuery({ queryKey: ['accounts', tenantId], queryFn: () => api.listAccounts(tenantId) })
+  const list = useQuery({
+    queryKey: ['accounts', tenantId],
+    queryFn: () => api.listAccounts(tenantId),
+  })
   if (!list.data || list.data.accounts.length === 0) return null
   const { coverage, accounts } = list.data
   return (
     <Card>
       <h2 className="text-base font-semibold">AWS accounts</h2>
       <p className="mt-1 text-sm text-secondary">
-        {coverage.withCostData} of {coverage.accounts} accounts have cost data ·{' '}
-        {coverage.withResourceAccess} of {coverage.accounts} have resource access for recommendations
+        {coverage.withCostData} of {coverage.accounts} accounts have cost data · {coverage.withResourceAccess} of{' '}
+        {coverage.accounts} have resource access for recommendations
       </p>
       <ul className="mt-4 divide-y divide-border">
         {accounts.map((a) => {

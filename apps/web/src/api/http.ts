@@ -14,6 +14,10 @@ import type {
   CurrentRate,
   DailyCosts,
   Me,
+  Recommendation,
+  RecommendationQuery,
+  RecommendationSummary,
+  StatusChange,
   Tenant,
 } from './types'
 import { ApiError } from './types'
@@ -87,12 +91,30 @@ export class HttpApi implements Api {
     return this.request('GET', `/v1/tenants/${tenantId}/costs/summary`)
   }
 
-  costDaily(tenantId: string): Promise<DailyCosts> {
-    return this.request('GET', `/v1/tenants/${tenantId}/costs/daily`)
+  costDaily(tenantId: string, days = 30): Promise<DailyCosts> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/daily?days=${days}`)
   }
 
-  costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown> {
-    return this.request('GET', `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}`)
+  costBreakdown(tenantId: string, dimension: CostDimension, limit = 8): Promise<CostBreakdown> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}&limit=${limit}`)
+  }
+
+  listRecommendations(tenantId: string, query: RecommendationQuery = {}): Promise<Recommendation[]> {
+    const params = new URLSearchParams({ status: query.status ?? 'open' })
+    if (query.alternatives) params.set('alternatives', 'true')
+    return this.request('GET', `/v1/tenants/${tenantId}/recommendations?${params.toString()}`)
+  }
+
+  recommendationSummary(tenantId: string): Promise<RecommendationSummary> {
+    return this.request('GET', `/v1/tenants/${tenantId}/recommendations/summary`)
+  }
+
+  getRecommendation(tenantId: string, id: string): Promise<Recommendation> {
+    return this.request('GET', `/v1/tenants/${tenantId}/recommendations/${id}`)
+  }
+
+  updateRecommendation(tenantId: string, id: string, change: StatusChange): Promise<Recommendation> {
+    return this.request('PATCH', `/v1/tenants/${tenantId}/recommendations/${id}`, change)
   }
 
   listAccounts(tenantId: string): Promise<AccountList> {
