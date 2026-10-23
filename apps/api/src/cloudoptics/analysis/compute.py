@@ -183,6 +183,12 @@ def idle_instances(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
             rule_id="R4_idle_ec2",
             rule_version=1,
             type="stop_idle_instance",
+            console_steps=[
+                "Open the server in the AWS console.",
+                "Choose Instance state, then Stop instance.",
+                "If nobody misses it after 14 days: choose Actions, Image and templates, "
+                "Create image, then Instance state, Terminate instance.",
+            ],
             resource=r,
             title=f"Stop idle server {name} ({kind}): almost no CPU or network for "
             f"{ctx.settings.idle_days} days",
@@ -285,6 +291,11 @@ def idle_databases(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
             rule_id="R4_idle_rds",
             rule_version=1,
             type="delete_idle_database",
+            console_steps=[
+                "Open the database in the AWS console.",
+                "Choose Actions, then Delete.",
+                "Keep Create final snapshot ticked, type delete me, and choose Delete.",
+            ],
             resource=r,
             title=f"Remove unused database {name} ({c.get('instanceClass')}): no connections "
             f"for {DB_IDLE_CONNECTION_DAYS} days",
@@ -362,6 +373,15 @@ def _change_type(r: Resource, target: str) -> dict[str, Any]:
     }
 
 
+def change_type_steps(target: str) -> list[str]:
+    return [
+        "Open the server in the AWS console.",
+        "Choose Instance state, then Stop instance, and wait until it shows Stopped.",
+        f"Choose Actions, Instance settings, Change instance type, pick {target} and apply.",
+        "Choose Instance state, then Start instance.",
+    ]
+
+
 def _instance_candidates(ctx: Context, r: Resource) -> Iterator[tuple[str, str, float, bool]]:
     """(rule, target type, monthly saving, fallback price) for each cheaper option."""
     kind = str(r.config.get("instanceType") or "")
@@ -411,6 +431,7 @@ def previous_generation(ctx: Context, resources: list[Resource]) -> Iterator[Can
                     rule_id=rule,
                     rule_version=1,
                     type="modernise_instance",
+                    console_steps=change_type_steps(target),
                     resource=r,
                     title=f"Move server {name} from {kind} to the newer {target}",
                     current_config={"instanceType": kind},
@@ -436,6 +457,7 @@ def previous_generation(ctx: Context, resources: list[Resource]) -> Iterator[Can
                     rule_id=rule,
                     rule_version=1,
                     type="move_to_graviton",
+                    console_steps=[],
                     resource=r,
                     title=f"Move server {name} from {kind} to Graviton {target} (Arm)",
                     current_config={"instanceType": kind, "architecture": "x86_64"},
@@ -546,6 +568,7 @@ def rightsizing(ctx: Context, resources: list[Resource]) -> Iterator[Candidate]:
             rule_id="R5_rightsize_ec2",
             rule_version=1,
             type="rightsize_instance",
+            console_steps=change_type_steps(target),
             resource=r,
             title=f"Make server {name} one size smaller: {kind} to {target}",
             current_config={"instanceType": kind},

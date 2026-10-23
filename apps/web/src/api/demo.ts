@@ -31,6 +31,7 @@ import type {
   RuleSettingsView,
   Tenant,
   TenantChange,
+  UsageSeries,
 } from './types'
 import { ApiError } from './types'
 
@@ -122,6 +123,14 @@ const DEMO_RECS: DemoRec[] = [
         'aws ec2 create-volume --snapshot-id <snapshot-id> --availability-zone eu-west-1a --volume-type gp2 --region eu-west-1',
       ],
       notes: 'Keep the snapshot until you are sure the data is not needed.',
+      console: {
+        url: 'https://eu-west-1.console.aws.amazon.com/ec2/home?region=eu-west-1#VolumeDetails:volumeId=vol-0a1b2c3d4e5f60718',
+        steps: [
+          'Open the volume in the AWS console.',
+          'Choose Actions, then Create snapshot, and wait until the snapshot shows Completed.',
+          'Choose Actions, then Delete volume, and confirm.',
+        ],
+      },
     },
   },
   {
@@ -935,6 +944,12 @@ export class DemoApi implements Api {
   async recommendationEvents(tenantId: string, id: string): Promise<RecommendationEvent[]> {
     await this.getRecommendation(tenantId, id)
     return structuredClone(this.state.recommendationEvents?.[`${tenantId}:${id}`] ?? [])
+  }
+
+  // Demo resources are volumes, addresses and load balancers: no usage series.
+  async recommendationUsage(tenantId: string, id: string): Promise<UsageSeries[]> {
+    await this.getRecommendation(tenantId, id)
+    return []
   }
 
   async addComment(tenantId: string, id: string, body: string): Promise<RecommendationEvent[]> {

@@ -267,6 +267,13 @@ export interface RecommendationFix {
   /** Plain-language steps when the fix is not a few commands (for example a move to Arm). */
   checklist?: string[]
   alternative?: { title: string; monthlyCostUsd?: number; steps: string[] }
+  /** The resource's page in the AWS console and the clicks there; shown first. */
+  console?: { url: string; steps: string[] }
+}
+
+export interface UsageSeries {
+  metric: string
+  days: { day: string; average: number | null; maximum: number | null }[]
 }
 
 export interface Recommendation {
@@ -415,6 +422,7 @@ export interface Api {
   updateRecommendation(tenantId: string, id: string, change: RecommendationChange): Promise<Recommendation>
   updateRecommendations(tenantId: string, ids: string[], change: RecommendationChange): Promise<{ updated: number }>
   recommendationEvents(tenantId: string, id: string): Promise<RecommendationEvent[]>
+  recommendationUsage(tenantId: string, id: string): Promise<UsageSeries[]>
   addComment(tenantId: string, id: string, body: string): Promise<RecommendationEvent[]>
   getRuleSettings(tenantId: string): Promise<RuleSettingsView>
   /** Saving re-runs the rules, so recommendations change straight away. */

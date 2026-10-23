@@ -26,7 +26,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.analysis.compute import COMPUTE_RULES
 from cloudoptics.analysis.pricing import load_price_book
-from cloudoptics.analysis.rules import RULES, Candidate, Context, Resource, parse_time
+from cloudoptics.analysis.rules import (
+    RULES,
+    Candidate,
+    Context,
+    Resource,
+    console_url,
+    parse_time,
+)
 from cloudoptics.analysis.settings import RuleSettings, load_rule_settings
 from cloudoptics.metrics.puller import load_usage
 from cloudoptics.platform.db import get_sessionmaker, scope
@@ -127,6 +134,14 @@ def evaluate(ctx: Context, resources: list[Resource]) -> list[Scored]:
     ]
 
 
+def _fix(c: Candidate) -> dict[str, Any]:
+    """The rule's fix plus the console route (link and clicks), shown first in the app."""
+    url = console_url(c.resource)
+    if url is None:
+        return c.fix
+    return {**c.fix, "console": {"url": url, "steps": c.console_steps}}
+
+
 def _row(s: Scored, generation: int) -> dict[str, Any]:
     c = s.candidate
     return {
@@ -156,7 +171,7 @@ def _row(s: Scored, generation: int) -> dict[str, Any]:
         "confidence_notes": json.dumps(c.confidence_notes),
         "priority": s.priority,
         "evidence": json.dumps(c.evidence, default=str),
-        "fix": json.dumps(c.fix),
+        "fix": json.dumps(_fix(c)),
     }
 
 

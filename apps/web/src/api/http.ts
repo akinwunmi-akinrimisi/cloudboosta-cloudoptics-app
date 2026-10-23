@@ -26,6 +26,7 @@ import type {
   RuleSettings,
   RuleSettingsView,
   TenantChange,
+  UsageSeries,
   ResourceScan,
   Tenant,
 } from './types'
@@ -148,6 +149,10 @@ export class HttpApi implements Api {
 
   recommendationEvents(tenantId: string, id: string): Promise<RecommendationEvent[]> {
     return this.request('GET', `/v1/tenants/${tenantId}/recommendations/${id}/events`)
+  }
+
+  recommendationUsage(tenantId: string, id: string): Promise<UsageSeries[]> {
+    return this.request('GET', `/v1/tenants/${tenantId}/recommendations/${id}/usage`)
   }
 
   addComment(tenantId: string, id: string, body: string): Promise<RecommendationEvent[]> {

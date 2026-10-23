@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Check, Copy } from 'lucide-react'
+import { ArrowLeft, Check, Copy, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi } from '../app/context'
@@ -12,6 +12,7 @@ import type {
   RecommendationStatus,
 } from '../api/types'
 import { ApiError } from '../api/types'
+import { UsageChart } from '../components/charts'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { RULES } from '../lib/rules'
 import { Kpi, useMoney, useWorkspace } from './Workspace'
@@ -515,6 +516,91 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
   )
 }
 
+const UNDO: Record<Recommendation['reversibility'], string> = {
+  reversible: 'You can undo this at any time; the steps to undo it are below.',
+  with_snapshot: 'A backup snapshot is kept, so it can be restored from that.',
+  irreversible: 'This cannot be undone, so check nothing still needs it first.',
+}
+
+const EVIDENCE: Record<string, string> = {
+  state: 'State',
+  created: 'Created',
+  lastSnapshot: 'Last snapshot',
+  started: 'Snapshot taken',
+  sourceVolume: 'Volume it came from',
+  healthyTargets: 'Healthy targets',
+  idleDays: 'Idle for (days)',
+  volumeType: 'Volume type',
+  peakCpuPercent: 'Highest CPU use',
+  busiestDayNetworkMb: "Busiest day's network",
+  stopSavesUsdMonth: 'Stopping saves',
+  volumesUsdMonth: 'Its disks cost',
+  maxConnections: 'Most connections at once',
+  cpuP95Percent: 'CPU use, 95% of the time under',
+  iopsP95: 'Disk operations a second, 95% of the time under',
+  cpuPercentile: 'CPU use, nearly always under',
+  projectedCpuPercent: 'Expected CPU use after the change',
+  computeOptimizer: 'AWS Compute Optimizer says',
+  previousGeneration: 'Server family',
+  architecture: 'Processor type',
+}
+
+const PERCENT = new Set(['peakCpuPercent', 'cpuP95Percent', 'cpuPercentile', 'projectedCpuPercent'])
+const MONEY = new Set(['stopSavesUsdMonth', 'volumesUsdMonth'])
+const DATES = new Set(['created', 'lastSnapshot', 'started'])
+
+function evidenceValue(e: Recommendation['evidence'][number], money: (usd: number) => string): string {
+  const v = e.value
+  if (v === null || v === undefined) return '—'
+  const days = typeof e.days === 'number' ? ` over ${e.days} days` : ''
+  if (PERCENT.has(e.kind) && typeof v === 'number') return `${v}%${days}`
+  if (MONEY.has(e.kind) && typeof v === 'number') return `${money(v)}/mo`
+  if (e.kind === 'busiestDayNetworkMb' && typeof v === 'number') return `${v} MB${days}`
+  if (DATES.has(e.kind) && typeof v === 'string') return new Date(v).toLocaleDateString('en-GB')
+  if (e.kind === 'computeOptimizer') return String(v).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
+  const since = typeof e.sinceDays === 'number' ? ` for ${Math.round(e.sinceDays)} days` : ''
+  return `${String(v)}${days}${since}`
+}
+
+const USAGE_CHARTS: Record<string, { title: string; unit: string; pick: 'maximum' | 'average'; max?: number }> = {
+  cpu_max: { title: 'Highest CPU use each day', unit: '%', pick: 'maximum', max: 100 },
+  connections: { title: 'Most database connections each day', unit: '', pick: 'maximum' },
+}
+
+/** Daily usage behind the recommendation (PRD US-3.2 evidence charts). */
+function Usage({ tenantId, rec }: { tenantId: string; rec: Recommendation }) {
+  const api = useApi()
+  const usage = useQuery({
+    queryKey: ['recommendation-usage', tenantId, rec.id],
+    queryFn: () => api.recommendationUsage(tenantId, rec.id),
+  })
+  const charts = (usage.data ?? []).flatMap((s) => {
+    const chart = USAGE_CHARTS[s.metric]
+    return chart && s.days.length > 0 ? [{ series: s, chart }] : []
+  })
+  if (charts.length === 0) return null
+  return (
+    <Card className="flex flex-col gap-4 p-5">
+      <h2 className="text-base font-semibold">Usage</h2>
+      <div className="grid gap-6 lg:grid-cols-2">
+        {charts.map(({ series: s, chart: c }) => {
+          return (
+            <div key={s.metric} className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">{c.title}</h3>
+              <UsageChart
+                label={c.title}
+                unit={c.unit}
+                max={c.max}
+                points={s.days.map((d) => ({ date: d.day, value: d[c.pick] }))}
+              />
+            </div>
+          )
+        })}
+      </div>
+    </Card>
+  )
+}
+
 const DID: Partial<Record<RecommendationStatus, string>> = {
   new: 'reopened it',
   assigned: 'moved it to assigned',
@@ -642,24 +728,32 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
       </div>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="flex flex-col gap-5 p-5 lg:col-span-2">
-          <div>
-            <h2 className="mb-2 text-base font-semibold">How to fix it</h2>
-            {r.fix.checklist && r.fix.checklist.length > 0 && (
-              <ol className="mb-2 list-decimal space-y-1 pl-5 text-sm">
-                {r.fix.checklist.map((item) => (
+          <div className="flex flex-col gap-3">
+            <h2 className="text-base font-semibold">How to fix it</h2>
+            {r.fix.console && (
+              <div className="flex flex-wrap items-center gap-3">
+                <a
+                  href={r.fix.console.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
+                >
+                  Open in AWS console <ExternalLink size={14} />
+                </a>
+                <span className="text-xs text-muted">Sign in to AWS account {r.accountId} first.</span>
+              </div>
+            )}
+            {(r.fix.checklist?.length ?? 0) > 0 || (r.fix.console?.steps.length ?? 0) > 0 ? (
+              <ol className="list-decimal space-y-1 pl-5 text-sm">
+                {(r.fix.checklist?.length ? r.fix.checklist : (r.fix.console?.steps ?? [])).map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ol>
+            ) : (
+              r.fix.steps.length > 0 && <Commands steps={r.fix.steps} />
             )}
-            {r.fix.steps.length > 0 && <Commands steps={r.fix.steps} />}
-            {r.fix.notes && <p className="mt-2 text-xs text-muted">{r.fix.notes}</p>}
+            {r.fix.notes && <p className="text-xs text-muted">{r.fix.notes}</p>}
           </div>
-          {r.fix.rollback.length > 0 && (
-            <div>
-              <h3 className="mb-2 text-sm font-semibold">Roll back</h3>
-              <Commands steps={r.fix.rollback} />
-            </div>
-          )}
           {r.fix.alternative && (
             <div>
               <h3 className="text-sm font-semibold">{r.fix.alternative.title}</h3>
@@ -669,49 +763,69 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
               <Commands steps={r.fix.alternative.steps} />
             </div>
           )}
+          {(r.fix.steps.length > 0 || r.fix.rollback.length > 0) && (r.fix.console || r.fix.checklist?.length) && (
+            <details className="rounded-sm border border-border px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium">Prefer the command line? Show the AWS CLI commands</summary>
+              <div className="mt-3 flex flex-col gap-3">
+                {r.fix.steps.length > 0 && <Commands steps={r.fix.steps} />}
+                {r.fix.rollback.length > 0 && (
+                  <div>
+                    <h3 className="mb-2 text-sm font-semibold">To undo it</h3>
+                    <Commands steps={r.fix.rollback} />
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
+          {!r.fix.console && !r.fix.checklist?.length && r.fix.rollback.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-sm font-semibold">To undo it</h3>
+              <Commands steps={r.fix.rollback} />
+            </div>
+          )}
           {role && role !== 'viewer' && <Actions rec={r} tenantId={tenantId} />}
         </Card>
-        <Card className="flex flex-col gap-4 p-5">
-          <div>
-            <h2 className="mb-2 text-base font-semibold">Why we suggest it</h2>
-            <ul className="flex flex-col gap-1 text-sm">
-              {r.evidence.map((e) => (
-                <li key={e.kind} className="flex justify-between gap-3">
-                  <span className="text-secondary">{e.kind}</span>
-                  <span className="truncate tabular-nums">
-                    {e.value === null || e.value === undefined ? '—' : String(e.value)}
-                    {typeof e.sinceDays === 'number' && ` for ${Math.round(e.sinceDays)} days`}
-                  </span>
-                </li>
+        <div className="flex flex-col gap-4">
+          <Card className="flex flex-col gap-3 p-5">
+            <h2 className="text-base font-semibold">What could go wrong</h2>
+            <div>
+              <Pill tone={r.riskLevel}>{`${capitalise(r.riskLevel)} risk`}</Pill>
+            </div>
+            <ul className="flex list-disc flex-col gap-1 pl-5 text-sm">
+              <li>{UNDO[r.reversibility]}</li>
+              {r.restartRequired && <li>The server is unavailable for a few minutes while it restarts.</li>}
+              {r.riskFactors.map((f) => (
+                <li key={f.factor}>{FACTORS[f.factor] ?? f.factor}</li>
               ))}
             </ul>
-          </div>
-          {r.riskFactors.length > 0 && (
+          </Card>
+          <Card className="flex flex-col gap-4 p-5">
             <div>
-              <h3 className="mb-1 text-sm font-semibold">Risk factors</h3>
+              <h2 className="mb-2 text-base font-semibold">Why we suggest it</h2>
               <ul className="flex flex-col gap-1 text-sm">
-                {r.riskFactors.map((f) => (
-                  <li key={f.factor} className="flex justify-between gap-3">
-                    <span>{FACTORS[f.factor] ?? f.factor}</span>
-                    <span className="text-muted tabular-nums">+{f.points}</span>
+                {r.evidence.map((e) => (
+                  <li key={e.kind} className="flex justify-between gap-3">
+                    <span className="text-secondary">{EVIDENCE[e.kind] ?? e.kind}</span>
+                    <span className="truncate text-right tabular-nums">{evidenceValue(e, money)}</span>
                   </li>
                 ))}
               </ul>
             </div>
-          )}
-          {r.confidenceNotes.length > 0 && (
-            <ul className="flex flex-col gap-1 text-xs text-muted">
-              {r.confidenceNotes.map((n) => (
-                <li key={n}>{NOTES[n] ?? n}</li>
-              ))}
-            </ul>
-          )}
-          <p className="text-xs text-muted">
-            First found {new Date(r.firstDetectedAt).toLocaleDateString('en-GB')} · checked{' '}
-            {new Date(r.lastEvaluatedAt).toLocaleString('en-GB')}
-          </p>
-        </Card>
+            {r.confidenceNotes.length > 0 && (
+              <ul className="flex flex-col gap-1 text-xs text-muted">
+                {r.confidenceNotes.map((n) => (
+                  <li key={n}>{NOTES[n] ?? n}</li>
+                ))}
+              </ul>
+            )}
+            <p className="text-xs text-muted">
+              First found {new Date(r.firstDetectedAt).toLocaleDateString('en-GB')} · checked{' '}
+              {new Date(r.lastEvaluatedAt).toLocaleString('en-GB')}
+            </p>
+          </Card>
+        </div>
       </div>
+      <Usage tenantId={tenantId} rec={r} />
       <History rec={r} tenantId={tenantId} canComment={role !== undefined && role !== 'viewer'} />
     </div>
   )

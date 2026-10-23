@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -19,6 +19,7 @@ from cloudoptics.analysis.settings import (
 )
 from cloudoptics.audit import log as audit
 from cloudoptics.identity.deps import AdminAccess, MemberAccess, Session, ViewerAccess
+from cloudoptics.metrics.puller import usage
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
@@ -389,6 +390,42 @@ async def add_comment(
     await get_recommendation(recommendation_id, access, session)
     await _event(session, access, recommendation_id, "commented", body=body.body.strip())
     return await list_events(recommendation_id, access, session)
+
+
+class UsageDay(ApiModel):
+    day: date
+    average: float | None
+    maximum: float | None
+
+
+class UsageSeries(ApiModel):
+    metric: str
+    days: list[UsageDay]
+
+
+@router.get("/{recommendation_id}/usage", response_model=list[UsageSeries])
+async def recommendation_usage(
+    recommendation_id: uuid.UUID, access: ViewerAccess, session: Session
+) -> list[UsageSeries]:
+    """Daily CPU, network or connection use of the resource, for the evidence charts.
+    Empty for resources without usage data (volumes, addresses, load balancers)."""
+    resource = (
+        await session.execute(
+            text("SELECT resource_ref FROM recommendation WHERE id = :id"),
+            {"id": recommendation_id},
+        )
+    ).one_or_none()
+    if resource is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "recommendation_not_found")
+    if resource.resource_ref is None:
+        return []
+    return [
+        UsageSeries(
+            metric=s.metric,
+            days=[UsageDay(day=d, average=avg, maximum=peak) for d, avg, peak in s.days],
+        )
+        for s in await usage(session, resource.resource_ref)
+    ]
 
 
 settings_router = APIRouter(

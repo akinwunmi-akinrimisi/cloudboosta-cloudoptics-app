@@ -208,7 +208,14 @@ describe('Cloudoptics web app', () => {
 
     await user.click(screen.getByRole('link', { name: /build-cache/ }))
     expect(await screen.findByRole('heading', { name: 'How to fix it' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Open in AWS console/ }).getAttribute('href')).toContain(
+      '#VolumeDetails:volumeId=vol-0a1b2c3d4e5f60718',
+    )
+    expect(screen.getByText('Choose Actions, then Delete volume, and confirm.')).toBeTruthy()
+    expect(screen.getByText(/Show the AWS CLI commands/)).toBeTruthy()
     expect(screen.getByText(/aws ec2 delete-volume --volume-id vol-0a1b2c3d4e5f60718/)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'What could go wrong' })).toBeTruthy()
+    expect(screen.getByText('A backup snapshot is kept, so it can be restored from that.')).toBeTruthy()
     expect(screen.getByText('No snapshot in the last 30 days')).toBeTruthy()
     expect(screen.getByText('Reversible from the snapshot')).toBeTruthy()
 
@@ -240,8 +247,8 @@ describe('Cloudoptics web app', () => {
     await user.selectOptions(screen.getByLabelText('Assigned to'), 'anyone')
 
     const boxes = screen.getAllByRole('checkbox', { name: /^Select / })
-    await user.click(boxes[0])
-    await user.click(boxes[1])
+    await user.click(boxes[0] as HTMLElement)
+    await user.click(boxes[1] as HTMLElement)
     expect(screen.getByText('2 selected')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Dismiss…' }))
     await user.type(screen.getByLabelText(/Why are you dismissing them/), 'Kept on purpose')

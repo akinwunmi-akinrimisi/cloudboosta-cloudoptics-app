@@ -214,3 +214,41 @@ async def test_pulled_usage_feeds_the_idle_rules(
         ("R4_idle_rds", "af-south-1", "orders-db"),
         ("R4_idle_rds", "eu-west-1", "orders-db"),
     ]
+
+
+async def test_idle_server_has_console_route_and_usage_for_charts(
+    client: AsyncClient,
+    login,
+    owner_sql,
+    world,  # noqa: F811
+) -> None:
+    from cloudoptics.analysis import engine
+
+    tenant_s, connection_s, _, headers = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    tenant, connection = uuid.UUID(tenant_s), uuid.UUID(connection_s)
+    await scanner.scan_connection(tenant, connection)
+    owner_sql("UPDATE resource SET state = 'running' WHERE resource_id = 'i-eu-west-1-1'")
+    world.metric_values = {"CPUUtilization": 1.0, "DatabaseConnections": 0.0}
+    now = datetime.now(UTC)
+    await puller.pull_connection(tenant, connection, now=now)
+    await engine.run_analysis(tenant, now=now)
+
+    base = f"/v1/tenants/{tenant}/recommendations"
+    recs = (await client.get(base, headers=headers)).json()
+    idle = next(r for r in recs if r["ruleId"] == "R4_idle_ec2")
+    console = idle["fix"]["console"]
+    assert console["url"] == (
+        "https://eu-west-1.console.aws.amazon.com/ec2/home?region=eu-west-1"
+        "#InstanceDetails:instanceId=i-eu-west-1-1"
+    )
+    assert console["steps"][1] == "Choose Instance state, then Stop instance."
+    db = next(r for r in recs if r["ruleId"] == "R4_idle_rds")
+    assert "#database:id=orders-db;is-cluster=false" in db["fix"]["console"]["url"]
+
+    series = (await client.get(f"{base}/{idle['id']}/usage", headers=headers)).json()
+    cpu = next(s for s in series if s["metric"] == "cpu_max")
+    assert len(cpu["days"]) == 33 and cpu["days"][0]["maximum"] == pytest.approx(1.0)
+    eip = next(r for r in recs if r["ruleId"] == "R2_idle_eip")
+    assert (await client.get(f"{base}/{eip['id']}/usage", headers=headers)).json() == []
+    assert (await client.get(f"{base}/{uuid.uuid4()}/usage", headers=headers)).status_code == 404
