@@ -485,16 +485,21 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
         <p className="font-medium">Add resource access for recommendations</p>
         <p className="text-secondary">
           {accounts.length - missing.length} of {accounts.length} accounts have it. A second read-only stack lets
-          Cloudoptics list resources and their metrics, never change them.
+          Cloudoptics list resources and their metrics, never change them. Each account needs its own copy.
         </p>
       </div>
       <ol className="list-decimal space-y-1 pl-5 text-secondary">
         <li>
           Sign in to AWS as an administrator of{' '}
           {missing.length === 1 ? (
-            <>account {missing[0]?.awsAccountId}</>
+            <>
+              account {missing[0]?.awsAccountId}
+              {missing[0]?.name && ` (${missing[0].name})`}, not one that already has it
+            </>
           ) : (
-            <>each account: {missing.map((a) => a.name ?? a.awsAccountId).join(', ')}</>
+            <>
+              each account: {missing.map((a) => (a.name ? `${a.name} (${a.awsAccountId})` : a.awsAccountId)).join(', ')}
+            </>
           )}
           .
         </li>
@@ -523,10 +528,11 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
       {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
       {refused.length > 0 && (
         <Alert tone="error">
-          AWS refused the role <code className="font-mono text-xs">CloudopticsResourceReadOnly</code> in{' '}
-          {refused.map((a) => `${a.awsAccountId} (${a.error ?? 'no access'})`).join(', ')}. Check that the stack shows
-          CREATE_COMPLETE in that account, and that the role&apos;s trust relationship has the same principal and
-          External ID as <code className="font-mono text-xs">CloudopticsBillingReadOnly</code>.
+          AWS refused the role <code className="font-mono text-xs">CloudopticsResourceReadOnly</code> in account{' '}
+          {refused.map((a) => `${a.awsAccountId} (${a.error ?? 'no access'})`).join(', ')}. Sign in to AWS as{' '}
+          {refused.length === 1 ? 'that account' : 'each of those accounts'} and create the stack there: a stack in
+          another account does not count. If it is already there, check that the role&apos;s trust relationship has the
+          same principal and External ID as <code className="font-mono text-xs">CloudopticsBillingReadOnly</code>.
         </Alert>
       )}
       <div className="flex flex-wrap gap-2">
