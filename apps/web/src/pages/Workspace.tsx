@@ -406,7 +406,9 @@ function ConnectionActions({ connection: c, tenantId }: { connection: Connection
             Disconnect AWS account {c.awsAccountId}? Cloudoptics stops reading it and its open recommendations close.
             Past costs stay. Afterwards, delete the{' '}
             <code className="font-mono text-xs">cloudoptics-billing-access</code> stack in AWS (us-east-1) to remove our
-            access completely.
+            access completely. AWS keeps the S3 bucket{' '}
+            <code className="font-mono text-xs">cloudoptics-cur-{c.awsAccountId}</code>; empty and delete it too before
+            you connect this account again.
           </p>
           <div className="flex gap-2">
             <Button disabled={busy} onClick={() => disconnect.mutate()}>
