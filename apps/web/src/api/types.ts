@@ -40,13 +40,7 @@ export interface PermissionCheck {
   hint: string | null
 }
 
-export type ConnectionStatus =
-  | 'pending'
-  | 'validating'
-  | 'healthy'
-  | 'degraded'
-  | 'failed'
-  | 'disconnected'
+export type ConnectionStatus = 'pending' | 'validating' | 'healthy' | 'degraded' | 'failed' | 'disconnected'
 
 export interface Connection {
   id: string
@@ -118,7 +112,12 @@ export interface CostSummary {
   lastLoadStatus: 'succeeded' | 'failed' | 'superseded' | null
   /** Amortised (effective) cost after credits, plus the invoiced (billed) view. */
   monthToDate: { effective: number; billed: number; credits: number } | null
-  forecast: { amount: number; method: 'run_rate'; daysCovered: number; daysInMonth: number } | null
+  forecast: {
+    amount: number
+    method: 'run_rate'
+    daysCovered: number
+    daysInMonth: number
+  } | null
   previousMonth: number | null
   /** The latest check of this or last month's totals against AWS Cost Explorer. */
   reconciliation?: {
@@ -184,8 +183,81 @@ export interface CloudAccount {
 
 export interface AccountList {
   /** Counts accounts still in the organization. */
-  coverage: { accounts: number; withCostData: number; withResourceAccess: number }
+  coverage: {
+    accounts: number
+    withCostData: number
+    withResourceAccess: number
+  }
   accounts: CloudAccount[]
+}
+
+export type RecommendationStatus =
+  | 'new'
+  | 'assigned'
+  | 'in_progress'
+  | 'done'
+  | 'verified'
+  | 'dismissed'
+  | 'snoozed'
+  | 'resolved_externally'
+  | 'expired'
+
+export interface RecommendationFix {
+  /** AWS CLI commands, run in order. */
+  steps: string[]
+  rollback: string[]
+  notes?: string
+  alternative?: { title: string; monthlyCostUsd: number; steps: string[] }
+}
+
+export interface Recommendation {
+  id: string
+  type: string
+  ruleId: string
+  accountId: string
+  regionId: string
+  resourceId: string
+  title: string
+  currentConfig: Record<string, unknown>
+  recommendedConfig: Record<string, unknown>
+  costNowUsdMonth: number
+  costAfterUsdMonth: number
+  savingsUsdMonth: number
+  /** effective_rate: the workspace's own AWS rate; list_price: AWS on-demand list price. */
+  savingsBasis: 'effective_rate' | 'list_price'
+  effort: 'S' | 'M' | 'L'
+  reversibility: 'reversible' | 'with_snapshot' | 'irreversible'
+  restartRequired: boolean
+  riskScore: number
+  riskLevel: 'low' | 'medium' | 'high'
+  riskFactors: { factor: string; points: number }[]
+  confidence: 'high' | 'medium' | 'low'
+  confidenceNotes: string[]
+  priorityScore: number
+  evidence: { kind: string; value: unknown; [key: string]: unknown }[]
+  fix: RecommendationFix
+  /** Set on an alternative to another recommendation for the same resource. */
+  primaryOf: string | null
+  status: RecommendationStatus
+  firstDetectedAt: string
+  lastEvaluatedAt: string
+}
+
+export interface RecommendationSummary {
+  openCount: number
+  savingsUsdMonth: number
+  byRule: { ruleId: string; count: number; savingsUsdMonth: number }[]
+  lastEvaluatedAt: string | null
+}
+
+export interface RecommendationQuery {
+  status?: 'open' | 'all'
+  alternatives?: boolean
+}
+
+export type StatusChange = {
+  status: 'new' | 'in_progress' | 'done' | 'dismissed'
+  reason?: string
 }
 
 export interface Api {
@@ -203,10 +275,14 @@ export interface Api {
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
   costSummary(tenantId: string): Promise<CostSummary>
-  costDaily(tenantId: string): Promise<DailyCosts>
-  costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown>
+  costDaily(tenantId: string, days?: number): Promise<DailyCosts>
+  costBreakdown(tenantId: string, dimension: CostDimension, limit?: number): Promise<CostBreakdown>
   fxCurrent(tenantId: string): Promise<CurrentRate>
   listAccounts(tenantId: string): Promise<AccountList>
+  listRecommendations(tenantId: string, query?: RecommendationQuery): Promise<Recommendation[]>
+  recommendationSummary(tenantId: string): Promise<RecommendationSummary>
+  getRecommendation(tenantId: string, id: string): Promise<Recommendation>
+  updateRecommendation(tenantId: string, id: string, change: StatusChange): Promise<Recommendation>
 }
 
 export class ApiError extends Error {

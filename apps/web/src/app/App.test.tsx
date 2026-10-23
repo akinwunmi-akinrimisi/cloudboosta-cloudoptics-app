@@ -181,4 +181,65 @@ describe('Cloudoptics web app', () => {
       await screen.findByText("September totals differ from AWS Cost Explorer by 1.8%. We're reconciling; figures may change."),
     ).toBeTruthy()
   })
+
+  async function connectedWorkspace(email: string) {
+    const { api } = renderApp('/sign-in')
+    await api.signIn(email)
+    const tenant = await api.createTenant({ name: 'Nairobi Nodes', countryCode: 'GB' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '343434343434',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), email)
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await screen.findByRole('heading', { name: 'Overview' })
+    return { api, tenant, user }
+  }
+
+  it('lists recommendations best first and walks one to done', async () => {
+    const { user } = await connectedWorkspace('wanjiru@example.com')
+    expect(await screen.findByText('5 open recommendations')).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    const first = await screen.findByRole('link', { name: /Delete unattached gp2 volume build-cache/ })
+    const links = screen.getAllByRole('link', { name: /\/mo$/ })
+    expect(links[0]).toBe(first)
+
+    await user.selectOptions(screen.getByLabelText('Type'), 'R2_idle_eip')
+    expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(1)
+    await user.selectOptions(screen.getByLabelText('Type'), 'all')
+
+    await user.click(screen.getByRole('link', { name: /build-cache/ }))
+    expect(await screen.findByRole('heading', { name: 'How to fix it' })).toBeTruthy()
+    expect(screen.getByText(/aws ec2 delete-volume --volume-id vol-0a1b2c3d4e5f60718/)).toBeTruthy()
+    expect(screen.getByText('No snapshot in the last 30 days')).toBeTruthy()
+    expect(screen.getByText('Reversible from the snapshot')).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss…' }))
+    expect((screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement).disabled).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(screen.getByRole('button', { name: 'Mark as done' }))
+    expect(await screen.findByText(/Done, waiting for the next scan/)).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: /All recommendations/ }))
+    await screen.findByRole('link', { name: /Change volume db-data/ })
+    expect(screen.queryByRole('link', { name: /build-cache/ })).toBeNull()
+    expect(screen.getByText('4')).toBeTruthy()
+  })
+
+  it('explores costs by dimension and range', async () => {
+    const { user } = await connectedWorkspace('otieno@example.com')
+    await user.click(screen.getByRole('link', { name: 'Cost Explorer' }))
+    expect(await screen.findByRole('heading', { name: 'Cost Explorer' })).toBeTruthy()
+    expect(await screen.findByRole('img', { name: /Daily spend, 30 days/ })).toBeTruthy()
+    expect(await screen.findByRole('cell', { name: /Amazon Relational Database Service/ })).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: '90 days' }))
+    expect(await screen.findByRole('img', { name: /Daily spend, 90 days/ })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Region' }))
+    expect(await screen.findByRole('cell', { name: /af-south-1/ })).toBeTruthy()
+  })
 })

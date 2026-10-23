@@ -279,3 +279,49 @@ async def test_scan_job_queues_analysis(
     assert await jobs.scan(tenant, connection) == "succeeded"
     assert queued == [tenant]
     assert await analysis_jobs.run(tenant) == 10
+
+
+async def test_members_change_status_and_done_is_verified(
+    client: AsyncClient, login, owner_sql, world
+) -> None:
+    tenant, connection, _, headers = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    tid = uuid.UUID(tenant)
+    await scanner.scan_connection(tid, uuid.UUID(connection))
+    later = datetime.now(UTC) + timedelta(days=40)
+    await engine.run_analysis(tid, now=later)
+    base = f"/v1/tenants/{tenant}/recommendations"
+    recs = (await client.get(base, headers=headers)).json()
+    eip = next(r for r in recs if r["ruleId"] == "R2_idle_eip")
+    lb = next(r for r in recs if r["ruleId"] == "R2_idle_lb")
+
+    bad = await client.patch(f"{base}/{lb['id']}", json={"status": "dismissed"}, headers=headers)
+    assert bad.status_code == 422
+    ok = await client.patch(
+        f"{base}/{lb['id']}",
+        json={"status": "dismissed", "reason": "Needed for DR"},
+        headers=headers,
+    )
+    assert ok.status_code == 200 and ok.json()["status"] == "dismissed"
+    assert (
+        await client.patch(f"{base}/{eip['id']}", json={"status": "done"}, headers=headers)
+    ).json()["status"] == "done"
+    assert owner_sql(
+        "SELECT action, after->>'reason' FROM audit_log WHERE target_id = %s", lb["id"]
+    ) == [("recommendation.status_changed", "Needed for DR")]
+
+    # The address is released: the done recommendation is verified; the dismissed one stays.
+    owner_sql(
+        "UPDATE resource SET deleted_at = now() WHERE resource_id = %s AND region_id = %s",
+        eip["resourceId"],
+        eip["regionId"],
+    )
+    await engine.run_analysis(tid, now=later)
+    rows = dict(
+        owner_sql(
+            "SELECT id::text, status FROM recommendation WHERE id IN (%s, %s)", eip["id"], lb["id"]
+        )
+    )
+    assert rows == {eip["id"]: "verified", lb["id"]: "dismissed"}
+    open_ids = {r["id"] for r in (await client.get(base, headers=headers)).json()}
+    assert eip["id"] not in open_ids and lb["id"] not in open_ids

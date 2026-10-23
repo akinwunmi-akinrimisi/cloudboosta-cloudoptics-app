@@ -6,11 +6,13 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from pydantic import Field, model_validator
 from sqlalchemy import text
 
-from cloudoptics.identity.deps import Session, ViewerAccess
-from cloudoptics.platform.api import ApiModel
+from cloudoptics.audit import log as audit
+from cloudoptics.identity.deps import MemberAccess, Session, ViewerAccess
+from cloudoptics.platform.api import ApiModel, user_actor
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/recommendations", tags=["recommendations"])
 
@@ -144,3 +146,54 @@ async def get_recommendation(
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "recommendation_not_found")
     return _model(row)
+
+
+class StatusChange(ApiModel):
+    """Members move a recommendation through its lifecycle (PRD FR-REC-07).
+
+    ``done`` means the fix was applied; the next analysis run confirms it. Dismissing needs
+    a reason, which is kept for the audit trail and for tuning the rules.
+    """
+
+    status: Literal["new", "in_progress", "done", "dismissed"]
+    reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _reason_for_dismissal(self) -> StatusChange:
+        if self.status == "dismissed" and not (self.reason or "").strip():
+            raise ValueError("A reason is required to dismiss a recommendation.")
+        return self
+
+
+@router.patch("/{recommendation_id}", response_model=Recommendation)
+async def change_status(
+    recommendation_id: uuid.UUID,
+    body: StatusChange,
+    request: Request,
+    access: MemberAccess,
+    session: Session,
+) -> Recommendation:
+    before = (
+        await session.execute(
+            text("SELECT status FROM recommendation WHERE id = :id FOR UPDATE"),
+            {"id": recommendation_id},
+        )
+    ).scalar_one_or_none()
+    if before is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "recommendation_not_found")
+    if before != body.status:
+        await session.execute(
+            text("UPDATE recommendation SET status = :s WHERE id = :id"),
+            {"s": body.status, "id": recommendation_id},
+        )
+        await audit.record(
+            session,
+            tenant_id=access.tenant_id,
+            actor=user_actor(request, access.user.id),
+            action="recommendation.status_changed",
+            target_type="recommendation",
+            target_id=str(recommendation_id),
+            before={"status": before},
+            after={"status": body.status, "reason": body.reason},
+        )
+    return await get_recommendation(recommendation_id, access, session)

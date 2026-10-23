@@ -122,9 +122,11 @@ async def cost_breakdown(
     session: Session,
     dimension: Literal["service", "account", "region"] = "service",
     today: date | None = None,
+    limit: int = Query(queries.TOP_ITEMS, ge=1, le=50),
 ) -> Breakdown:
-    """This month's spend excluding tax, by service, account or region (top 8 plus the rest)."""
-    result = await queries.breakdown(session, today or datetime.now(UTC).date(), dimension)
+    """This month's spend excluding tax, by service, account or region (top ``limit`` plus
+    the rest)."""
+    result = await queries.breakdown(session, today or datetime.now(UTC).date(), dimension, limit)
     return Breakdown.model_validate(result)
 
 

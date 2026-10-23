@@ -15,6 +15,11 @@ import type {
   DailyCosts,
   Me,
   PermissionCheck,
+  Recommendation,
+  RecommendationQuery,
+  RecommendationStatus,
+  RecommendationSummary,
+  StatusChange,
   Tenant,
 } from './types'
 import { ApiError } from './types'
@@ -53,9 +58,180 @@ interface State {
   tenants: Tenant[]
   connections: Record<string, Connection[]>
   externalIds: Record<string, string>
+  /** tenantId:recommendationId -> status changed in the demo. */
+  recommendationStatus: Record<string, RecommendationStatus>
 }
 
-const empty = (): State => ({ me: null, tenants: [], connections: {}, externalIds: {} })
+const empty = (): State => ({
+  me: null,
+  tenants: [],
+  connections: {},
+  externalIds: {},
+  recommendationStatus: {},
+})
+
+const OPEN: RecommendationStatus[] = ['new', 'assigned', 'in_progress']
+
+type DemoRec = Pick<
+  Recommendation,
+  'id' | 'ruleId' | 'type' | 'accountId' | 'regionId' | 'resourceId' | 'title' | 'costNowUsdMonth' | 'costAfterUsdMonth'
+> &
+  Partial<Recommendation>
+
+// Illustrative findings for the demo estate (same accounts and regions as the cost data).
+const DEMO_RECS: DemoRec[] = [
+  {
+    id: 'demo-rec-1',
+    ruleId: 'R1_unattached_ebs',
+    type: 'delete_unattached_volume',
+    accountId: '333333333333',
+    regionId: 'eu-west-1',
+    resourceId: 'vol-0a1b2c3d4e5f60718',
+    title: 'Delete unattached gp2 volume build-cache (500 GiB)',
+    costNowUsdMonth: 55,
+    costAfterUsdMonth: 0,
+    reversibility: 'with_snapshot',
+    riskScore: 30,
+    riskFactors: [{ factor: 'no_recent_snapshot', points: 30 }],
+    evidence: [{ kind: 'state', value: 'available', sinceDays: 41 }],
+    fix: {
+      steps: [
+        "aws ec2 create-snapshot --volume-id vol-0a1b2c3d4e5f60718 --description 'CloudOptics backup of vol-0a1b2c3d4e5f60718' --region eu-west-1",
+        'aws ec2 wait snapshot-completed --filters Name=volume-id,Values=vol-0a1b2c3d4e5f60718 --region eu-west-1',
+        'aws ec2 delete-volume --volume-id vol-0a1b2c3d4e5f60718 --region eu-west-1',
+      ],
+      rollback: [
+        'aws ec2 create-volume --snapshot-id <snapshot-id> --availability-zone eu-west-1a --volume-type gp2 --region eu-west-1',
+      ],
+      notes: 'Keep the snapshot until you are sure the data is not needed.',
+    },
+  },
+  {
+    id: 'demo-rec-2',
+    ruleId: 'R3_gp2_gp3',
+    type: 'modify_volume_gp3',
+    accountId: '111111111111',
+    regionId: 'eu-west-1',
+    resourceId: 'vol-0f9e8d7c6b5a40312',
+    title: 'Change volume db-data from gp2 to gp3 (1000 GiB)',
+    costNowUsdMonth: 110,
+    costAfterUsdMonth: 98.8,
+    reversibility: 'reversible',
+    riskScore: 25,
+    riskFactors: [{ factor: 'production', points: 25 }],
+    recommendedConfig: { volumeType: 'gp3', iops: 3000, throughput: 250 },
+    evidence: [{ kind: 'volumeType', value: 'gp2', sizeGiB: 1000 }],
+    fix: {
+      steps: [
+        'aws ec2 modify-volume --volume-id vol-0f9e8d7c6b5a40312 --volume-type gp3 --iops 3000 --throughput 250 --region eu-west-1',
+      ],
+      rollback: ['aws ec2 modify-volume --volume-id vol-0f9e8d7c6b5a40312 --volume-type gp2 --region eu-west-1'],
+      notes: 'Online change, no restart. A volume can be modified once every 6 hours.',
+    },
+  },
+  {
+    id: 'demo-rec-3',
+    ruleId: 'R2_idle_lb',
+    type: 'delete_idle_load_balancer',
+    accountId: '333333333333',
+    regionId: 'af-south-1',
+    resourceId: 'staging-old-alb',
+    title: 'Delete idle application load balancer staging-old-alb (no healthy targets)',
+    costNowUsdMonth: 21.39,
+    costAfterUsdMonth: 0,
+    riskScore: 0,
+    riskFactors: [],
+    confidenceNotes: ['hourly_charge_only_lcu_excluded'],
+    evidence: [{ kind: 'idleDays', value: 19 }],
+    fix: {
+      steps: [
+        'aws elbv2 delete-load-balancer --load-balancer-arn arn:aws:elasticloadbalancing:af-south-1:333333333333:loadbalancer/app/staging-old-alb/50dc6c495c0c9188 --region af-south-1',
+      ],
+      rollback: [],
+      notes: 'Check DNS records and listeners pointing at it before deleting.',
+    },
+  },
+  {
+    id: 'demo-rec-4',
+    ruleId: 'R1_old_snapshot',
+    type: 'delete_old_snapshot',
+    accountId: '111111111111',
+    regionId: 'eu-west-1',
+    resourceId: 'snap-07c1d2e3f4a5b6c7d',
+    title: 'Delete 412-day-old snapshot snap-07c1d2e3f4a5b6c7d of a deleted volume',
+    costNowUsdMonth: 10,
+    costAfterUsdMonth: 0,
+    riskScore: 55,
+    riskFactors: [
+      { factor: 'production', points: 25 },
+      { factor: 'data_loss', points: 30 },
+    ],
+    confidence: 'medium',
+    confidenceNotes: ['savings_upper_bound_incremental'],
+    evidence: [{ kind: 'sourceVolume', value: 'vol-0123456789abcdef0', exists: false }],
+    fix: {
+      steps: ['aws ec2 delete-snapshot --snapshot-id snap-07c1d2e3f4a5b6c7d --region eu-west-1'],
+      rollback: [],
+      notes: 'Deleting a snapshot cannot be undone.',
+      alternative: {
+        title: 'Archive instead (about 75% cheaper, 90-day minimum)',
+        monthlyCostUsd: 2.5,
+        steps: [
+          'aws ec2 modify-snapshot-tier --snapshot-id snap-07c1d2e3f4a5b6c7d --storage-tier archive --region eu-west-1',
+        ],
+      },
+    },
+  },
+  {
+    id: 'demo-rec-5',
+    ruleId: 'R2_idle_eip',
+    type: 'release_idle_ip',
+    accountId: '333333333333',
+    regionId: 'af-south-1',
+    resourceId: 'eipalloc-0a1b2c3d4e5f6a7b8',
+    title: 'Release idle Elastic IP 203.0.113.25 (not attached to anything)',
+    costNowUsdMonth: 3.65,
+    costAfterUsdMonth: 0,
+    riskScore: 0,
+    riskFactors: [],
+    evidence: [{ kind: 'state', value: 'unassociated', sinceDays: 12 }],
+    fix: {
+      steps: ['aws ec2 release-address --allocation-id eipalloc-0a1b2c3d4e5f6a7b8 --region af-south-1'],
+      rollback: [],
+      notes: 'A released address cannot be got back; update DNS or allow-lists that use it first.',
+    },
+  },
+]
+
+function demoRecommendation(r: DemoRec, status: RecommendationStatus): Recommendation {
+  const savings = Math.round((r.costNowUsdMonth - r.costAfterUsdMonth) * 100) / 100
+  const riskScore = r.riskScore ?? 0
+  const riskLevel = riskScore > 65 ? 'high' : riskScore >= 35 ? 'medium' : 'low'
+  const confidence = r.confidence ?? 'high'
+  return {
+    currentConfig: {},
+    recommendedConfig: { action: 'delete' },
+    savingsUsdMonth: savings,
+    savingsBasis: 'effective_rate',
+    effort: 'S',
+    reversibility: 'irreversible',
+    restartRequired: false,
+    riskFactors: [],
+    confidenceNotes: [],
+    evidence: [],
+    primaryOf: null,
+    firstDetectedAt: new Date(Date.now() - 6 * 86_400_000).toISOString(),
+    lastEvaluatedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+    ...r,
+    riskScore,
+    riskLevel,
+    confidence,
+    priorityScore:
+      savings * { high: 1, medium: 0.7, low: 0.4 }[confidence] * { low: 1, medium: 0.6, high: 0.3 }[riskLevel],
+    fix: r.fix ?? { steps: [], rollback: [] },
+    status,
+  }
+}
 
 function load(): State {
   const raw = read('local', KEY)
@@ -75,7 +251,10 @@ function randomId(): string {
 
 function externalId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32))
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
 }
 
 export class DemoApi implements Api {
@@ -107,7 +286,13 @@ export class DemoApi implements Api {
   }
 
   async authConfig(): Promise<AuthConfig> {
-    return { mode: 'dev', configured: true, provider: null, issuer: null, clientId: null }
+    return {
+      mode: 'dev',
+      configured: true,
+      provider: null,
+      issuer: null,
+      clientId: null,
+    }
   }
 
   isSignedIn(): boolean {
@@ -168,7 +353,11 @@ export class DemoApi implements Api {
       role: 'admin',
     }
     this.state.tenants.push(tenant)
-    me.memberships.push({ tenantId: tenant.id, tenantName: name, role: 'admin' })
+    me.memberships.push({
+      tenantId: tenant.id,
+      tenantName: name,
+      role: 'admin',
+    })
     this.save()
     return structuredClone(tenant)
   }
@@ -189,7 +378,10 @@ export class DemoApi implements Api {
     this.tenant(tenantId)
     if (!/^\d{12}$/.test(body.awsAccountId)) {
       throw new ApiError(422, 'Request validation failed', [
-        { field: 'awsAccountId', message: 'An AWS account ID has exactly 12 digits' },
+        {
+          field: 'awsAccountId',
+          message: 'An AWS account ID has exactly 12 digits',
+        },
       ])
     }
     const all = Object.values(this.state.connections).flat()
@@ -227,9 +419,27 @@ export class DemoApi implements Api {
     const conn = this.connection(tenantId, connectionId)
     const bucket = `cloudoptics-cur-${conn.awsAccountId}`
     const checks: PermissionCheck[] = [
-      { id: 'assume_role', label: 'Assume the Cloudoptics role', status: 'ok', message: 'Role assumed.', hint: null },
-      { id: 'cost_explorer', label: 'Read Cost Explorer', status: 'ok', message: 'Cost data readable.', hint: null },
-      { id: 'cur_export', label: 'Find the CUR 2.0 export', status: 'ok', message: 'Found export cloudoptics-cur2.', hint: null },
+      {
+        id: 'assume_role',
+        label: 'Assume the Cloudoptics role',
+        status: 'ok',
+        message: 'Role assumed.',
+        hint: null,
+      },
+      {
+        id: 'cost_explorer',
+        label: 'Read Cost Explorer',
+        status: 'ok',
+        message: 'Cost data readable.',
+        hint: null,
+      },
+      {
+        id: 'cur_export',
+        label: 'Find the CUR 2.0 export',
+        status: 'ok',
+        message: 'Found export cloudoptics-cur2.',
+        hint: null,
+      },
       {
         id: 'cur_delivery',
         label: 'Read the export bucket',
@@ -244,7 +454,13 @@ export class DemoApi implements Api {
         message: 'Account type confirmed.',
         hint: null,
       },
-      { id: 'savings_plans', label: 'Read Savings Plans', status: 'ok', message: 'Savings Plans readable.', hint: null },
+      {
+        id: 'savings_plans',
+        label: 'Read Savings Plans',
+        status: 'ok',
+        message: 'Savings Plans readable.',
+        hint: null,
+      },
     ]
     Object.assign(conn, {
       status: 'healthy',
@@ -290,32 +506,53 @@ export class DemoApi implements Api {
       dataThrough: through.toISOString().slice(0, 10),
       lastLoadAt: now.toISOString(),
       lastLoadStatus: 'succeeded',
-      monthToDate: { effective: daily * days, billed: daily * days, credits: -2 * days },
-      forecast: { amount: daily * daysInMonth, method: 'run_rate', daysCovered: days, daysInMonth },
+      monthToDate: {
+        effective: daily * days,
+        billed: daily * days,
+        credits: -2 * days,
+      },
+      forecast: {
+        amount: daily * daysInMonth,
+        method: 'run_rate',
+        daysCovered: days,
+        daysInMonth,
+      },
       previousMonth: 1237.75,
     }
   }
 
-  async costDaily(tenantId: string): Promise<DailyCosts> {
+  async costDaily(tenantId: string, days = 30): Promise<DailyCosts> {
     await this.tick()
     this.tenant(tenantId)
     if (!this.hasData(tenantId)) return { source: null, currency: 'USD', points: [] }
     const today = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())
-    const points = Array.from({ length: 30 }, (_, i) => {
-      const day = new Date(today - (30 - i) * 86_400_000)
+    const points = Array.from({ length: days }, (_, i) => {
+      const day = new Date(today - (days - i) * 86_400_000)
       // Weekdays cost more than weekends, like a typical dev/test estate.
       const weekend = day.getUTCDay() === 0 || day.getUTCDay() === 6
       const amount = (weekend ? 31.4 : 45.2) + ((i * 7) % 5) * 0.9
-      return { date: day.toISOString().slice(0, 10), amount: Math.round(amount * 100) / 100 }
+      return {
+        date: day.toISOString().slice(0, 10),
+        amount: Math.round(amount * 100) / 100,
+      }
     })
     return { source: 'cur', currency: 'USD', points }
   }
 
-  async costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown> {
+  // The demo estate has fewer items than any limit, so ``limit`` changes nothing here.
+  async costBreakdown(tenantId: string, dimension: CostDimension, _limit = 8): Promise<CostBreakdown> {
     await this.tick()
     this.tenant(tenantId)
     const month = new Date().toISOString().slice(0, 7)
-    if (!this.hasData(tenantId)) return { source: null, month, dimension, currency: 'USD', total: 0, items: [] }
+    if (!this.hasData(tenantId))
+      return {
+        source: null,
+        month,
+        dimension,
+        currency: 'USD',
+        total: 0,
+        items: [],
+      }
     const rows: Record<CostDimension, [string, string, number][]> = {
       service: [
         ['AmazonEC2', 'Amazon Elastic Compute Cloud', 512.4],
@@ -391,9 +628,25 @@ export class DemoApi implements Api {
       accounts.push(own)
       if (c.accountType === 'management' && usable) {
         accounts.push(
-          { ...own, awsAccountId: '111111111111', name: 'demo-prod', accountType: 'member' },
-          { ...own, awsAccountId: '333333333333', name: 'demo-dev', accountType: 'member' },
-          { ...own, awsAccountId: '444444444444', name: 'sandbox', accountType: 'member', hasCostData: false },
+          {
+            ...own,
+            awsAccountId: '111111111111',
+            name: 'demo-prod',
+            accountType: 'member',
+          },
+          {
+            ...own,
+            awsAccountId: '333333333333',
+            name: 'demo-dev',
+            accountType: 'member',
+          },
+          {
+            ...own,
+            awsAccountId: '444444444444',
+            name: 'sandbox',
+            accountType: 'member',
+            hasCostData: false,
+          },
         )
       }
     }
@@ -406,6 +659,58 @@ export class DemoApi implements Api {
       },
       accounts,
     }
+  }
+
+  private recommendations(tenantId: string): Recommendation[] {
+    this.tenant(tenantId)
+    if (!this.hasData(tenantId)) return []
+    return DEMO_RECS.map((r) => demoRecommendation(r, this.state.recommendationStatus[`${tenantId}:${r.id}`] ?? 'new'))
+  }
+
+  async listRecommendations(tenantId: string, query: RecommendationQuery = {}): Promise<Recommendation[]> {
+    await this.tick()
+    return this.recommendations(tenantId)
+      .filter((r) => query.status === 'all' || OPEN.includes(r.status))
+      .sort((a, b) => b.priorityScore - a.priorityScore)
+  }
+
+  async recommendationSummary(tenantId: string): Promise<RecommendationSummary> {
+    await this.tick()
+    const open = this.recommendations(tenantId).filter((r) => OPEN.includes(r.status))
+    const byRule = new Map<string, { ruleId: string; count: number; savingsUsdMonth: number }>()
+    for (const r of open) {
+      const row = byRule.get(r.ruleId) ?? {
+        ruleId: r.ruleId,
+        count: 0,
+        savingsUsdMonth: 0,
+      }
+      row.count += 1
+      row.savingsUsdMonth += r.savingsUsdMonth
+      byRule.set(r.ruleId, row)
+    }
+    return {
+      openCount: open.length,
+      savingsUsdMonth: Math.round(open.reduce((sum, r) => sum + r.savingsUsdMonth, 0) * 100) / 100,
+      byRule: [...byRule.values()].sort((a, b) => b.savingsUsdMonth - a.savingsUsdMonth),
+      lastEvaluatedAt: open[0]?.lastEvaluatedAt ?? null,
+    }
+  }
+
+  async getRecommendation(tenantId: string, id: string): Promise<Recommendation> {
+    await this.tick()
+    const rec = this.recommendations(tenantId).find((r) => r.id === id)
+    if (!rec) throw new ApiError(404, 'Recommendation not found')
+    return rec
+  }
+
+  async updateRecommendation(tenantId: string, id: string, change: StatusChange): Promise<Recommendation> {
+    if (change.status === 'dismissed' && !change.reason?.trim()) {
+      throw new ApiError(422, 'A reason is required to dismiss a recommendation.')
+    }
+    await this.getRecommendation(tenantId, id)
+    this.state.recommendationStatus[`${tenantId}:${id}`] = change.status
+    this.save()
+    return this.getRecommendation(tenantId, id)
   }
 
   private hasData(tenantId: string): boolean {

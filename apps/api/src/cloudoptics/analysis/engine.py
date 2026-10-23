@@ -7,8 +7,8 @@ primary and the rest point at it with ``primary_of`` (an alternative, not extra 
 
 Rows are keyed by a fingerprint (rule, account, region, resource), so a re-run updates a
 recommendation in place and keeps its status. An open recommendation no rule produces any
-more (the resource changed or went away) becomes ``resolved_externally``; a resolved one
-that comes back is reopened.
+more (the resource changed or went away) becomes ``resolved_externally``, and one a member
+marked ``done`` becomes ``verified``; a resolved one that comes back is reopened.
 """
 
 from __future__ import annotations
@@ -209,6 +209,14 @@ async def store(
             "WHERE generation_id < :g AND status = ANY(:open) RETURNING id"
         ),
         {"g": generation, "open": list(OPEN)},
+    )
+    # Marked done and no longer found: the fix is confirmed.
+    await session.execute(
+        text(
+            "UPDATE recommendation SET status = 'verified', last_evaluated_at = now() "
+            "WHERE generation_id < :g AND status = 'done'"
+        ),
+        {"g": generation},
     )
     return {"recommendations": len(scored), "resolved": len(resolved.all())}
 
