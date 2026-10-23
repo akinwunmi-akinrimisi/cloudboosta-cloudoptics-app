@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -501,6 +501,7 @@ dependencies = [
     { name = "httpx" },
     { name = "procrastinate" },
     { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "pyarrow" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -519,6 +520,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "procrastinate", specifier = ">=3.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.6" },
+    { name = "pyarrow", specifier = ">=17" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.6" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },

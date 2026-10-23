@@ -3,8 +3,9 @@ import { useQuery } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
+import type { CostSummary } from '../api/types'
 import { Alert, Card, StatusPill } from '../components/ui'
-import { formatDual } from '../lib/currency'
+import { formatDual, formatMoney } from '../lib/currency'
 
 function useWorkspace() {
   const api = useApi()
@@ -33,9 +34,54 @@ function Kpi({ label, value, note }: { label: string; value: string; note: strin
   )
 }
 
+function shortDate(isoDate: string): string {
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  })
+}
+
+/** The spend and forecast tiles; "—" until the first Cost and Usage Report is loaded. */
+function costTiles(summary: CostSummary | undefined): { label: string; value: string; note: string }[] {
+  const waiting =
+    summary?.lastLoadStatus === 'failed'
+      ? 'The latest report failed our checks; we will retry with the next delivery'
+      : 'Waiting for first data'
+  const mtd = summary?.monthToDate
+  const forecast = summary?.forecast
+  return [
+    {
+      label: 'Month-to-date spend',
+      value: mtd ? formatMoney(mtd.effective, 'USD') : '—',
+      note:
+        mtd && summary?.dataThrough
+          ? `Amortised, after credits · data to ${shortDate(summary.dataThrough)}`
+          : summary?.status === 'ready'
+            ? 'No data for this month yet'
+            : waiting,
+    },
+    {
+      label: 'Forecast (month end)',
+      value: forecast ? formatMoney(forecast.amount, 'USD') : '—',
+      note: forecast
+        ? `Estimate from the daily run rate (${forecast.daysCovered} of ${forecast.daysInMonth} days)`
+        : summary?.status === 'ready'
+          ? 'Needs data for this month'
+          : waiting,
+    },
+  ]
+}
+
 export function Overview() {
-  const { me, tenant, connections } = useWorkspace()
-  const healthy = connections.data?.some((c) => c.status === 'healthy' || c.status === 'degraded')
+  const api = useApi()
+  const { me, tenantId, tenant, connections } = useWorkspace()
+  const summary = useQuery({
+    queryKey: ['cost-summary', tenantId],
+    queryFn: () => api.costSummary(tenantId as string),
+    enabled: tenantId !== null,
+  })
+  const waiting = summary.data?.status === 'waiting'
   const view = me?.preferredCurrencyView ?? 'both'
   const currency = tenant.data?.displayCurrency ?? 'USD'
 
@@ -56,15 +102,16 @@ export function Overview() {
           to see your costs.
         </Alert>
       )}
-      {healthy && (
+      {waiting && connections.data?.some((c) => c.status === 'healthy' || c.status === 'degraded') && (
         <Alert tone="info">
           Connected. AWS delivers the first Cost and Usage Report within 24 hours; your costs and
           recommendations appear here as soon as it lands.
         </Alert>
       )}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Kpi label="Month-to-date spend" value="—" note="Waiting for first data" />
-        <Kpi label="Forecast (month end)" value="—" note="Waiting for first data" />
+        {costTiles(summary.data).map((tile) => (
+          <Kpi key={tile.label} {...tile} />
+        ))}
         <Kpi label="Savings identified" value="—" note="Recommendations start after first data" />
         <Kpi
           label="Example: USD 1,000 shows as"

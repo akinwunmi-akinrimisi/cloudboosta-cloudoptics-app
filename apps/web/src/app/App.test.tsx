@@ -95,4 +95,27 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByText('AWS account 210987654321')).toBeTruthy()
     expect(screen.getByText('Read Savings Plans')).toBeTruthy()
   })
+
+  it('fills the spend and forecast tiles once cost data exists', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('tunde@example.com')
+    const tenant = await api.createTenant({ name: 'Ibadan Infra', countryCode: 'NG' })
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'tunde@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
+    expect((await screen.findAllByText('Waiting for first data')).length).toBe(2)
+
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '123123123123',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    expect(await api.costSummary(tenant.id)).toMatchObject({ status: 'ready' })
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    await user.click(await screen.findByRole('link', { name: 'Overview' }))
+    expect(await screen.findByText(/Amortised, after credits · data to/)).toBeTruthy()
+    expect(screen.getByText(/Estimate from the daily run rate/)).toBeTruthy()
+  })
 })

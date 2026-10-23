@@ -49,3 +49,11 @@ async def scope(
         text("SELECT set_config('app.user_id', :u, true), set_config('app.tenant_id', :t, true)"),
         {"u": str(user_id) if user_id else "", "t": str(tenant_id) if tenant_id else ""},
     )
+
+
+async def scheduler_scope(session: AsyncSession) -> None:
+    """Let a scheduled job list connections across tenants (read-only, migration 0003).
+
+    Only for jobs that fan out per-tenant work; the per-tenant jobs then use ``scope``.
+    """
+    await session.execute(text("SELECT set_config('app.scheduler', 'on', true)"))

@@ -99,6 +99,22 @@ export interface AuthProvider {
   signOut(): void
 }
 
+export interface CostSummary {
+  /** no_connection: nothing connected; waiting: connected, no Cost and Usage Report loaded yet. */
+  status: 'no_connection' | 'waiting' | 'ready'
+  /** The UTC month the totals cover, YYYY-MM. */
+  month: string
+  currency: 'USD'
+  /** Last day (UTC) with cost data, YYYY-MM-DD. */
+  dataThrough: string | null
+  lastLoadAt: string | null
+  lastLoadStatus: 'succeeded' | 'failed' | 'superseded' | null
+  /** Amortised (effective) cost after credits, plus the invoiced (billed) view. */
+  monthToDate: { effective: number; billed: number; credits: number } | null
+  forecast: { amount: number; method: 'run_rate'; daysCovered: number; daysInMonth: number } | null
+  previousMonth: number | null
+}
+
 export interface Api {
   readonly mode: 'http' | 'demo'
   authConfig(): Promise<AuthConfig>
@@ -113,6 +129,7 @@ export interface Api {
   createConnection(tenantId: string, body: ConnectionCreate): Promise<ConnectionSetup>
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
+  costSummary(tenantId: string): Promise<CostSummary>
 }
 
 export class ApiError extends Error {

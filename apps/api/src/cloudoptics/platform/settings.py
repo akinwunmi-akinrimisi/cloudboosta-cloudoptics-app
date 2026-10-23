@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     # production use the Procrastinate queue and a worker process.
     jobs_mode: Literal["inline", "queue"] = "inline"
 
+    # Billing ingestion. With a folder set, normalised FOCUS Parquet is written there per
+    # tenant and version (local development); staging keeps aggregates in PostgreSQL only
+    # until object storage is provisioned (docs/11b §2.3).
+    normalised_dir: str = ""
+
     @property
     def oidc_configured(self) -> bool:
         return bool(self.workos_client_id or self.oidc_jwks_url)
