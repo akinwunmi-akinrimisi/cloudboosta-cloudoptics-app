@@ -6,7 +6,10 @@ import type {
   Connection,
   ConnectionCreate,
   ConnectionSetup,
+  CostBreakdown,
+  CostDimension,
   CostSummary,
+  DailyCosts,
   Me,
   PermissionCheck,
   Tenant,
@@ -248,6 +251,7 @@ export class DemoApi implements Api {
     const connected = (this.state.connections[tenantId] ?? []).filter((c) => c.status !== 'disconnected')
     const empty: CostSummary = {
       status: connected.length ? 'waiting' : 'no_connection',
+      source: null,
       month,
       currency: 'USD',
       dataThrough: null,
@@ -257,7 +261,7 @@ export class DemoApi implements Api {
       forecast: null,
       previousMonth: null,
     }
-    if (!connected.some((c) => c.status === 'healthy' || c.status === 'degraded')) return empty
+    if (!this.hasData(tenantId)) return empty
     // Illustrative figures in the shape of tools/cur-fixture: about USD 41 a day.
     const days = Math.max(now.getUTCDate() - 1, 1)
     const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate()
@@ -266,6 +270,7 @@ export class DemoApi implements Api {
     return {
       ...empty,
       status: 'ready',
+      source: 'cur',
       dataThrough: through.toISOString().slice(0, 10),
       lastLoadAt: now.toISOString(),
       lastLoadStatus: 'succeeded',
@@ -273,6 +278,64 @@ export class DemoApi implements Api {
       forecast: { amount: daily * daysInMonth, method: 'run_rate', daysCovered: days, daysInMonth },
       previousMonth: 1237.75,
     }
+  }
+
+  async costDaily(tenantId: string): Promise<DailyCosts> {
+    await this.tick()
+    this.tenant(tenantId)
+    if (!this.hasData(tenantId)) return { source: null, currency: 'USD', points: [] }
+    const today = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())
+    const points = Array.from({ length: 30 }, (_, i) => {
+      const day = new Date(today - (30 - i) * 86_400_000)
+      // Weekdays cost more than weekends, like a typical dev/test estate.
+      const weekend = day.getUTCDay() === 0 || day.getUTCDay() === 6
+      const amount = (weekend ? 31.4 : 45.2) + ((i * 7) % 5) * 0.9
+      return { date: day.toISOString().slice(0, 10), amount: Math.round(amount * 100) / 100 }
+    })
+    return { source: 'cur', currency: 'USD', points }
+  }
+
+  async costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown> {
+    await this.tick()
+    this.tenant(tenantId)
+    const month = new Date().toISOString().slice(0, 7)
+    if (!this.hasData(tenantId)) return { source: null, month, dimension, currency: 'USD', total: 0, items: [] }
+    const rows: Record<CostDimension, [string, string, number][]> = {
+      service: [
+        ['AmazonEC2', 'Amazon Elastic Compute Cloud', 512.4],
+        ['AmazonRDS', 'Amazon Relational Database Service', 214.9],
+        ['AmazonS3', 'Amazon Simple Storage Service', 88.3],
+        ['AWSELB', 'Elastic Load Balancing', 61.7],
+        ['AmazonCloudWatch', 'AmazonCloudWatch', 24.1],
+      ],
+      account: [
+        ['111111111111', 'demo-prod', 598.2],
+        ['333333333333', 'demo-dev', 303.2],
+      ],
+      region: [
+        ['eu-west-1', 'eu-west-1', 640.8],
+        ['af-south-1', 'af-south-1', 236.5],
+        ['global', 'Global', 24.1],
+      ],
+    }
+    const total = rows[dimension].reduce((sum, [, , amount]) => sum + amount, 0)
+    return {
+      source: 'cur',
+      month,
+      dimension,
+      currency: 'USD',
+      total: Math.round(total * 100) / 100,
+      items: rows[dimension].map(([key, label, amount]) => ({
+        key,
+        label,
+        amount,
+        share: Math.round((amount / total) * 10_000) / 10_000,
+      })),
+    }
+  }
+
+  private hasData(tenantId: string): boolean {
+    return (this.state.connections[tenantId] ?? []).some((c) => c.status === 'healthy' || c.status === 'degraded')
   }
 
   private connection(tenantId: string, connectionId: string): Connection {

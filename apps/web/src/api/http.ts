@@ -7,7 +7,10 @@ import type {
   Connection,
   ConnectionCreate,
   ConnectionSetup,
+  CostBreakdown,
+  CostDimension,
   CostSummary,
+  DailyCosts,
   Me,
   Tenant,
 } from './types'
@@ -80,6 +83,14 @@ export class HttpApi implements Api {
 
   costSummary(tenantId: string): Promise<CostSummary> {
     return this.request('GET', `/v1/tenants/${tenantId}/costs/summary`)
+  }
+
+  costDaily(tenantId: string): Promise<DailyCosts> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/daily`)
+  }
+
+  costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}`)
   }
 
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {
