@@ -269,7 +269,9 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
               <Alert tone="info">
                 Setting up AWS account {active.connection.awsAccountId} again. If an old{' '}
                 <code className="font-mono text-xs">cloudoptics-billing-access</code> stack is still in the account,
-                delete it first: the new stack creates a role with the same name.
+                delete it first: the new stack creates a role with the same name. Then empty and delete the S3 bucket{' '}
+                <code className="font-mono text-xs">cloudoptics-cur-{active.connection.awsAccountId}</code> if it is
+                still there. AWS keeps it when the stack is deleted, and the new stack creates a bucket with that name.
               </Alert>
             </div>
           )}
