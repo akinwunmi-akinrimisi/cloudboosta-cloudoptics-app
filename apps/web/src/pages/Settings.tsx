@@ -1,9 +1,211 @@
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import { useApi } from '../app/context'
-import type { AuditEntry } from '../api/types'
+import type { AuditEntry, RuleSettings, RuleSettingsView, Tenant } from '../api/types'
+import { ApiError } from '../api/types'
 import { Alert, Button, Card } from '../components/ui'
+import { RULES } from '../lib/rules'
 import { useWorkspace } from './Workspace'
+
+// The currencies the API accepts for a workspace (identity SUPPORTED_CURRENCIES).
+const CURRENCIES: Record<string, string> = {
+  NGN: 'Nigerian naira',
+  KES: 'Kenyan shilling',
+  GHS: 'Ghanaian cedi',
+  ZAR: 'South African rand',
+  EGP: 'Egyptian pound',
+  RWF: 'Rwandan franc',
+  UGX: 'Ugandan shilling',
+  TZS: 'Tanzanian shilling',
+  GBP: 'British pound',
+  EUR: 'Euro',
+  USD: 'US dollar',
+}
+
+function timeZones(current: string): string[] {
+  const all = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []
+  return all.includes(current) ? all : [current, ...all]
+}
+
+const selectClass = 'h-9 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm'
+
+/** Currency and time zone for the whole workspace (PRD Epic E3). Admins only. */
+function WorkspaceSettings({ tenant }: { tenant: Tenant }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const [saved, setSaved] = useState(false)
+  const save = useMutation({
+    mutationFn: (change: { displayCurrency?: string; timeZone?: string }) => api.updateTenant(tenant.id, change),
+    onSuccess: (updated) => {
+      qc.setQueryData(['tenant', tenant.id], updated)
+      void qc.invalidateQueries({ queryKey: ['fx-current', tenant.id] })
+      setSaved(true)
+    },
+  })
+  return (
+    <Card className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-base font-semibold">Workspace</h2>
+        <p className="mt-1 text-sm text-secondary">
+          Costs are shown in US dollars and in this currency. Dates and the daily cut-off use this time zone.
+        </p>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Local currency</span>
+          <select
+            className={selectClass}
+            value={tenant.displayCurrency}
+            disabled={save.isPending}
+            onChange={(e) => save.mutate({ displayCurrency: e.target.value })}
+          >
+            {Object.entries(CURRENCIES).map(([code, name]) => (
+              <option key={code} value={code}>
+                {name} ({code})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Time zone</span>
+          <select
+            className={selectClass}
+            value={tenant.timeZone}
+            disabled={save.isPending}
+            onChange={(e) => save.mutate({ timeZone: e.target.value })}
+          >
+            {timeZones(tenant.timeZone).map((tz) => (
+              <option key={tz} value={tz}>
+                {tz.replace(/_/g, ' ')}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {save.error && <Alert tone="error">Could not save. Try again.</Alert>}
+      {saved && !save.isPending && !save.error && <p className="text-xs text-good-ink">Saved.</p>}
+    </Card>
+  )
+}
+
+/** Which rules run and how strict they are (PRD FR-REC-08). Saving re-runs them. */
+function RuleSettingsCard({ tenantId, canEdit }: { tenantId: string; canEdit: boolean }) {
+  const api = useApi()
+  const view = useQuery({ queryKey: ['rule-settings', tenantId], queryFn: () => api.getRuleSettings(tenantId) })
+  if (!view.data) return null
+  // Keyed so the form starts again from what was saved.
+  return (
+    <RuleSettingsForm
+      key={JSON.stringify(view.data.settings)}
+      tenantId={tenantId}
+      canEdit={canEdit}
+      view={view.data}
+    />
+  )
+}
+
+function RuleSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canEdit: boolean; view: RuleSettingsView }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const [draft, setDraft] = useState<RuleSettings>(view.settings)
+  const save = useMutation({
+    mutationFn: (settings: RuleSettings) => api.saveRuleSettings(tenantId, settings),
+    onSuccess: (updated) => {
+      qc.setQueryData(['rule-settings', tenantId], updated)
+      void qc.invalidateQueries({ queryKey: ['recommendations', tenantId] })
+      void qc.invalidateQueries({ queryKey: ['recommendation-summary', tenantId] })
+    },
+  })
+  const toggle = (rule: string, on: boolean) =>
+    setDraft({
+      ...draft,
+      disabledRules: on ? draft.disabledRules.filter((r) => r !== rule) : [...draft.disabledRules, rule],
+    })
+  const changed = JSON.stringify(draft) !== JSON.stringify(view.settings)
+  return (
+    <Card className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-base font-semibold">Recommendation rules</h2>
+        <p className="mt-1 text-sm text-secondary">
+          Choose what Cloudoptics looks for. Changes apply straight away to every AWS account in this workspace.
+        </p>
+      </div>
+      <fieldset className="grid gap-2 sm:grid-cols-2" disabled={!canEdit}>
+        <legend className="mb-1 text-sm font-medium">Look for</legend>
+        {view.rules.map((rule) => (
+          <label key={rule} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={!draft.disabledRules.includes(rule)}
+              onChange={(e) => toggle(rule, e.target.checked)}
+            />
+            {RULES[rule] ?? rule}
+          </label>
+        ))}
+      </fieldset>
+      <fieldset className="grid gap-4 sm:grid-cols-3" disabled={!canEdit}>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Idle when CPU stays under</span>
+          <select
+            className={selectClass}
+            value={draft.idleCpuPercent}
+            onChange={(e) => setDraft({ ...draft, idleCpuPercent: Number(e.target.value) })}
+          >
+            {[1, 2, 3, 5, 10, 15, 20].map((n) => (
+              <option key={n} value={n}>
+                {n}%
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">For at least</span>
+          <select
+            className={selectClass}
+            value={draft.idleDays}
+            onChange={(e) => setDraft({ ...draft, idleDays: Number(e.target.value) })}
+          >
+            {[7, 14, 21, 30].map((n) => (
+              <option key={n} value={n}>
+                {n} days
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Skip resources tagged</span>
+          <input
+            className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 text-sm"
+            value={draft.ignoreTag}
+            maxLength={128}
+            onChange={(e) => setDraft({ ...draft, ignoreTag: e.target.value })}
+          />
+        </label>
+      </fieldset>
+      <p className="text-xs text-muted">
+        Add the tag above to any AWS resource (with any value) and Cloudoptics will never suggest changing it.
+      </p>
+      {save.error && (
+        <Alert tone="error">{save.error instanceof ApiError ? save.error.message : 'Could not save. Try again.'}</Alert>
+      )}
+      {canEdit ? (
+        <div className="flex items-center gap-3">
+          <Button disabled={!changed || !draft.ignoreTag.trim() || save.isPending} onClick={() => save.mutate(draft)}>
+            {save.isPending ? 'Saving and re-checking…' : 'Save'}
+          </Button>
+          {changed && (
+            <Button variant="ghost" onClick={() => setDraft(view.settings)}>
+              Undo changes
+            </Button>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-muted">Only workspace admins can change these.</p>
+      )}
+    </Card>
+  )
+}
 
 const ACTIONS: Record<string, string> = {
   'tenant.created': 'Created the workspace',
@@ -12,6 +214,8 @@ const ACTIONS: Record<string, string> = {
   'connection.disconnected': 'Disconnected an AWS account',
   'connection.status_changed': 'Connection status changed',
   'recommendation.status_changed': 'Recommendation status changed',
+  'recommendation.assigned': 'Recommendation assigned',
+  'rule_settings.updated': 'Changed recommendation rules',
   'fx_rate.set': 'Exchange rate set',
 }
 
@@ -87,14 +291,16 @@ function AuditLog({ tenantId }: { tenantId: string }) {
 }
 
 export function Settings() {
-  const { me, tenantId } = useWorkspace()
+  const { me, tenantId, tenant } = useWorkspace()
   const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="text-sm text-secondary">Members, notifications and preferences arrive in Sprints 5–6.</p>
+        <p className="text-sm text-secondary">Your workspace, what Cloudoptics looks for, and who changed what.</p>
       </div>
+      {role === 'admin' && tenant.data && <WorkspaceSettings tenant={tenant.data} />}
+      {tenantId !== null && role !== undefined && <RuleSettingsCard tenantId={tenantId} canEdit={role === 'admin'} />}
       <Card>
         <h2 className="text-base font-semibold">Email alerts</h2>
         <p className="mt-1 text-sm text-secondary">

@@ -1,4 +1,4 @@
-"""Usage metrics: candidates, 14-day backfill then incremental pulls, budget and retention."""
+"""Usage metrics: candidates, 32-day backfill then incremental pulls, budget and retention."""
 
 import uuid
 from datetime import UTC, date, datetime
@@ -32,7 +32,7 @@ def stored(owner_sql, tenant: uuid.UUID) -> dict[tuple[str, str, str], int]:  # 
     return {(r, i, m): n for r, i, m, n in rows}
 
 
-async def test_first_pull_backfills_14_days_for_running_servers_and_databases(
+async def test_first_pull_backfills_32_days_for_running_servers_and_databases(
     client: AsyncClient,
     login,
     owner_sql,
@@ -46,20 +46,24 @@ async def test_first_pull_backfills_14_days_for_running_servers_and_databases(
     assert await puller.pull_connection(tenant, connection, now=NOW) == "succeeded"
 
     starts = {c["StartTime"] for c in world.metric_calls}
-    assert starts == {datetime(2026, 10, 6, tzinfo=UTC)}
+    assert starts == {datetime(2026, 9, 18, tzinfo=UTC)}
     assert {c["EndTime"] for c in world.metric_calls} == {datetime(2026, 10, 20, 12, tzinfo=UTC)}
-    # 15 days: 6 to 20 October, the last one partial.
+    # 33 days: 18 September to 20 October, the last one partial.
     assert stored(owner_sql, tenant) == {
-        ("eu-west-1", "i-eu-west-1-1", "cpu"): 15,
-        ("eu-west-1", "i-eu-west-1-1", "cpu_max"): 15,
-        ("eu-west-1", "i-eu-west-1-1", "network_in"): 15,
-        ("eu-west-1", "i-eu-west-1-1", "network_out"): 15,
-        ("eu-west-1", "orders-db", "cpu"): 15,
-        ("eu-west-1", "orders-db", "cpu_max"): 15,
-        ("eu-west-1", "orders-db", "connections"): 15,
-        ("af-south-1", "orders-db", "cpu"): 15,
-        ("af-south-1", "orders-db", "cpu_max"): 15,
-        ("af-south-1", "orders-db", "connections"): 15,
+        ("eu-west-1", "i-eu-west-1-1", "cpu"): 33,
+        ("eu-west-1", "i-eu-west-1-1", "cpu_max"): 33,
+        ("eu-west-1", "i-eu-west-1-1", "network_in"): 33,
+        ("eu-west-1", "i-eu-west-1-1", "network_out"): 33,
+        ("eu-west-1", "orders-db", "cpu"): 33,
+        ("eu-west-1", "orders-db", "cpu_max"): 33,
+        ("eu-west-1", "orders-db", "connections"): 33,
+        ("eu-west-1", "orders-db", "read_iops"): 33,
+        ("eu-west-1", "orders-db", "write_iops"): 33,
+        ("af-south-1", "orders-db", "cpu"): 33,
+        ("af-south-1", "orders-db", "cpu_max"): 33,
+        ("af-south-1", "orders-db", "connections"): 33,
+        ("af-south-1", "orders-db", "read_iops"): 33,
+        ("af-south-1", "orders-db", "write_iops"): 33,
     }
     last = owner_sql(
         "SELECT hourly FROM resource_metric m JOIN resource r ON r.id = m.resource_id "
@@ -72,10 +76,10 @@ async def test_first_pull_backfills_14_days_for_running_servers_and_databases(
         "AND job_type = 'metrics.pull'",
         connection,
     )
-    assert run == [("succeeded", 150, {"resources": 3, "queries": 10, "over_budget": 0})]
+    assert run == [("succeeded", 462, {"resources": 3, "queries": 14, "over_budget": 0})]
     assert owner_sql(
         "SELECT units FROM aws_api_usage WHERE tenant_id = %s AND day = '2026-10-20'", tenant
-    ) == [(10,)]
+    ) == [(14,)]
 
     resource = owner_sql(
         "SELECT id FROM resource WHERE resource_id = 'i-eu-west-1-1' AND tenant_id = %s", tenant
@@ -85,8 +89,8 @@ async def test_first_pull_backfills_14_days_for_running_servers_and_databases(
     async with get_sessionmaker()() as session, session.begin():
         await scope(session, tenant_id=tenant)
         series = {s.metric: s for s in await puller.usage(session, resource)}
-    assert series["cpu"].days[0] == (date(2026, 10, 6), pytest.approx(3.5), pytest.approx(3.5))
-    assert len(series["cpu"].days) == 15
+    assert series["cpu"].days[0] == (date(2026, 9, 18), pytest.approx(3.5), pytest.approx(3.5))
+    assert len(series["cpu"].days) == 33
 
 
 async def test_later_pulls_start_from_the_last_stored_day_and_old_days_are_removed(
@@ -118,8 +122,8 @@ async def test_later_pulls_start_from_the_last_stored_day_and_old_days_are_remov
         "AND metric = 'cpu'",
         db,
     )
-    # 1 September is past the 35 days kept; 20 October is now complete.
-    assert days == [(date(2026, 10, 6), date(2026, 10, 21), 16)]
+    # 1 September is past the 40 days kept; 20 October is now complete.
+    assert days == [(date(2026, 9, 18), date(2026, 10, 21), 34)]
     full = owner_sql(
         "SELECT hourly FROM resource_metric WHERE resource_id = %s AND metric = 'cpu' "
         "AND day = '2026-10-20'",
@@ -136,7 +140,7 @@ async def test_daily_budget_limits_queries_and_new_resources_go_first(
     monkeypatch,
 ) -> None:
     tenant, connection = await scanned(client, login, owner_sql, world)
-    monkeypatch.setattr(get_settings(), "metrics_daily_budget", 4)
+    monkeypatch.setattr(get_settings(), "metrics_daily_budget", 5)
 
     assert await puller.pull_connection(tenant, connection, now=NOW) == "partial"
     assert len({k[:2] for k in stored(owner_sql, tenant)}) == 1  # one database of two
@@ -153,7 +157,7 @@ async def test_daily_budget_limits_queries_and_new_resources_go_first(
     assert world.metric_calls == []
 
     # Next day: the database without data is pulled before the one that has it.
-    monkeypatch.setattr(get_settings(), "metrics_daily_budget", 3)
+    monkeypatch.setattr(get_settings(), "metrics_daily_budget", 5)
     next_day = datetime(2026, 10, 21, 12, tzinfo=UTC)
     assert await puller.pull_connection(tenant, connection, now=next_day) == "partial"
     assert len({k[:2] for k in stored(owner_sql, tenant)}) == 2
@@ -183,3 +187,68 @@ async def test_region_errors_are_partial_and_no_access_or_unusable_is_skipped(
 
     owner_sql("UPDATE cloud_connection SET status = 'failed' WHERE id = %s", connection)
     assert await puller.pull_connection(tenant, connection, now=NOW) == "skipped"
+
+
+async def test_pulled_usage_feeds_the_idle_rules(
+    client: AsyncClient,
+    login,
+    owner_sql,
+    world,  # noqa: F811
+) -> None:
+    from cloudoptics.analysis import engine
+
+    tenant, connection = await scanned(client, login, owner_sql, world)
+    owner_sql("UPDATE resource SET state = 'running' WHERE resource_id = 'i-eu-west-1-1'")
+    world.metric_values = {"CPUUtilization": 1.0, "DatabaseConnections": 0.0}
+    now = datetime.now(UTC)
+    await puller.pull_connection(tenant, connection, now=now)
+    await engine.run_analysis(tenant, now=now)
+
+    rows = owner_sql(
+        "SELECT rule_id, region_id, resource_id FROM recommendation WHERE tenant_id = %s "
+        "AND rule_id LIKE 'R4%%' ORDER BY 1, 2",
+        tenant,
+    )
+    assert rows == [
+        ("R4_idle_ec2", "eu-west-1", "i-eu-west-1-1"),
+        ("R4_idle_rds", "af-south-1", "orders-db"),
+        ("R4_idle_rds", "eu-west-1", "orders-db"),
+    ]
+
+
+async def test_idle_server_has_console_route_and_usage_for_charts(
+    client: AsyncClient,
+    login,
+    owner_sql,
+    world,  # noqa: F811
+) -> None:
+    from cloudoptics.analysis import engine
+
+    tenant_s, connection_s, _, headers = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    tenant, connection = uuid.UUID(tenant_s), uuid.UUID(connection_s)
+    await scanner.scan_connection(tenant, connection)
+    owner_sql("UPDATE resource SET state = 'running' WHERE resource_id = 'i-eu-west-1-1'")
+    world.metric_values = {"CPUUtilization": 1.0, "DatabaseConnections": 0.0}
+    now = datetime.now(UTC)
+    await puller.pull_connection(tenant, connection, now=now)
+    await engine.run_analysis(tenant, now=now)
+
+    base = f"/v1/tenants/{tenant}/recommendations"
+    recs = (await client.get(base, headers=headers)).json()
+    idle = next(r for r in recs if r["ruleId"] == "R4_idle_ec2")
+    console = idle["fix"]["console"]
+    assert console["url"] == (
+        "https://eu-west-1.console.aws.amazon.com/ec2/home?region=eu-west-1"
+        "#InstanceDetails:instanceId=i-eu-west-1-1"
+    )
+    assert console["steps"][1] == "Choose Instance state, then Stop instance."
+    db = next(r for r in recs if r["ruleId"] == "R4_idle_rds")
+    assert "#database:id=orders-db;is-cluster=false" in db["fix"]["console"]["url"]
+
+    series = (await client.get(f"{base}/{idle['id']}/usage", headers=headers)).json()
+    cpu = next(s for s in series if s["metric"] == "cpu_max")
+    assert len(cpu["days"]) == 33 and cpu["days"][0]["maximum"] == pytest.approx(1.0)
+    eip = next(r for r in recs if r["ruleId"] == "R2_idle_eip")
+    assert (await client.get(f"{base}/{eip['id']}/usage", headers=headers)).json() == []
+    assert (await client.get(f"{base}/{uuid.uuid4()}/usage", headers=headers)).status_code == 404

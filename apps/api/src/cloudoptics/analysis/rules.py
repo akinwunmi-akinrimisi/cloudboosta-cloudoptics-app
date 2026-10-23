@@ -1,4 +1,5 @@
-"""The first recommendation rules: R1 unused storage, R2 idle network, R3 gp2 to gp3.
+"""Inventory rules: R1 unused storage, R2 idle network, R3 gp2 to gp3 (usage-based rules
+are in ``compute``).
 
 Each rule turns inventory rows into candidates with costs, risk factors, confidence and a
 fix (PRD FR-ANA-01/01b/02/02b/03, FR-REC-02/05). Rules are pure: the engine loads the
@@ -11,10 +12,12 @@ import shlex
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import quote
 
 from cloudoptics.analysis.pricing import HOURS_PER_MONTH, Basis, PriceBook
+from cloudoptics.analysis.settings import RuleSettings
 
 Confidence = Literal["high", "medium", "low"]
 Reversibility = Literal["reversible", "with_snapshot", "irreversible"]
@@ -46,11 +49,16 @@ class Resource:
 class Context:
     now: datetime
     prices: PriceBook
+    settings: RuleSettings = field(default_factory=RuleSettings)
     # (account, region) -> {volume id -> newest completed snapshot start}
     snapshots: dict[tuple[str, str], dict[str, datetime]] = field(default_factory=dict)
     # (account, region) -> {instance id -> Resource}
     instances: dict[tuple[str, str], dict[str, Resource]] = field(default_factory=dict)
     live_volumes: set[tuple[str, str, str]] = field(default_factory=set)
+    # (account, region, volume id) -> Resource
+    volumes: dict[tuple[str, str, str], Resource] = field(default_factory=dict)
+    # resource uuid -> metric -> UTC day -> 24 hourly values (None where no data)
+    usage: dict[uuid.UUID, dict[str, dict[date, list[float | None]]]] = field(default_factory=dict)
 
 
 @dataclass
@@ -74,6 +82,8 @@ class Candidate:
     confidence_notes: list[str] = field(default_factory=list)
     rule_config: dict[str, Any] = field(default_factory=dict)
     restart_required: bool = False
+    # The same fix as clicks in the AWS console, for people who do not use the CLI.
+    console_steps: list[str] = field(default_factory=list)
 
     @property
     def savings(self) -> float:
@@ -117,6 +127,26 @@ def _age_days(ctx: Context, since: datetime | None) -> float | None:
 
 def _cli(*args: str) -> str:
     return " ".join(shlex.quote(a) for a in args)
+
+
+CONSOLE_PAGES = {
+    "ec2_instance": "ec2/home?region={region}#InstanceDetails:instanceId={id}",
+    "ebs_volume": "ec2/home?region={region}#VolumeDetails:volumeId={id}",
+    "ebs_snapshot": "ec2/home?region={region}#SnapshotDetails:snapshotId={id}",
+    "eip": "ec2/home?region={region}#ElasticIpDetails:AllocationId={id}",
+    "elb": "ec2/home?region={region}#LoadBalancers:search={id}",
+    "rds_instance": "rds/home?region={region}#database:id={id};is-cluster=false",
+}
+
+
+def console_url(r: Resource) -> str | None:
+    """The resource's page in the AWS console, in its own region."""
+    page = CONSOLE_PAGES.get(r.resource_type)
+    if page is None:
+        return None
+    region = quote(r.region_id, safe="")
+    path = page.format(region=region, id=quote(r.resource_id, safe=""))
+    return f"https://{region}.console.aws.amazon.com/{path}"
 
 
 def _region_args(r: Resource) -> list[str]:
@@ -183,6 +213,12 @@ def unattached_volumes(ctx: Context, resources: list[Resource]) -> Iterator[Cand
             rule_id="R1_unattached_ebs",
             rule_version=1,
             type="delete_unattached_volume",
+            console_steps=[
+                "Open the volume in the AWS console.",
+                "Choose Actions, then Create snapshot, and wait until the snapshot shows "
+                "Completed.",
+                "Choose Actions, then Delete volume, and confirm.",
+            ],
             resource=r,
             title=f"Delete unattached {volume_type} volume {r.name or r.resource_id} "
             f"({r.config.get('sizeGiB')} GiB)",
@@ -264,6 +300,11 @@ def old_snapshots(ctx: Context, resources: list[Resource]) -> Iterator[Candidate
             rule_id="R1_old_snapshot",
             rule_version=1,
             type="delete_old_snapshot",
+            console_steps=[
+                "Open the snapshot in the AWS console.",
+                "Choose Actions, then Delete snapshot, and confirm. To keep it for less "
+                "instead, choose Actions, then Archive snapshot.",
+            ],
             resource=r,
             title=f"Delete {int(age)}-day-old snapshot {r.name or r.resource_id} "
             f"of a deleted volume",
@@ -343,6 +384,12 @@ def idle_addresses(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
             rule_id="R2_idle_eip",
             rule_version=1,
             type="release_idle_ip",
+            console_steps=[
+                "Open the Elastic IP in the AWS console.",
+                "If it is attached to a server, choose Actions, then Disassociate Elastic IP "
+                "address.",
+                "Choose Actions, then Release Elastic IP addresses, and confirm.",
+            ],
             resource=r,
             title=f"Release idle Elastic IP {ip} ({reason})",
             current_config={"publicIp": ip, "state": r.state},
@@ -406,6 +453,11 @@ def idle_load_balancers(ctx: Context, resources: list[Resource]) -> Iterator[Can
             rule_id="R2_idle_lb",
             rule_version=1,
             type="delete_idle_load_balancer",
+            console_steps=[
+                "Open the load balancer in the AWS console.",
+                "Check that no DNS record or app still uses its DNS name.",
+                "Choose Actions, then Delete load balancer, and confirm.",
+            ],
             resource=r,
             title=f"Delete idle {kind} load balancer {r.resource_id} (no healthy targets)",
             current_config={
@@ -468,6 +520,12 @@ def gp2_to_gp3(ctx: Context, resources: list[Resource]) -> Iterator[Candidate]:
             rule_id="R3_gp2_gp3",
             rule_version=1,
             type="modify_volume_gp3",
+            console_steps=[
+                "Open the volume in the AWS console.",
+                "Choose Actions, then Modify volume.",
+                f"Set Volume type to gp3, IOPS to {iops} and Throughput to {throughput}, "
+                "then choose Modify.",
+            ],
             resource=r,
             title=f"Change volume {r.name or r.resource_id} from gp2 to gp3 ({int(size)} GiB)",
             current_config={"volumeType": "gp2", "sizeGiB": size},

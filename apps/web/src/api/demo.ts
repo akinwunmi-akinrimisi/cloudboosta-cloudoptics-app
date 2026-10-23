@@ -18,14 +18,20 @@ import type {
   DailyCosts,
   IntentSetup,
   Me,
+  Member,
   PermissionCheck,
   Recommendation,
+  RecommendationChange,
+  RecommendationEvent,
   RecommendationQuery,
   RecommendationStatus,
   RecommendationSummary,
   ResourceScan,
-  StatusChange,
+  RuleSettings,
+  RuleSettingsView,
   Tenant,
+  TenantChange,
+  UsageSeries,
 } from './types'
 import { ApiError } from './types'
 
@@ -65,6 +71,10 @@ interface State {
   externalIds: Record<string, string>
   /** tenantId:recommendationId -> status changed in the demo. */
   recommendationStatus: Record<string, RecommendationStatus>
+  /** tenantId:recommendationId -> assignee and history in the demo. */
+  recommendationAssignee?: Record<string, string | null>
+  recommendationEvents?: Record<string, RecommendationEvent[]>
+  ruleSettings?: Record<string, RuleSettings>
   /** Connections whose accounts have the resource stack (after a demo scan). */
   resourceAccess?: Record<string, boolean>
   /** One-click links waiting for the (simulated) stack to report back. */
@@ -113,6 +123,14 @@ const DEMO_RECS: DemoRec[] = [
         'aws ec2 create-volume --snapshot-id <snapshot-id> --availability-zone eu-west-1a --volume-type gp2 --region eu-west-1',
       ],
       notes: 'Keep the snapshot until you are sure the data is not needed.',
+      console: {
+        url: 'https://eu-west-1.console.aws.amazon.com/ec2/home?region=eu-west-1#VolumeDetails:volumeId=vol-0a1b2c3d4e5f60718',
+        steps: [
+          'Open the volume in the AWS console.',
+          'Choose Actions, then Create snapshot, and wait until the snapshot shows Completed.',
+          'Choose Actions, then Delete volume, and confirm.',
+        ],
+      },
     },
   },
   {
@@ -239,7 +257,28 @@ function demoRecommendation(r: DemoRec, status: RecommendationStatus): Recommend
       savings * { high: 1, medium: 0.7, low: 0.4 }[confidence] * { low: 1, medium: 0.6, high: 0.3 }[riskLevel],
     fix: r.fix ?? { steps: [], rollback: [] },
     status,
+    assigneeId: null,
   }
+}
+
+const DEMO_RULES = [
+  'R1_unattached_ebs',
+  'R1_old_snapshot',
+  'R2_idle_eip',
+  'R2_idle_lb',
+  'R3_gp2_gp3',
+  'R4_idle_ec2',
+  'R4_idle_rds',
+  'R5_rightsize_ec2',
+  'R6_newer_generation',
+  'R6_graviton',
+]
+
+const DEFAULT_RULE_SETTINGS: RuleSettings = {
+  disabledRules: [],
+  ignoreTag: 'cloudoptics:ignore',
+  idleCpuPercent: 5,
+  idleDays: 14,
 }
 
 function load(): State {
@@ -374,6 +413,19 @@ export class DemoApi implements Api {
   async getTenant(tenantId: string): Promise<Tenant> {
     await this.tick()
     return structuredClone(this.tenant(tenantId))
+  }
+
+  async updateTenant(tenantId: string, change: TenantChange): Promise<Tenant> {
+    await this.tick()
+    Object.assign(this.tenant(tenantId), change)
+    this.save()
+    return structuredClone(this.tenant(tenantId))
+  }
+
+  async listMembers(tenantId: string): Promise<Member[]> {
+    const tenant = this.tenant(tenantId)
+    const me = this.requireMe()
+    return [{ userId: me.id, email: me.email, displayName: me.displayName, role: 'admin', joinedAt: tenant.createdAt }]
   }
 
   async listConnections(tenantId: string): Promise<Connection[]> {
@@ -783,7 +835,25 @@ export class DemoApi implements Api {
   private recommendations(tenantId: string): Recommendation[] {
     this.tenant(tenantId)
     if (!this.hasData(tenantId)) return []
-    return DEMO_RECS.map((r) => demoRecommendation(r, this.state.recommendationStatus[`${tenantId}:${r.id}`] ?? 'new'))
+    const disabled = this.ruleSettings(tenantId).disabledRules
+    return DEMO_RECS.filter((r) => !disabled.includes(r.ruleId)).map((r) => ({
+      ...demoRecommendation(r, this.state.recommendationStatus[`${tenantId}:${r.id}`] ?? 'new'),
+      assigneeId: this.state.recommendationAssignee?.[`${tenantId}:${r.id}`] ?? null,
+    }))
+  }
+
+  private ruleSettings(tenantId: string): RuleSettings {
+    return this.state.ruleSettings?.[tenantId] ?? DEFAULT_RULE_SETTINGS
+  }
+
+  private addEvent(tenantId: string, id: string, event: Omit<RecommendationEvent, 'id' | 'createdAt' | 'actorId' | 'actorName'>): void {
+    const me = this.requireMe()
+    const key = `${tenantId}:${id}`
+    const events = (this.state.recommendationEvents ??= {})
+    events[key] = [
+      ...(events[key] ?? []),
+      { id: randomId(), createdAt: new Date().toISOString(), actorId: me.id, actorName: me.displayName ?? me.email, ...event },
+    ]
   }
 
   async listRecommendations(tenantId: string, query: RecommendationQuery = {}): Promise<Recommendation[]> {
@@ -822,14 +892,91 @@ export class DemoApi implements Api {
     return rec
   }
 
-  async updateRecommendation(tenantId: string, id: string, change: StatusChange): Promise<Recommendation> {
+  async updateRecommendation(tenantId: string, id: string, change: RecommendationChange): Promise<Recommendation> {
     if (change.status === 'dismissed' && !change.reason?.trim()) {
       throw new ApiError(422, 'A reason is required to dismiss a recommendation.')
     }
-    await this.getRecommendation(tenantId, id)
-    this.state.recommendationStatus[`${tenantId}:${id}`] = change.status
+    const before = await this.getRecommendation(tenantId, id)
+    const key = `${tenantId}:${id}`
+    let status: RecommendationStatus | undefined = change.status
+    if (change.assigneeId !== undefined && change.assigneeId !== before.assigneeId) {
+      ;(this.state.recommendationAssignee ??= {})[key] = change.assigneeId
+      const member = (await this.listMembers(tenantId)).find((m) => m.userId === change.assigneeId)
+      this.addEvent(tenantId, id, {
+        kind: 'assigned',
+        fromStatus: null,
+        toStatus: null,
+        assigneeId: change.assigneeId,
+        assigneeName: member ? (member.displayName ?? member.email) : null,
+        body: null,
+      })
+      if (!status && change.assigneeId && before.status === 'new') status = 'assigned'
+      if (!status && change.assigneeId === null && before.status === 'assigned') status = 'new'
+    }
+    if (status && status !== before.status) {
+      this.state.recommendationStatus[key] = status
+      this.addEvent(tenantId, id, {
+        kind: 'status_changed',
+        fromStatus: before.status,
+        toStatus: status,
+        assigneeId: null,
+        assigneeName: null,
+        body: change.reason ?? null,
+      })
+    }
     this.save()
     return this.getRecommendation(tenantId, id)
+  }
+
+  async updateRecommendations(tenantId: string, ids: string[], change: RecommendationChange): Promise<{ updated: number }> {
+    let updated = 0
+    for (const id of new Set(ids)) {
+      try {
+        await this.updateRecommendation(tenantId, id, change)
+        updated += 1
+      } catch (e) {
+        if (!(e instanceof ApiError) || e.status !== 404) throw e
+      }
+    }
+    return { updated }
+  }
+
+  async recommendationEvents(tenantId: string, id: string): Promise<RecommendationEvent[]> {
+    await this.getRecommendation(tenantId, id)
+    return structuredClone(this.state.recommendationEvents?.[`${tenantId}:${id}`] ?? [])
+  }
+
+  // Demo resources are volumes, addresses and load balancers: no usage series.
+  async recommendationUsage(tenantId: string, id: string): Promise<UsageSeries[]> {
+    await this.getRecommendation(tenantId, id)
+    return []
+  }
+
+  async addComment(tenantId: string, id: string, body: string): Promise<RecommendationEvent[]> {
+    await this.getRecommendation(tenantId, id)
+    this.addEvent(tenantId, id, {
+      kind: 'commented',
+      fromStatus: null,
+      toStatus: null,
+      assigneeId: null,
+      assigneeName: null,
+      body: body.trim(),
+    })
+    this.save()
+    return this.recommendationEvents(tenantId, id)
+  }
+
+  async getRuleSettings(tenantId: string): Promise<RuleSettingsView> {
+    await this.tick()
+    this.tenant(tenantId)
+    return { rules: DEMO_RULES, settings: structuredClone(this.ruleSettings(tenantId)) }
+  }
+
+  async saveRuleSettings(tenantId: string, settings: RuleSettings): Promise<RuleSettingsView> {
+    this.tenant(tenantId)
+    ;(this.state.ruleSettings ??= {})[tenantId] = structuredClone(settings)
+    this.save()
+    return this.getRuleSettings(tenantId)
   }
 
   // The demo has no stored audit trail: it lists what this browser's state implies.

@@ -66,6 +66,72 @@ export function DailySpendChart({ points, currency }: { points: DailyBar[]; curr
   )
 }
 
+export interface UsagePoint {
+  date: string
+  value: number | null
+}
+
+/** Daily usage as bars on a fixed scale (0-100 for percentages), gaps where no data. */
+export function UsageChart({
+  points,
+  unit,
+  label,
+  max,
+}: {
+  points: UsagePoint[]
+  unit: string
+  label: string
+  max?: number
+}) {
+  const width = 600
+  const height = 120
+  const values = points.map((p) => p.value ?? 0)
+  const top = max ?? Math.max(...values, 1)
+  const step = width / Math.max(points.length, 1)
+  const gap = Math.min(4, step * 0.25)
+  const peak = Math.max(...values, 0)
+  const first = points[0]
+  const last = points[points.length - 1]
+  const show = (v: number) => `${Math.round(v * 10) / 10}${unit}`
+  return (
+    <figure className="flex flex-col gap-2">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="none"
+        className="h-28 w-full"
+        role="img"
+        aria-label={`${label}, ${points.length} days, highest ${show(peak)}`}
+      >
+        <line x1={0} y1={height - 0.5} x2={width} y2={height - 0.5} stroke="var(--border)" />
+        {points.map((p, i) => {
+          if (p.value === null) return null
+          const h = Math.max((p.value / top) * (height - 4), p.value > 0 ? 1 : 0)
+          return (
+            <rect
+              key={p.date}
+              x={i * step + gap / 2}
+              y={height - h}
+              width={step - gap}
+              height={h}
+              rx={1.5}
+              fill="var(--accent)"
+            >
+              <title>{`${dayLabel(p.date)}: ${show(p.value)}`}</title>
+            </rect>
+          )
+        })}
+      </svg>
+      {first && last && (
+        <figcaption className="flex justify-between text-xs text-muted">
+          <span>{dayLabel(first.date)}</span>
+          <span>Highest {show(peak)}</span>
+          <span>{dayLabel(last.date)}</span>
+        </figcaption>
+      )}
+    </figure>
+  )
+}
+
 export interface ShareItem {
   key: string
   label: string
