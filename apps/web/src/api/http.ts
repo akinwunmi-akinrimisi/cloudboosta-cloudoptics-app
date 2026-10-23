@@ -10,6 +10,7 @@ import type {
   CostBreakdown,
   CostDimension,
   CostSummary,
+  CurrentRate,
   DailyCosts,
   Me,
   Tenant,
@@ -91,6 +92,10 @@ export class HttpApi implements Api {
 
   costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown> {
     return this.request('GET', `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}`)
+  }
+
+  fxCurrent(tenantId: string): Promise<CurrentRate> {
+    return this.request('GET', `/v1/tenants/${tenantId}/fx/current`)
   }
 
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {

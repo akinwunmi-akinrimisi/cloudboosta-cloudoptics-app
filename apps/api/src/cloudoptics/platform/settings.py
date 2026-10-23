@@ -67,9 +67,22 @@ class Settings(BaseSettings):
     # until object storage is provisioned (docs/11b §2.3).
     normalised_dir: str = ""
 
+    # Cloudoptics staff who may set exchange rates (comma-separated emails). A platform-admin
+    # role with MFA replaces this list with the admin console (WBS ADM-10).
+    platform_admin_emails: str = ""
+    # Reference exchange-rate feed (ADR-010): a JSON URL answering {"base": "USD",
+    # "rates": {"NGN": 1530.2, ...}}, as open.er-api.com does. Empty: no feed.
+    fx_feed_url: str = ""
+
     @property
     def oidc_configured(self) -> bool:
         return bool(self.workos_client_id or self.oidc_jwks_url)
+
+    @property
+    def platform_admins(self) -> frozenset[str]:
+        return frozenset(
+            e.strip().lower() for e in self.platform_admin_emails.split(",") if e.strip()
+        )
 
     @field_validator("database_url", "app_database_url")
     @classmethod

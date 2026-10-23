@@ -9,6 +9,7 @@ import type {
   CostBreakdown,
   CostDimension,
   CostSummary,
+  CurrentRate,
   DailyCosts,
   Me,
   PermissionCheck,
@@ -20,6 +21,19 @@ import { ApiError } from './types'
 // the browser and no AWS call is made; state lives in this viewer's localStorage only.
 
 const KEY = 'co.demo.v1'
+// Illustrative rates for the demo only; real rates are set by Cloudoptics staff (FR-FX-06).
+const DEMO_RATES: Record<string, number> = {
+  NGN: 1530.25,
+  KES: 129.4,
+  GHS: 15.5,
+  ZAR: 18.1,
+  EGP: 48.6,
+  RWF: 1410,
+  UGX: 3690,
+  TZS: 2600,
+  GBP: 0.79,
+  EUR: 0.92,
+}
 const COUNTRY: Record<string, [string, string]> = {
   NG: ['NGN', 'Africa/Lagos'],
   KE: ['KES', 'Africa/Nairobi'],
@@ -331,6 +345,27 @@ export class DemoApi implements Api {
         amount,
         share: Math.round((amount / total) * 10_000) / 10_000,
       })),
+    }
+  }
+
+  async fxCurrent(tenantId: string): Promise<CurrentRate> {
+    await this.tick()
+    const tenant = this.tenant(tenantId)
+    const currency = tenant.displayCurrency
+    const rate = currency === 'USD' ? 1 : DEMO_RATES[currency]
+    return {
+      currency,
+      basis: 'official',
+      quote: rate
+        ? {
+            currency,
+            rate,
+            rateDate: new Date().toISOString().slice(0, 10),
+            basis: 'official',
+            source: 'manual',
+            estimated: false,
+          }
+        : null,
     }
   }
 

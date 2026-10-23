@@ -142,6 +142,25 @@ export interface CostBreakdown {
   items: { key: string; label: string; amount: number; share: number }[]
 }
 
+export interface FxQuote {
+  currency: string
+  /** Local currency units per 1 USD. */
+  rate: number
+  rateDate: string
+  basis: 'official' | 'market'
+  /** manual: set by Cloudoptics staff; feed: reference feed (only when no staff rate exists). */
+  source: 'manual' | 'feed'
+  /** Carried forward from an earlier day, or from the feed. */
+  estimated: boolean
+}
+
+export interface CurrentRate {
+  currency: string
+  basis: 'official' | 'market'
+  /** Null when no usable rate exists: show USD only. */
+  quote: FxQuote | null
+}
+
 export interface Api {
   readonly mode: 'http' | 'demo'
   authConfig(): Promise<AuthConfig>
@@ -159,6 +178,7 @@ export interface Api {
   costSummary(tenantId: string): Promise<CostSummary>
   costDaily(tenantId: string): Promise<DailyCosts>
   costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown>
+  fxCurrent(tenantId: string): Promise<CurrentRate>
 }
 
 export class ApiError extends Error {

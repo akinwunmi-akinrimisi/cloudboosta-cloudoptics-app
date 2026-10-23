@@ -4,9 +4,10 @@ import { Plus } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
-import type { CostDimension, CostSummary } from '../api/types'
+import type { CostDimension, CostSummary, CurrentRate } from '../api/types'
 import { DailySpendChart, ShareList } from '../components/charts'
 import { Alert, Card, StatusPill, cx } from '../components/ui'
+import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
 
 function useWorkspace() {
@@ -45,7 +46,10 @@ function shortDate(isoDate: string): string {
 }
 
 /** The spend and forecast tiles; "—" until the first Cost and Usage Report is loaded. */
-function costTiles(summary: CostSummary | undefined): { label: string; value: string; note: string }[] {
+function costTiles(
+  summary: CostSummary | undefined,
+  money: (usd: number) => string,
+): { label: string; value: string; note: string }[] {
   const waiting =
     summary?.lastLoadStatus === 'failed'
       ? 'The latest report failed our checks; we will retry with the next delivery'
@@ -57,7 +61,7 @@ function costTiles(summary: CostSummary | undefined): { label: string; value: st
   return [
     {
       label: 'Month-to-date spend',
-      value: mtd ? formatMoney(mtd.effective, 'USD') : '—',
+      value: mtd ? money(mtd.effective) : '—',
       note:
         mtd && summary?.dataThrough
           ? `${source} · data to ${shortDate(summary.dataThrough)}`
@@ -67,7 +71,7 @@ function costTiles(summary: CostSummary | undefined): { label: string; value: st
     },
     {
       label: 'Forecast (month end)',
-      value: forecast ? formatMoney(forecast.amount, 'USD') : '—',
+      value: forecast ? money(forecast.amount) : '—',
       note: forecast
         ? `Estimate from the daily run rate (${forecast.daysCovered} of ${forecast.daysInMonth} days)`
         : hasData
@@ -85,9 +89,20 @@ export function Overview() {
     queryFn: () => api.costSummary(tenantId as string),
     enabled: tenantId !== null,
   })
+  const rate = useQuery({
+    queryKey: ['fx-current', tenantId],
+    queryFn: () => api.fxCurrent(tenantId as string),
+    enabled: tenantId !== null,
+  })
   const waiting = summary.data?.status === 'waiting'
   const view = me?.preferredCurrencyView ?? 'both'
   const currency = tenant.data?.displayCurrency ?? 'USD'
+  const quote = rate.data?.quote
+  const fx: FxRate | null =
+    quote && quote.currency !== 'USD'
+      ? { currency: quote.currency, rate: quote.rate, estimated: quote.estimated }
+      : null
+  const money = (usd: number) => formatDual(usd, view, fx)
 
   return (
     <div className="flex flex-col gap-6">
@@ -119,15 +134,11 @@ export function Overview() {
         </Alert>
       )}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {costTiles(summary.data).map((tile) => (
+        {costTiles(summary.data, money).map((tile) => (
           <Kpi key={tile.label} {...tile} />
         ))}
         <Kpi label="Savings identified" value="—" note="Recommendations start after first data" />
-        <Kpi
-          label="Example: USD 1,000 shows as"
-          value={formatDual(1000, view, currency === 'USD' ? null : { currency, rate: sampleRate(currency) })}
-          note="Illustrative rate until staff set today's rate"
-        />
+        <Kpi {...rateTile(currency, rate.data)} />
       </div>
       {tenantId !== null && (summary.data?.status === 'ready' || summary.data?.status === 'provisional') && (
         <div className="grid gap-4 lg:grid-cols-3">
@@ -206,21 +217,19 @@ function TopSpend({ tenantId }: { tenantId: string }) {
   )
 }
 
-// Placeholder rates for the example tile only; real rates are set by staff (FR-FX-06).
-function sampleRate(currency: string): number {
-  const rates: Record<string, number> = {
-    NGN: 1500,
-    KES: 129,
-    GHS: 15.5,
-    ZAR: 18,
-    EGP: 48,
-    RWF: 1400,
-    UGX: 3700,
-    TZS: 2600,
-    GBP: 0.79,
-    EUR: 0.92,
-  }
-  return rates[currency] ?? 1
+/** The exchange-rate tile: today's rate for the workspace currency, and where it came from. */
+function rateTile(currency: string, current: CurrentRate | undefined): { label: string; value: string; note: string } {
+  const label = 'Exchange rate'
+  if (currency === 'USD') return { label, value: 'USD', note: 'Amounts are shown in US dollars' }
+  const quote = current?.quote
+  if (!current) return { label, value: '—', note: 'Loading…' }
+  if (!quote) return { label, value: '—', note: `No ${currency} rate set yet; amounts show in USD` }
+  const value = `1 USD = ${quote.estimated ? '≈' : ''}${formatMoney(quote.rate, currency)}`
+  const note =
+    quote.source === 'feed'
+      ? 'Estimated from a reference feed until Cloudoptics staff set a rate'
+      : `${quote.basis === 'official' ? 'Official' : 'Market'} rate set by Cloudoptics staff · ${shortDate(quote.rateDate)}${quote.estimated ? ' (carried forward)' : ''}`
+  return { label, value, note }
 }
 
 export function Connections() {
