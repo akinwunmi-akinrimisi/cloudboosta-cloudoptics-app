@@ -35,6 +35,10 @@ AUTHKIT_ISSUER = re.compile(r"https://[a-z0-9-]+\.authkit\.app")
 log = logging.getLogger(__name__)
 
 
+class ProviderError(Exception):
+    """The identity provider could not be used (a server-side problem, not a bad token)."""
+
+
 @dataclass(frozen=True)
 class Claims:
     subject: str
@@ -147,8 +151,11 @@ class WorkOSVerifier:
             finally:
                 if self.http is None:
                     await client.aclose()
+            if res.status_code == 404:
+                raise jwt.InvalidTokenError("user not found in WorkOS")
             if res.status_code != 200:
-                raise jwt.InvalidTokenError("could not read the user from WorkOS")
+                # 401/403 here means the API key is wrong for this client's environment.
+                raise ProviderError(f"WorkOS user lookup returned {res.status_code}")
             user = res.json()
             name = " ".join(p for p in (user.get("first_name"), user.get("last_name")) if p)
             self._profiles[user_id] = (str(user["email"]), name or None)
@@ -191,8 +198,14 @@ async def bearer_claims(request: Request) -> Claims:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Sign-in is not configured yet")
     try:
         return await get_verifier().verify(token)
+    except ProviderError as exc:
+        log.error("sign-in provider error: %s", exc)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Could not read your profile from the sign-in provider",
+        ) from exc
     except jwt.PyJWTError as exc:
-        log.info("rejected bearer token: %s", exc)
+        log.warning("rejected bearer token: %s", exc)
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
             "Invalid or expired token",

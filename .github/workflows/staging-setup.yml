@@ -43,6 +43,16 @@ jobs:
             echo "::error::Missing in environment '${{ inputs.environment }}':$missing (add as secrets or variables)"
             exit 1
           fi
+      - name: Check the WorkOS API key works
+        # The API reads each user's email with this key; a key from another WorkOS
+        # environment makes every sign-in fail after the redirect.
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $WORKOS_API_KEY" \
+            "https://api.workos.com/user_management/users?limit=1")
+          if [ "$code" != 200 ]; then
+            echo "::error::WorkOS rejected WORKOS_API_KEY (HTTP $code). Use the API key from the same WorkOS environment as WORKOS_CLIENT_ID."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - run: uv sync --all-packages --locked

@@ -8,7 +8,7 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from cloudoptics.identity.auth import WorkOSVerifier
+from cloudoptics.identity.auth import ProviderError, WorkOSVerifier
 
 CLIENT_ID = "client_01TESTCLIENT"
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -99,9 +99,16 @@ async def test_rejects_bad_tokens(override: dict[str, Any], key: Any) -> None:
         await verifier().verify(token(key, email="a@b.co", **override))
 
 
-async def test_failed_user_lookup_is_rejected() -> None:
+async def test_unknown_user_is_rejected() -> None:
     v = verifier(lambda _r: httpx.Response(404, json={"message": "not found"}))
     with pytest.raises(jwt.InvalidTokenError):
+        await v.verify(token())
+
+
+@pytest.mark.parametrize("code", [401, 403, 500])
+async def test_unusable_api_key_is_a_provider_error_not_a_bad_token(code: int) -> None:
+    v = verifier(lambda _r: httpx.Response(code, json={"message": "no"}))
+    with pytest.raises(ProviderError):
         await v.verify(token())
 
 
