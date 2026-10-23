@@ -260,6 +260,26 @@ export type StatusChange = {
   reason?: string
 }
 
+export interface AuditEntry {
+  id: number
+  occurredAt: string
+  actor: { type: 'user' | 'system' | 'staff'; email: string | null; name: string | null }
+  action: string
+  targetType: string | null
+  targetId: string | null
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+  ip: string | null
+}
+
+export interface AuditPage {
+  entries: AuditEntry[]
+  /** Pass as ``before`` for the next (older) page; null on the last page. */
+  nextBefore: number | null
+  /** False if any entry was altered or removed (the hash chain does not verify). */
+  verified: boolean
+}
+
 export interface Api {
   readonly mode: 'http' | 'demo'
   authConfig(): Promise<AuthConfig>
@@ -283,6 +303,7 @@ export interface Api {
   recommendationSummary(tenantId: string): Promise<RecommendationSummary>
   getRecommendation(tenantId: string, id: string): Promise<Recommendation>
   updateRecommendation(tenantId: string, id: string, change: StatusChange): Promise<Recommendation>
+  auditLog(tenantId: string, before?: number): Promise<AuditPage>
 }
 
 export class ApiError extends Error {

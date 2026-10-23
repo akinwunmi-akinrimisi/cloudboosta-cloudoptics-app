@@ -14,6 +14,7 @@ import { Onboarding } from '../pages/Onboarding'
 import { SignIn } from '../pages/SignIn'
 import { Costs } from '../pages/Costs'
 import { RecommendationDetail, Recommendations } from '../pages/Recommendations'
+import { Settings } from '../pages/Settings'
 import { ComingSoon, Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
 
@@ -123,13 +124,7 @@ const reports = createRoute({
   path: '/reports',
   component: () => <ComingSoon title="Reports" sprint="Sprint 6" what="Monthly executive summary as PDF and email." />,
 })
-const settings = createRoute({
-  getParentRoute: () => app,
-  path: '/settings',
-  component: () => (
-    <ComingSoon title="Settings" sprint="Sprints 5–6" what="Members, notifications, preferences and security." />
-  ),
-})
+const settings = createRoute({ getParentRoute: () => app, path: '/settings', component: Settings })
 
 const routeTree = root.addChildren([
   signIn,

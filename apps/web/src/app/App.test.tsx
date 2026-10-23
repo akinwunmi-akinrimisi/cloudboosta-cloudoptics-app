@@ -242,4 +242,13 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('button', { name: 'Region' }))
     expect(await screen.findByRole('cell', { name: /af-south-1/ })).toBeTruthy()
   })
+
+  it('shows the audit log to admins in settings', async () => {
+    const { user } = await connectedWorkspace('amina@example.com')
+    await user.click(screen.getByRole('link', { name: 'Settings' }))
+    expect(await screen.findByRole('heading', { name: 'Audit log' })).toBeTruthy()
+    expect(await screen.findByText(/Created the workspace/)).toBeTruthy()
+    expect(screen.getByText(/Connected an AWS account/)).toBeTruthy()
+    expect(screen.getByText('pending → healthy')).toBeTruthy()
+  })
 })

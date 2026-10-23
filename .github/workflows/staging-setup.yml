@@ -1,6 +1,7 @@
 # One-off / occasional setup of staging's external services (ADR-007, ADR-013, ADR-006):
 #   1. Cloudoptics' AWS account: template bucket, broker role, broker user (key rotated).
-#   2. App Platform: broker key, template URLs, WorkOS client ID and API key.
+#   2. App Platform: broker key, template URLs, WorkOS client ID and API key, and the
+#      Postmark server token (POSTMARK_API) and sender (POSTMARK_FROM) when present.
 # Run it by hand from main (Actions -> Staging setup -> Run workflow). It reads credentials
 # from a GitHub environment (secrets or variables with the names below); none are logged.
 name: Staging setup
@@ -31,6 +32,9 @@ jobs:
       WORKOS_CLIENT_ID: ${{ secrets.WORKOS_CLIENT_ID || vars.WORKOS_CLIENT_ID }}
       WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY || vars.WORKOS_API_KEY }}
       DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN || vars.DIGITALOCEAN_TOKEN }}
+      # Optional: email alerts are logged, not sent, until a Postmark server token is set.
+      POSTMARK_API: ${{ secrets.POSTMARK_API || vars.POSTMARK_API }}
+      POSTMARK_FROM: ${{ secrets.POSTMARK_FROM || vars.POSTMARK_FROM }}
       APP_URL: https://cloudoptics.cloudboosta.com
     steps:
       - name: Check the credentials are present
@@ -41,6 +45,15 @@ jobs:
           done
           if [ -n "$missing" ]; then
             echo "::error::Missing in environment '${{ inputs.environment }}':$missing (add as secrets or variables)"
+            exit 1
+          fi
+      - name: Check the Postmark token works
+        if: env.POSTMARK_API != ''
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "Accept: application/json" \
+            -H "X-Postmark-Server-Token: $POSTMARK_API" "https://api.postmarkapp.com/server")
+          if [ "$code" != 200 ]; then
+            echo "::error::Postmark rejected POSTMARK_API (HTTP $code). Use a Server API token (Postmark -> your server -> API Tokens)."
             exit 1
           fi
       - name: Check the WorkOS API key works

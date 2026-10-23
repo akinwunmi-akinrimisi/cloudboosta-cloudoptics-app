@@ -119,7 +119,7 @@ async def test_validate_marks_the_connection_healthy(client: AsyncClient, login,
     assert external_id == created["externalId"]
     assert name.startswith("cloudoptics-") and name.endswith("-validate")
 
-    log = (await client.get(f"/v1/tenants/{tenant}/audit-log", headers=headers)).json()
+    log = (await client.get(f"/v1/tenants/{tenant}/audit-log", headers=headers)).json()["entries"]
     assert log[0]["action"] == "connection.status_changed"
     assert log[0]["after"] == {"status": "healthy"}
 

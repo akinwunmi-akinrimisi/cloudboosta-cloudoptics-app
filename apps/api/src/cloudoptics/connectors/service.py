@@ -17,6 +17,7 @@ from cloudoptics.audit.log import Actor
 from cloudoptics.connectors.aws import SessionFactory, session_name
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.validation import ValidationResult, validate_billing_access
+from cloudoptics.notifications.alerts import should_alert
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 
@@ -24,7 +25,7 @@ from cloudoptics.platform.settings import get_settings
 SELECT_CONNECTION = text(
     "SELECT id, tenant_id, aws_account_id, account_type, role_arn, stack_name, "
     "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
-    "permission_checks, last_error, last_validated_at, created_at, external_id_enc "
+    "permission_checks, last_error, last_validated_at, created_at, external_id_enc, health "
     "FROM cloud_connection WHERE id = :c"
 )
 LIST_CONNECTIONS = text(
@@ -94,7 +95,7 @@ async def run_validation(
     )
     await session.execute(
         text(
-            "UPDATE cloud_connection SET status = :status, "
+            "UPDATE cloud_connection SET status = :status, health = :status, "
             "permission_checks = CAST(:checks AS jsonb), last_error = CAST(:err AS jsonb), "
             "last_validated_at = now(), cur_bucket = COALESCE(:bucket, cur_bucket), "
             "cur_prefix = COALESCE(:prefix, cur_prefix), "
@@ -143,6 +144,7 @@ async def run_validation(
             "cost": result.est_cost_usd,
         },
     )
+    result.health_worsened = should_alert(conn.health, result.status)
     if result.status != conn.status:
         await audit.record(
             session,
