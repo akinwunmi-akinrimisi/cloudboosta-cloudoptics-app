@@ -441,9 +441,11 @@ async def scan_resources(
 
     if get_settings().jobs_mode == "inline":
         from cloudoptics.analysis.engine import run_analysis
+        from cloudoptics.metrics.puller import pull_connection
 
         result = await scan_connection(access.tenant_id, connection_id)
         if result in ("succeeded", "partial"):
+            await pull_connection(access.tenant_id, connection_id)
             await run_analysis(access.tenant_id)
         return ScanStarted(status=result, accounts=checked)
 

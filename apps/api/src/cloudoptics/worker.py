@@ -9,7 +9,15 @@ async def main() -> None:
     app = get_job_app()
     async with app.open_async():
         await app.run_worker_async(
-            queues=["connections", "ingestion", "fx", "inventory", "analysis", "notifications"]
+            queues=[
+                "connections",
+                "ingestion",
+                "fx",
+                "inventory",
+                "metrics",
+                "analysis",
+                "notifications",
+            ]
         )
 
 

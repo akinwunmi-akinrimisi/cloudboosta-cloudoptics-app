@@ -1,7 +1,7 @@
 """Inventory scans: resources per account and region, access, deletions and jobs."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -127,6 +127,48 @@ class FakeElb:
         return {"InstanceStates": [{"State": "InService"}]}
 
 
+class FakeRds:
+    def describe_db_instances(self, **_: Any) -> dict[str, Any]:
+        return {
+            "DBInstances": [
+                {
+                    "DBInstanceIdentifier": "orders-db",
+                    "DBInstanceArn": "arn:aws:rds:eu-west-1:1:db:orders-db",
+                    "DBInstanceClass": "db.m5.large",
+                    "DBInstanceStatus": "available",
+                    "Engine": "postgres",
+                    "MultiAZ": True,
+                    "AllocatedStorage": 100,
+                    "TagList": [{"Key": "env", "Value": "prod"}],
+                }
+            ]
+        }
+
+
+class FakeCloudWatch:
+    def __init__(self, region: str, world: "World") -> None:
+        self.region = region
+        self.world = world
+
+    def get_metric_data(self, **kw: Any) -> dict[str, Any]:
+        if self.region in self.world.broken_regions:
+            raise client_error("Throttling")
+        self.world.metric_calls.append(kw)
+        results = []
+        start = kw["StartTime"]
+        hours = int((kw["EndTime"] - start).total_seconds() // 3600)
+        for q in kw["MetricDataQueries"]:
+            stat = q["MetricStat"]
+            name = stat["Metric"]["MetricName"]
+            value = self.world.metric_values.get(name, 1.0)
+            stamps = [start + timedelta(hours=h) for h in range(hours)]
+            results.append({"Id": q["Id"], "Timestamps": stamps, "Values": [value] * len(stamps)})
+        # Two pages, to exercise NextToken.
+        if "NextToken" not in kw:
+            return {"MetricDataResults": results[:1], "NextToken": "2"}
+        return {"MetricDataResults": results[1:]}
+
+
 class World:
     def __init__(self) -> None:
         self.regions = ["eu-west-1", "af-south-1"]
@@ -134,6 +176,8 @@ class World:
         self.no_access: set[str] = set()
         self.volumes = 2
         self.assumed: list[str] = []
+        self.metric_calls: list[dict[str, Any]] = []
+        self.metric_values: dict[str, float] = {}
 
 
 class FakeSession:
@@ -141,9 +185,13 @@ class FakeSession:
         self.world = world
 
     def client(self, service: str, region: str = "us-east-1") -> Any:
-        return {"ec2": lambda: FakeEc2(region, self.world), "elbv2": FakeElbv2, "elb": FakeElb}[
-            service
-        ]()
+        return {
+            "ec2": lambda: FakeEc2(region, self.world),
+            "elbv2": FakeElbv2,
+            "elb": FakeElb,
+            "rds": FakeRds,
+            "cloudwatch": lambda: FakeCloudWatch(region, self.world),
+        }[service]()
 
 
 class FakeFactory:
@@ -154,7 +202,7 @@ class FakeFactory:
         account = role_arn.split(":")[4]
         self.world.assumed.append(role_arn)
         assert role_arn.endswith(":role/CloudopticsResourceReadOnly")
-        assert name.endswith("-inventory")
+        assert name.endswith(("-inventory", "-metrics"))
         if account in self.world.no_access:
             raise client_error("AccessDenied", "AssumeRole")
         return FakeSession(self.world)
@@ -207,6 +255,7 @@ async def test_scan_stores_resources_and_access(
         ("eu-west-1", "eip", "eipalloc-used", None, "associated"),
         ("eu-west-1", "ec2_instance", "i-eu-west-1-1", "web", "stopped"),
         ("eu-west-1", "elb", "idle", None, "idle"),
+        ("eu-west-1", "rds_instance", "orders-db", None, "available"),
         ("eu-west-1", "ebs_snapshot", "snap-1", None, "completed"),
         ("eu-west-1", "ebs_volume", "vol-attached", None, "in-use"),
         ("eu-west-1", "ebs_volume", "vol-loose", None, "available"),
@@ -241,6 +290,7 @@ async def test_scan_stores_resources_and_access(
         "ec2_instance": 2,
         "eip": 4,
         "elb": 4,
+        "rds_instance": 2,
     }
 
 

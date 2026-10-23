@@ -11,6 +11,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 import boto3
+from botocore.config import Config
 
 STACK_REGION = "us-east-1"  # BCM Data Exports (CUR 2.0) is created in us-east-1
 BILLING_ROLE_NAME = "CloudopticsBillingReadOnly"
@@ -200,12 +201,17 @@ def session_name(tenant_id: uuid.UUID, job: str) -> str:
     return f"cloudoptics-{tenant_id.hex[:20]}-{job}"[:64]
 
 
+# Adaptive retries back off on throttling and rate-limit each client with a token bucket
+# (WBS CC-13), so a busy account slows CloudOptics down instead of failing its scan.
+CLIENT_CONFIG = Config(retries={"mode": "adaptive", "max_attempts": 8})
+
+
 @dataclass(frozen=True)
 class AssumedSession:
     session: Any  # boto3.Session
 
     def client(self, service: str, region: str = STACK_REGION) -> Any:
-        return self.session.client(service, region_name=region)
+        return self.session.client(service, region_name=region, config=CLIENT_CONFIG)
 
 
 class SessionFactory:

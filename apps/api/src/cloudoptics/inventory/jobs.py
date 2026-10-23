@@ -30,10 +30,10 @@ async def defer_scan(app: procrastinate.App, tenant_id: str, connection_id: str)
 async def scan(tenant_id: str, connection_id: str) -> str:
     status = await scan_connection(uuid.UUID(tenant_id), uuid.UUID(connection_id))
     if status in ("succeeded", "partial"):
-        from cloudoptics.analysis.jobs import defer_analysis
+        from cloudoptics.metrics.jobs import defer_pull
         from cloudoptics.platform.jobs import get_job_app
 
-        await defer_analysis(get_job_app(), tenant_id)
+        await defer_pull(get_job_app(), tenant_id, connection_id)
     return status
 
 
