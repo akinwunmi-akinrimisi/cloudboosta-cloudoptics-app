@@ -82,6 +82,10 @@ class FakeEc2:
             ]
         }
 
+    def describe_images(self, **kw: Any) -> dict[str, Any]:
+        assert kw["Owners"] == ["self"]
+        return {"Images": [{"BlockDeviceMappings": [{"Ebs": {"SnapshotId": "snap-ami"}}, {}]}]}
+
     def describe_addresses(self, **_: Any) -> dict[str, Any]:
         return {
             "Addresses": [
@@ -202,7 +206,7 @@ async def test_scan_stores_resources_and_access(
         ("eu-west-1", "eip", "eipalloc-free", None, "unassociated"),
         ("eu-west-1", "eip", "eipalloc-used", None, "associated"),
         ("eu-west-1", "ec2_instance", "i-eu-west-1-1", "web", "stopped"),
-        ("eu-west-1", "elb", "idle", None, "active"),
+        ("eu-west-1", "elb", "idle", None, "idle"),
         ("eu-west-1", "ebs_snapshot", "snap-1", None, "completed"),
         ("eu-west-1", "ebs_volume", "vol-attached", None, "in-use"),
         ("eu-west-1", "ebs_volume", "vol-loose", None, "available"),
