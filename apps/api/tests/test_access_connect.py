@@ -187,3 +187,20 @@ async def test_deleting_the_stack_disconnects_the_account(
     await client.post("/v1/cfn/callback", json=callback_body(params, acct))
     [c] = (await client.get(f"/v1/tenants/{tenant}/connections", headers=headers)).json()
     assert c["status"] == "healthy"
+
+
+async def test_a_failed_member_rollout_is_in_the_audit_log(
+    client: AsyncClient, login, quick_create, fake_aws
+) -> None:
+    acct = account()
+    tenant, headers = await workspace(client, login)
+    params = link_params((await new_link(client, tenant, headers))["quickCreateUrl"])
+    fake_aws.clients = healthy_clients(acct)
+    reason = "failed: ClientError: You must enable organizations access"
+    r = await client.post(
+        "/v1/cfn/callback", json=callback_body(params, acct, memberRollout=reason)
+    )
+    assert r.json()["status"] == "accepted"  # billing still connects
+    log = (await client.get(f"/v1/tenants/{tenant}/audit-log", headers=headers)).json()
+    [entry] = [e for e in log["entries"] if e["action"] == "connection.member_rollout_failed"]
+    assert entry["after"]["reason"] == reason

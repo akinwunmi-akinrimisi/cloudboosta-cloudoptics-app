@@ -427,11 +427,12 @@ def _management(setup_step: Any, **cfn_answers: Any) -> Any:
         describe_organization={"Organization": {"MasterAccountId": PROPS["AccountId"]}},
         list_roots={"Roots": [{"Id": "r-ab12"}]},
     )
-    cfn = Fake(
-        describe_organizations_access={"Status": "ENABLED"},
-        describe_stack_set=client_error("StackSetNotFoundException"),
+    answers = {
+        "describe_organizations_access": {"Status": "ENABLED"},
+        "describe_stack_set": client_error("StackSetNotFoundException"),
         **cfn_answers,
-    )
+    }
+    cfn = Fake(**answers)
     setup_step.clients["cloudformation"] = cfn
     return cfn
 
@@ -466,3 +467,46 @@ def test_a_failed_rollout_keeps_the_stack_and_still_connects(setup_step: Any) ->
     assert reply["data"]["MemberRollout"].startswith("failed: ClientError")
     assert cfn.names().count("create_stack_set") == setup_step.module.ORG_ACCESS_TRIES
     assert setup_step.posted[0]["requestType"] == "Create"
+
+
+class Context:
+    def __init__(self, seconds: float) -> None:
+        self.seconds = seconds
+
+    def get_remaining_time_in_millis(self) -> int:
+        return int(self.seconds * 1000)
+
+
+def test_setup_answers_before_the_function_times_out(setup_step: Any) -> None:
+    """A slow rollout gives up in time to report back, instead of leaving no reply."""
+    clock = {"now": 0.0}
+    setup_step.monkeypatch.setattr(setup_step.module.time, "time", lambda: clock["now"])
+
+    def sleep(seconds: float) -> None:
+        clock["now"] += seconds
+
+    setup_step.monkeypatch.setattr(setup_step.module.time, "sleep", sleep)
+    cfn = _management(
+        setup_step,
+        describe_organizations_access={"Status": "DISABLED"},
+        activate_organizations_access=client_error("AccessDeniedException"),
+        create_stack_set=NO_ORG_ACCESS,
+    )
+    setup_step.clients["iam"] = Fake(create_service_linked_role=client_error("InvalidInput"))
+    setup_step.clients["organizations"].answers["enable_aws_service_access"] = {}
+    event = {"RequestType": "Create", "ResourceProperties": {**PROPS, "Action": "setup"}}
+    setup_step.module.handler(event, Context(900))
+    reply = setup_step.sent[-1]
+    assert reply["status"] == "SUCCESS"
+    assert reply["data"]["MemberRollout"].startswith("failed")
+    assert clock["now"] < 900 - 60  # time left to send the reply
+    assert setup_step.posted[0]["memberRollout"].startswith("failed")
+    assert "create_stack_set" in cfn.names()
+
+
+def test_trusted_access_may_read_the_stacksets_service_linked_roles() -> None:
+    statements = load("cloudoptics-access.yaml")["Resources"]["SetupRole"]["Properties"][
+        "Policies"
+    ][0]["PolicyDocument"]["Statement"]
+    [read] = [s for s in statements if s["Sid"] == "StackSetsServiceLinkedRoleRead"]
+    assert read["Action"] == "iam:GetRole"
