@@ -28,7 +28,13 @@ async def defer_scan(app: procrastinate.App, tenant_id: str, connection_id: str)
 
 @blueprint.task(name="inventory.scan", queue="inventory", retry=1)
 async def scan(tenant_id: str, connection_id: str) -> str:
-    return await scan_connection(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    status = await scan_connection(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    if status in ("succeeded", "partial"):
+        from cloudoptics.analysis.jobs import defer_analysis
+        from cloudoptics.platform.jobs import get_job_app
+
+        await defer_analysis(get_job_app(), tenant_id)
+    return status
 
 
 @blueprint.periodic(cron="47 */12 * * *")

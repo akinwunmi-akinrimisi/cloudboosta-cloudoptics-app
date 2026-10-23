@@ -121,6 +121,7 @@ def _volumes(ec2: Any) -> Iterator[ResourceRecord]:
                 "iops": v.get("Iops"),
                 "throughput": v.get("Throughput"),
                 "createTime": v.get("CreateTime"),
+                "availabilityZone": v.get("AvailabilityZone"),
                 "encrypted": v.get("Encrypted"),
                 "attachments": [
                     {"instanceId": a.get("InstanceId"), "state": a.get("State")}
@@ -131,7 +132,19 @@ def _volumes(ec2: Any) -> Iterator[ResourceRecord]:
         )
 
 
+def _ami_snapshots(ec2: Any) -> set[str]:
+    """Snapshot IDs that back the account's own AMIs (never recommended for deletion)."""
+    used = set()
+    for image in ec2.describe_images(Owners=["self"]).get("Images", []):
+        for mapping in image.get("BlockDeviceMappings", []):
+            snapshot = (mapping.get("Ebs") or {}).get("SnapshotId")
+            if snapshot:
+                used.add(snapshot)
+    return used
+
+
 def _snapshots(ec2: Any) -> Iterator[ResourceRecord]:
+    used_by_ami = _ami_snapshots(ec2)
     for s in _paged(
         ec2.describe_snapshots, "Snapshots", "NextToken", "NextToken", OwnerIds=["self"]
     ):
@@ -145,6 +158,7 @@ def _snapshots(ec2: Any) -> Iterator[ResourceRecord]:
                 "startTime": s.get("StartTime"),
                 "storageTier": s.get("StorageTier", "standard"),
                 "description": (s.get("Description") or "")[:200],
+                "usedByAmi": s["SnapshotId"] in used_by_ami,
             },
             _tags(s.get("Tags")),
         )
@@ -177,10 +191,12 @@ def _load_balancers(elbv2: Any, elb: Any) -> Iterator[ResourceRecord]:
             for t in health.get("TargetHealthDescriptions", []):
                 targets += 1
                 healthy += (t.get("TargetHealth") or {}).get("State") == "healthy"
+        state = (lb.get("State") or {}).get("Code")
         yield ResourceRecord(
             "elb",
             lb.get("LoadBalancerName") or arn,
-            (lb.get("State") or {}).get("Code"),
+            # "idle" (no healthy targets) gets its own state so state_since dates it.
+            "idle" if state == "active" and healthy == 0 else state,
             {
                 "type": lb.get("Type"),
                 "scheme": lb.get("Scheme"),
@@ -203,7 +219,7 @@ def _load_balancers(elbv2: Any, elb: Any) -> Iterator[ResourceRecord]:
         yield ResourceRecord(
             "elb",
             name,
-            "active",
+            "active" if healthy else "idle",
             {
                 "type": "classic",
                 "scheme": lb.get("Scheme"),
@@ -350,6 +366,8 @@ async def _store(
                     "resource_id) DO UPDATE SET resource_type = EXCLUDED.resource_type, "
                     "arn = EXCLUDED.arn, name = EXCLUDED.name, state = EXCLUDED.state, "
                     "config = EXCLUDED.config, tags = EXCLUDED.tags, last_seen_at = now(), "
+                    "state_since = CASE WHEN resource.state IS DISTINCT FROM EXCLUDED.state "
+                    "OR resource.deleted_at IS NOT NULL THEN now() ELSE resource.state_since END, "
                     "deleted_at = NULL, connection_id = EXCLUDED.connection_id"
                 ),
                 [
