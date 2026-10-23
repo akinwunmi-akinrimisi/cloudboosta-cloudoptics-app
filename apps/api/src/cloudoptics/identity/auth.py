@@ -9,8 +9,10 @@ WorkOS AuthKit access tokens are RS256 JWTs signed with keys published at
 default, so the verifier reads the email from the WorkOS API (cached per user) unless a JWT
 template adds it. The issuer appears as ``https://api.workos.com``,
 ``https://api.workos.com/user_management/<client_id>`` or, for tokens issued through the
-hosted AuthKit domain, ``https://<name>.authkit.app``; all are accepted. The AuthKit
-domain publishes the same environment keys, so the signature check is unchanged.
+hosted AuthKit domain, ``https://<name>.authkit.app``; all are accepted. The client ID in
+the issuer can be the environment's first client rather than this application's, so any
+client ID is accepted there. The keys are per WorkOS environment, so the signature and the
+``client_id`` claim are what tie a token to this application.
 """
 
 from __future__ import annotations
@@ -121,7 +123,8 @@ class WorkOSVerifier:
             f"{self.api_base}/sso/jwks/{self.client_id}", cache_keys=True, lifespan=3600
         )
         base = self.api_base.rstrip("/")
-        self._issuers = {base, f"{base}/", f"{base}/user_management/{self.client_id}"}
+        self._issuers = {base, f"{base}/"}
+        self._client_issuer = re.compile(re.escape(base) + r"/user_management/client_[A-Za-z0-9]+")
 
     def _decode(self, token: str) -> dict[str, Any]:
         key = self._jwks.get_signing_key_from_jwt(token)
@@ -132,8 +135,12 @@ class WorkOSVerifier:
             options={"require": ["exp", "sub", "iss"], "verify_aud": False},
         )
         iss = payload["iss"]
-        if iss not in self._issuers and not AUTHKIT_ISSUER.fullmatch(iss):
-            raise jwt.InvalidIssuerError("unexpected issuer")
+        if not (
+            iss in self._issuers
+            or self._client_issuer.fullmatch(iss)
+            or AUTHKIT_ISSUER.fullmatch(iss)
+        ):
+            raise jwt.InvalidIssuerError(f"unexpected issuer {iss!r}")
         if payload.get("client_id", self.client_id) != self.client_id:
             raise jwt.InvalidTokenError("token was issued to another client")
         return payload
