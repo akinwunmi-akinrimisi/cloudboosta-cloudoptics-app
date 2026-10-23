@@ -1,6 +1,6 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { ExternalLink, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
@@ -344,6 +344,9 @@ export function Connections() {
               ))}
             </ul>
           )}
+          {isAdmin && tenantId !== null && (c.status === 'healthy' || c.status === 'degraded') && (
+            <ResourceAccess connection={c} tenantId={tenantId} />
+          )}
         </Card>
       ))}
       {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}
@@ -436,6 +439,115 @@ function ConnectionActions({ connection: c, tenantId }: { connection: Connection
           </Button>
         </div>
       )}
+    </div>
+  )
+}
+
+/** Add the resource read-only stack from here: one-click link, then Check now (admins). */
+function ResourceAccess({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  // A queued scan runs on the worker: refresh the accounts for two minutes.
+  const [waiting, setWaiting] = useState(false)
+  const list = useQuery({
+    queryKey: ['accounts', tenantId],
+    queryFn: () => api.listAccounts(tenantId),
+    refetchInterval: waiting ? 5000 : false,
+  })
+  const accounts = (list.data?.accounts ?? []).filter((a) => a.connectionId === c.id && a.orgStatus !== 'NOT_LISTED')
+  const missing = accounts.filter((a) => !a.resourceAccess)
+  const setup = useQuery({
+    queryKey: ['setup', tenantId, c.id],
+    queryFn: () => api.getSetup(tenantId, c.id),
+    enabled: missing.length > 0,
+  })
+  const scan = useMutation({
+    mutationFn: () => api.scanResources(tenantId, c.id),
+    onSuccess: (result) => {
+      if (result.status === 'queued') {
+        setWaiting(true)
+        setTimeout(() => setWaiting(false), 120_000)
+      }
+      void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
+      void qc.invalidateQueries({ queryKey: ['recommendations', tenantId] })
+    },
+  })
+  if (accounts.length === 0) return null
+  if (missing.length === 0) {
+    return (
+      <p className="mt-4 text-sm text-good-ink">
+        Resource access in {accounts.length === 1 ? 'this account' : `all ${accounts.length} accounts`}. Cloudoptics
+        scans resources every 12 hours for recommendations.
+      </p>
+    )
+  }
+  const checking = scan.isPending || waiting
+  const s = setup.data
+  return (
+    <div className="mt-4 flex flex-col gap-3 rounded-sm bg-surface-2 p-3 text-sm">
+      <div>
+        <p className="font-medium">Add resource access for recommendations</p>
+        <p className="text-secondary">
+          {accounts.length - missing.length} of {accounts.length} accounts have it. A second read-only stack lets
+          Cloudoptics list resources and their metrics, never change them.
+        </p>
+      </div>
+      <ol className="list-decimal space-y-1 pl-5 text-secondary">
+        <li>
+          Sign in to AWS as an administrator of{' '}
+          {missing.length === 1 ? (
+            <>account {missing[0]?.awsAccountId}</>
+          ) : (
+            <>each account: {missing.map((a) => a.name ?? a.awsAccountId).join(', ')}</>
+          )}
+          .
+        </li>
+        {s?.resourceQuickCreateUrl ? (
+          <li>
+            Open CloudFormation below, tick the IAM acknowledgement box and choose <strong>Create stack</strong>.
+          </li>
+        ) : (
+          <li>
+            In CloudFormation, create a stack from the downloaded template with the External ID and principal below.
+          </li>
+        )}
+        <li>
+          When it shows CREATE_COMPLETE (about a minute), choose <strong>Check now</strong>.
+        </li>
+      </ol>
+      {setup.error && <Alert tone="error">{setup.error.message}</Alert>}
+      {s && !s.resourceQuickCreateUrl && (
+        <dl className="grid gap-1 text-xs">
+          <dt className="text-muted">External ID</dt>
+          <dd className="font-mono break-all">{s.externalId}</dd>
+          <dt className="text-muted">Cloudoptics principal</dt>
+          <dd className="font-mono break-all">{s.principalArn}</dd>
+        </dl>
+      )}
+      {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
+      {scan.isSuccess && !checking && (
+        <Alert tone="info">
+          No resource role found yet in {missing.length === 1 ? 'this account' : `${missing.length} accounts`}. If the
+          stack shows CREATE_COMPLETE, wait a minute and check again.
+        </Alert>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {s && (
+          <a
+            href={s.resourceQuickCreateUrl ?? s.resourceTemplateDownloadUrl}
+            target="_blank"
+            rel="noreferrer"
+            download={s.resourceQuickCreateUrl ? undefined : 'cloudoptics-resource-role.yaml'}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
+          >
+            {s.resourceQuickCreateUrl ? 'Open CloudFormation in AWS' : 'Download the template'}{' '}
+            <ExternalLink size={16} />
+          </a>
+        )}
+        <Button variant="secondary" disabled={checking} onClick={() => scan.mutate()}>
+          {checking ? 'Checking…' : 'Check now'}
+        </Button>
+      </div>
     </div>
   )
 }

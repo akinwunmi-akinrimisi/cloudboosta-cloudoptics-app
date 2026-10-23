@@ -67,6 +67,8 @@ export interface ConnectionSetup {
   templateDownloadUrl: string
   resourceTemplateUrl: string
   resourceTemplateDownloadUrl: string
+  /** One-click CloudFormation link for the resource read-only stack; null like quickCreateUrl. */
+  resourceQuickCreateUrl: string | null
   stackRegion: string
   principalArn: string
 }
@@ -168,7 +170,12 @@ export interface CurrentRate {
   quote: FxQuote | null
 }
 
+export interface ResourceScan {
+  status: 'queued' | 'succeeded' | 'partial' | 'skipped'
+}
+
 export interface CloudAccount {
+  connectionId: string
   awsAccountId: string
   name: string | null
   accountType: 'management' | 'member' | 'standalone'
@@ -295,6 +302,8 @@ export interface Api {
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
   disconnectConnection(tenantId: string, connectionId: string): Promise<void>
+  /** Look for the resource role now. `queued` means the worker scans within a minute or two. */
+  scanResources(tenantId: string, connectionId: string): Promise<ResourceScan>
   costSummary(tenantId: string): Promise<CostSummary>
   costDaily(tenantId: string, days?: number): Promise<DailyCosts>
   costBreakdown(tenantId: string, dimension: CostDimension, limit?: number): Promise<CostBreakdown>

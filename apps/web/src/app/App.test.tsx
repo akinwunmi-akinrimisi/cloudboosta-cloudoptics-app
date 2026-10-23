@@ -279,4 +279,19 @@ describe('Cloudoptics web app', () => {
     expect(conn?.status).toBe('pending')
     expect((await api.getSetup(tenant.id, conn!.id)).externalId).not.toBe(before)
   })
+
+  it('lets admins add resource access from the Connections page', async () => {
+    const { api, tenant, user } = await connectedWorkspace('amara@example.com')
+    await user.click(screen.getByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText('Add resource access for recommendations')).toBeTruthy()
+    expect(screen.getByText(/0 of 1 accounts have it/)).toBeTruthy()
+    // No S3-hosted template in the demo: the template download and the values to paste.
+    expect(await screen.findByRole('link', { name: /Download the template/ })).toBeTruthy()
+    const [conn] = await api.listConnections(tenant.id)
+    expect(screen.getByText((await api.getSetup(tenant.id, conn!.id)).externalId)).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Check now' }))
+    expect(await screen.findByText(/Resource access in this account/)).toBeTruthy()
+    expect(screen.queryByText('Add resource access for recommendations')).toBeNull()
+  })
 })

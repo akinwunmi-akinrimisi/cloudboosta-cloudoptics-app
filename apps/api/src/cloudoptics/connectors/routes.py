@@ -75,8 +75,15 @@ class ConnectionSetup(ApiModel):
     template_download_url: str
     resource_template_url: str
     resource_template_download_url: str
+    resource_quick_create_url: str | None
     stack_region: str = aws.STACK_REGION
     principal_arn: str
+
+
+class ScanStarted(ApiModel):
+    """``queued`` on staging and production; the result itself when jobs run inline."""
+
+    status: Literal["queued", "succeeded", "partial", "skipped"]
 
 
 class ValidationAccepted(ApiModel):
@@ -107,6 +114,13 @@ def _setup(row: Any, external_id: str) -> ConnectionSetup:
         template_download_url=f"{settings.cfn_template_download_base}/billing-role.yaml",
         resource_template_url=settings.cfn_resource_template_url,
         resource_template_download_url=f"{settings.cfn_template_download_base}/resource-role.yaml",
+        resource_quick_create_url=aws.resource_quick_create_url(
+            settings.cfn_resource_template_url,
+            external_id=external_id,
+            principal_arn=settings.cloudoptics_principal_arn,
+        )
+        if settings.cfn_quick_create_enabled
+        else None,
         principal_arn=settings.cloudoptics_principal_arn,
     )
 
@@ -281,6 +295,38 @@ async def validate(
     return ValidationAccepted(connection_id=connection_id)
 
 
+@router.post(
+    "/{connection_id}/scan",
+    response_model=ScanStarted,
+    responses={202: {"model": ScanStarted}},
+)
+async def scan_resources(
+    connection_id: uuid.UUID, response: Response, access: AdminAccess, session: Session
+) -> ScanStarted:
+    """Look for the resource role now instead of at the next 12-hourly scan."""
+    row = await _load(session, connection_id)
+    if row.status not in accounts.USABLE:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Check the billing connection first: resources are scanned for working connections.",
+        )
+    if get_settings().jobs_mode == "inline":
+        from cloudoptics.analysis.engine import run_analysis
+        from cloudoptics.inventory.scanner import scan_connection
+
+        result = await scan_connection(access.tenant_id, connection_id)
+        if result in ("succeeded", "partial"):
+            await run_analysis(access.tenant_id)
+        return ScanStarted(status=result)
+
+    from cloudoptics.inventory.jobs import defer_scan
+    from cloudoptics.platform.jobs import get_job_app
+
+    await defer_scan(get_job_app(), str(access.tenant_id), str(connection_id))
+    response.status_code = status.HTTP_202_ACCEPTED
+    return ScanStarted(status="queued")
+
+
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def disconnect(
     connection_id: uuid.UUID, request: Request, access: AdminAccess, session: Session
@@ -312,6 +358,7 @@ async def disconnect(
 
 
 class CloudAccount(ApiModel):
+    connection_id: uuid.UUID
     aws_account_id: str
     name: str | None
     account_type: Literal["management", "member", "standalone"]

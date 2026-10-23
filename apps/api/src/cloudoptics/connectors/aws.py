@@ -16,6 +16,7 @@ STACK_REGION = "us-east-1"  # BCM Data Exports (CUR 2.0) is created in us-east-1
 BILLING_ROLE_NAME = "CloudopticsBillingReadOnly"
 RESOURCE_ROLE_NAME = "CloudopticsResourceReadOnly"
 STACK_NAME = "cloudoptics-billing-access"
+RESOURCE_STACK_NAME = "cloudoptics-resource-access"
 
 
 def new_external_id() -> str:
@@ -45,6 +46,20 @@ def quick_create_url(
     }
     if existing_bucket:
         params["param_ExistingCurBucketName"] = existing_bucket
+    return (
+        f"https://{STACK_REGION}.console.aws.amazon.com/cloudformation/home"
+        f"?region={STACK_REGION}#/stacks/create/review?{urlencode(params)}"
+    )
+
+
+def resource_quick_create_url(template_url: str, *, external_id: str, principal_arn: str) -> str:
+    """The resource role is IAM only (global), so the billing stack's region works too."""
+    params = {
+        "templateURL": template_url,
+        "stackName": RESOURCE_STACK_NAME,
+        "param_ExternalId": external_id,
+        "param_CloudopticsPrincipalArn": principal_arn,
+    }
     return (
         f"https://{STACK_REGION}.console.aws.amazon.com/cloudformation/home"
         f"?region={STACK_REGION}#/stacks/create/review?{urlencode(params)}"

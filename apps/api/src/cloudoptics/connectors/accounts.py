@@ -140,6 +140,7 @@ async def _store(
 
 @dataclass(frozen=True)
 class AccountRow:
+    connection_id: uuid.UUID
     aws_account_id: str
     name: str | None
     account_type: str
@@ -166,7 +167,7 @@ async def list_accounts(session: AsyncSession, today: date) -> tuple[list[Accoun
         AccountRow(**r._mapping)
         for r in await session.execute(
             text(
-                "SELECT a.aws_account_id, a.name, a.account_type, a.org_status, a.org_seen_at, "
+                "SELECT a.connection_id, a.aws_account_id, a.name, a.account_type, a.org_status, a.org_seen_at, "
                 "a.resource_access, EXISTS (SELECT 1 FROM cost_daily d WHERE "
                 "d.account_id = a.aws_account_id AND d.usage_date >= :since) AS has_cost_data "
                 "FROM cloud_account a JOIN cloud_connection c ON c.id = a.connection_id "

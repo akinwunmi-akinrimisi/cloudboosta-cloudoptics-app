@@ -310,3 +310,32 @@ async def test_discovery_queues_the_scan_and_poll_covers_usable_connections(
     queued.clear()
     count = await jobs.poll(0)
     assert connection in queued and count == len(queued)
+
+
+async def test_admins_scan_now_and_get_a_resource_quick_create_link(
+    client: AsyncClient, login, owner_sql, monkeypatch, world
+) -> None:
+    from cloudoptics.platform.settings import get_settings
+
+    tenant, connection, account, headers = await setup(client, login, owner_sql)
+    base = f"/v1/tenants/{tenant}/connections/{connection}"
+    world.no_access = {account, "555555555555"}
+    r = await client.post(f"{base}/scan", headers=headers)
+    assert r.status_code == 200 and r.json() == {"status": "skipped"}
+
+    world.no_access = {"555555555555"}  # the resource stack is now in the account
+    assert (await client.post(f"{base}/scan", headers=headers)).json() == {"status": "succeeded"}
+    accounts = (await client.get(f"/v1/tenants/{tenant}/accounts", headers=headers)).json()
+    assert accounts["coverage"]["withResourceAccess"] == 1
+    assert owner_sql("SELECT count(*) FROM recommendation WHERE tenant_id = %s", tenant)[0][0] > 0
+
+    setup_body = (await client.get(f"{base}/setup", headers=headers)).json()
+    assert setup_body["resourceQuickCreateUrl"] is None  # templates not in S3 in tests
+    monkeypatch.setattr(get_settings(), "cfn_quick_create_enabled", True)
+    url = (await client.get(f"{base}/setup", headers=headers)).json()["resourceQuickCreateUrl"]
+    assert "stackName=cloudoptics-resource-access" in url
+    assert "resource-role.yaml" in url and "param_CreateCurExport" not in url
+    assert f"param_ExternalId={setup_body['externalId']}" in url.replace("%3D", "=")
+
+    owner_sql("UPDATE cloud_connection SET status = 'failed' WHERE id = %s", connection)
+    assert (await client.post(f"{base}/scan", headers=headers)).status_code == 409

@@ -18,6 +18,7 @@ import type {
   Recommendation,
   RecommendationQuery,
   RecommendationSummary,
+  ResourceScan,
   StatusChange,
   Tenant,
 } from './types'
@@ -133,6 +134,10 @@ export class HttpApi implements Api {
 
   disconnectConnection(tenantId: string, connectionId: string): Promise<void> {
     return this.request('DELETE', `/v1/tenants/${tenantId}/connections/${connectionId}`)
+  }
+
+  scanResources(tenantId: string, connectionId: string): Promise<ResourceScan> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connections/${connectionId}/scan`)
   }
 
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {
