@@ -834,6 +834,8 @@ export class DemoApi implements Api {
       resourceTemplateUrl: `${base}/resource-role.yaml`,
       resourceTemplateDownloadUrl: `${base}/resource-role.yaml`,
       resourceQuickCreateUrl: null,
+      resourceStacksetQuickCreateUrl: null,
+      resourceStacksetDownloadUrl: `${base}/resource-stackset.yaml`,
       stackRegion: 'us-east-1',
       principalArn: 'arn:aws:iam::000000000000:role/CloudopticsBroker',
     }

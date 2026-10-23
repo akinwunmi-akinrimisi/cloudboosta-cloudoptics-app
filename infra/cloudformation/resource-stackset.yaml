@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Cloudoptics stage 2 for an AWS Organization: deploy from the management account to roll
+  the read-only resource role (resource-role.yaml) out to every member account, including
+  accounts added later, with a service-managed StackSet. The management account itself is
+  not covered by the StackSet; it uses resource-role.yaml directly. Needs trusted access for
+  CloudFormation StackSets turned on in AWS Organizations (one time). PRD FR-CON-03/13.
+
+Metadata:
+  cloudoptics:
+    templateVersion: "1.0.0"
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Your organization }
+        Parameters: [OrganizationRootId]
+      - Label: { default: Connection (pre-filled by Cloudoptics) }
+        Parameters: [ExternalId, CloudopticsPrincipalArn, ResourceTemplateUrl]
+
+Parameters:
+  OrganizationRootId:
+    Type: String
+    AllowedPattern: "r-[0-9a-z]{4,32}"
+    Description: >-
+      The root of your organization, from AWS Organizations > AWS accounts (starts with r-).
+      Every account under it gets the role.
+  ExternalId:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    MaxLength: 128
+    AllowedPattern: "[\\w+=,.@:/-]+"
+  CloudopticsPrincipalArn:
+    Type: String
+    AllowedPattern: "arn:aws:iam::[0-9]{12}:role/[\\w+=,.@-]+"
+  ResourceTemplateUrl:
+    Type: String
+    AllowedPattern: "https://.+/resource-role\\.yaml"
+    Description: The Cloudoptics resource-role.yaml template in S3.
+
+Resources:
+  ResourceStackSet:
+    Type: AWS::CloudFormation::StackSet
+    Properties:
+      StackSetName: cloudoptics-resource-access
+      Description: Read-only resource role for Cloudoptics in every member account.
+      PermissionModel: SERVICE_MANAGED
+      AutoDeployment:
+        Enabled: true
+        RetainStacksOnAccountRemoval: false
+      ManagedExecution: { Active: true }
+      Capabilities: [CAPABILITY_NAMED_IAM]
+      TemplateURL: !Ref ResourceTemplateUrl
+      Parameters:
+        - { ParameterKey: ExternalId, ParameterValue: !Ref ExternalId }
+        - { ParameterKey: CloudopticsPrincipalArn, ParameterValue: !Ref CloudopticsPrincipalArn }
+      # IAM is global: one region is enough.
+      StackInstancesGroup:
+        - DeploymentTargets:
+            OrganizationalUnitIds: [!Ref OrganizationRootId]
+          Regions: [us-east-1]
+      OperationPreferences:
+        RegionConcurrencyType: PARALLEL
+        MaxConcurrentPercentage: 100
+        FailureTolerancePercentage: 100
+
+Outputs:
+  StackSetId:
+    Value: !Ref ResourceStackSet

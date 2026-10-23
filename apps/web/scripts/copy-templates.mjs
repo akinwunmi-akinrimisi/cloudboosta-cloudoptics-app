@@ -6,4 +6,5 @@ import { join } from 'node:path'
 const src = join(import.meta.dirname, '..', '..', '..', 'infra', 'cloudformation')
 const dest = join(import.meta.dirname, '..', 'public', 'cfn')
 mkdirSync(dest, { recursive: true })
-for (const name of ['billing-role.yaml', 'resource-role.yaml']) cpSync(join(src, name), join(dest, name))
+for (const name of ['billing-role.yaml', 'resource-role.yaml', 'resource-stackset.yaml'])
+  cpSync(join(src, name), join(dest, name))

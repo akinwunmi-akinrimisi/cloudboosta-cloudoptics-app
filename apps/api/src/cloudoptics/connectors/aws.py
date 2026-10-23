@@ -17,6 +17,7 @@ BILLING_ROLE_NAME = "CloudopticsBillingReadOnly"
 RESOURCE_ROLE_NAME = "CloudopticsResourceReadOnly"
 STACK_NAME = "cloudoptics-billing-access"
 RESOURCE_STACK_NAME = "cloudoptics-resource-access"
+STACKSET_STACK_NAME = "cloudoptics-resource-stackset"
 
 
 def new_external_id() -> str:
@@ -59,6 +60,23 @@ def resource_quick_create_url(template_url: str, *, external_id: str, principal_
         "stackName": RESOURCE_STACK_NAME,
         "param_ExternalId": external_id,
         "param_CloudopticsPrincipalArn": principal_arn,
+    }
+    return (
+        f"https://{STACK_REGION}.console.aws.amazon.com/cloudformation/home"
+        f"?region={STACK_REGION}#/stacks/create/review?{urlencode(params)}"
+    )
+
+
+def stackset_quick_create_url(
+    template_url: str, *, external_id: str, principal_arn: str, resource_template_url: str
+) -> str:
+    """One stack in the management account that rolls the resource role out to members."""
+    params = {
+        "templateURL": template_url,
+        "stackName": STACKSET_STACK_NAME,
+        "param_ExternalId": external_id,
+        "param_CloudopticsPrincipalArn": principal_arn,
+        "param_ResourceTemplateUrl": resource_template_url,
     }
     return (
         f"https://{STACK_REGION}.console.aws.amazon.com/cloudformation/home"

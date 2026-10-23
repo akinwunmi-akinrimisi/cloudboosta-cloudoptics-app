@@ -349,6 +349,16 @@ async def test_admins_scan_now_and_get_a_resource_quick_create_link(
     assert "resource-role.yaml" in url and "param_CreateCurExport" not in url
     assert f"param_ExternalId={setup_body['externalId']}" in url.replace("%3D", "=")
 
+    # A StackSet for member accounts is offered to management (payer) connections only.
+    standalone = (await client.get(f"{base}/setup", headers=headers)).json()
+    assert standalone["resourceStacksetQuickCreateUrl"] is None
+    owner_sql("UPDATE cloud_connection SET account_type = 'management' WHERE id = %s", connection)
+    payer = (await client.get(f"{base}/setup", headers=headers)).json()
+    stackset = payer["resourceStacksetQuickCreateUrl"]
+    assert "stackName=cloudoptics-resource-stackset" in stackset
+    assert "resource-stackset.yaml" in stackset and "param_ResourceTemplateUrl=" in stackset
+    assert payer["resourceStacksetDownloadUrl"].endswith("/resource-stackset.yaml")
+
     owner_sql("UPDATE cloud_connection SET status = 'failed' WHERE id = %s", connection)
     assert (await client.post(f"{base}/scan", headers=headers)).status_code == 409
 

@@ -479,22 +479,65 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
   const checking = scan.isPending
   const refused = scan.data?.accounts.filter((a) => !a.access) ?? []
   const s = setup.data
+  const membersMissing = c.accountType === 'management' && missing.some((a) => a.accountType === 'member')
   return (
     <div className="mt-4 flex flex-col gap-3 rounded-sm bg-surface-2 p-3 text-sm">
       <div>
         <p className="font-medium">Add resource access for recommendations</p>
         <p className="text-secondary">
           {accounts.length - missing.length} of {accounts.length} accounts have it. A second read-only stack lets
-          Cloudoptics list resources and their metrics, never change them.
+          Cloudoptics list resources and their metrics, never change them. Each account needs its own copy.
         </p>
       </div>
+      {membersMissing && (
+        <div className="flex flex-col gap-2">
+          <p className="font-medium">All member accounts at once</p>
+          <ol className="list-decimal space-y-1 pl-5 text-secondary">
+            <li>
+              One time: in AWS Organizations, open <strong>Services</strong> → <strong>CloudFormation StackSets</strong>{' '}
+              and choose <strong>Enable trusted access</strong>.
+            </li>
+            <li>
+              In AWS Organizations → <strong>AWS accounts</strong>, copy your organization&apos;s Root ID (starts with{' '}
+              <code className="font-mono text-xs">r-</code>).
+            </li>
+            <li>
+              Signed in to the payer account {c.awsAccountId}, open the link below, paste the Root ID, tick the IAM box
+              and choose <strong>Create stack</strong>. New accounts in the organization get the role automatically.
+            </li>
+            <li>
+              Give AWS a few minutes to reach every account, then choose <strong>Check now</strong>.
+            </li>
+          </ol>
+          {s && (
+            <div>
+              <a
+                href={s.resourceStacksetQuickCreateUrl ?? s.resourceStacksetDownloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                download={s.resourceStacksetQuickCreateUrl ? undefined : 'cloudoptics-resource-stackset.yaml'}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
+              >
+                {s.resourceStacksetQuickCreateUrl ? 'Deploy to all member accounts' : 'Download the StackSet template'}{' '}
+                <ExternalLink size={16} />
+              </a>
+            </div>
+          )}
+          <p className="font-medium">Or one account at a time</p>
+        </div>
+      )}
       <ol className="list-decimal space-y-1 pl-5 text-secondary">
         <li>
           Sign in to AWS as an administrator of{' '}
           {missing.length === 1 ? (
-            <>account {missing[0]?.awsAccountId}</>
+            <>
+              account {missing[0]?.awsAccountId}
+              {missing[0]?.name && ` (${missing[0].name})`}, not one that already has it
+            </>
           ) : (
-            <>each account: {missing.map((a) => a.name ?? a.awsAccountId).join(', ')}</>
+            <>
+              each account: {missing.map((a) => (a.name ? `${a.name} (${a.awsAccountId})` : a.awsAccountId)).join(', ')}
+            </>
           )}
           .
         </li>
@@ -523,10 +566,11 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
       {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
       {refused.length > 0 && (
         <Alert tone="error">
-          AWS refused the role <code className="font-mono text-xs">CloudopticsResourceReadOnly</code> in{' '}
-          {refused.map((a) => `${a.awsAccountId} (${a.error ?? 'no access'})`).join(', ')}. Check that the stack shows
-          CREATE_COMPLETE in that account, and that the role&apos;s trust relationship has the same principal and
-          External ID as <code className="font-mono text-xs">CloudopticsBillingReadOnly</code>.
+          AWS refused the role <code className="font-mono text-xs">CloudopticsResourceReadOnly</code> in account{' '}
+          {refused.map((a) => `${a.awsAccountId} (${a.error ?? 'no access'})`).join(', ')}. Sign in to AWS as{' '}
+          {refused.length === 1 ? 'that account' : 'each of those accounts'} and create the stack there: a stack in
+          another account does not count. If it is already there, check that the role&apos;s trust relationship has the
+          same principal and External ID as <code className="font-mono text-xs">CloudopticsBillingReadOnly</code>.
         </Alert>
       )}
       <div className="flex flex-wrap gap-2">
