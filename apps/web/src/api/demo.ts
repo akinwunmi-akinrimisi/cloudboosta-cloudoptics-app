@@ -21,6 +21,7 @@ import type {
   RecommendationQuery,
   RecommendationStatus,
   RecommendationSummary,
+  ResourceScan,
   StatusChange,
   Tenant,
 } from './types'
@@ -62,6 +63,8 @@ interface State {
   externalIds: Record<string, string>
   /** tenantId:recommendationId -> status changed in the demo. */
   recommendationStatus: Record<string, RecommendationStatus>
+  /** Connections whose accounts have the resource stack (after a demo scan). */
+  resourceAccess?: Record<string, boolean>
 }
 
 const empty = (): State => ({
@@ -441,6 +444,18 @@ export class DemoApi implements Api {
     this.save()
   }
 
+  async scanResources(tenantId: string, connectionId: string): Promise<ResourceScan> {
+    await delay(this.latencyMs * 4)
+    const conn = this.connection(tenantId, connectionId)
+    if (conn.status !== 'healthy' && conn.status !== 'degraded') {
+      throw new ApiError(409, 'Check the billing connection first: resources are scanned for working connections.')
+    }
+    // In the demo the stack is always found: the demo cannot see a real AWS account.
+    ;(this.state.resourceAccess ??= {})[conn.id] = true
+    this.save()
+    return { status: 'succeeded' }
+  }
+
   async getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup> {
     await this.tick()
     return this.setup(this.connection(tenantId, connectionId))
@@ -649,12 +664,13 @@ export class DemoApi implements Api {
       if (c.status === 'disconnected' || c.status === 'pending') continue
       const usable = c.status === 'healthy' || c.status === 'degraded'
       const own: CloudAccount = {
+        connectionId: c.id,
         awsAccountId: c.awsAccountId,
         name: c.accountType === 'management' ? 'payer' : null,
         accountType: c.accountType,
         orgStatus: c.accountType === 'management' && usable ? 'ACTIVE' : null,
         orgSeenAt: c.accountType === 'management' && usable ? now : null,
-        resourceAccess: false,
+        resourceAccess: usable && (this.state.resourceAccess?.[c.id] ?? false),
         hasCostData: usable,
       }
       accounts.push(own)
@@ -813,6 +829,7 @@ export class DemoApi implements Api {
       templateDownloadUrl: `${base}/billing-role.yaml`,
       resourceTemplateUrl: `${base}/resource-role.yaml`,
       resourceTemplateDownloadUrl: `${base}/resource-role.yaml`,
+      resourceQuickCreateUrl: null,
       stackRegion: 'us-east-1',
       principalArn: 'arn:aws:iam::000000000000:role/CloudopticsBroker',
     }

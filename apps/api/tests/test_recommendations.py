@@ -240,11 +240,14 @@ async def test_engine_stores_dedupes_and_resolves(
     assert (await client.get(f"{base}/{uuid.uuid4()}", headers=headers)).status_code == 404
 
     # The volume is attached again: its recommendations resolve; the rest keep their ids.
-    owner_sql("UPDATE resource SET state = 'in-use' WHERE resource_id = 'vol-loose'")
+    owner_sql(
+        "UPDATE resource SET state = 'in-use' WHERE resource_id = 'vol-loose' AND tenant_id = %s",
+        tenant,
+    )
     await engine.run_analysis(tid, now=later)
     statuses = dict(
         owner_sql("SELECT rule_id || ':' || region_id, status FROM recommendation "
-                  "WHERE resource_id = 'vol-loose'")
+                  "WHERE resource_id = 'vol-loose' AND tenant_id = %s", tenant)
     )  # fmt: skip
     assert statuses["R1_unattached_ebs:eu-west-1"] == "resolved_externally"
     assert statuses["R3_gp2_gp3:eu-west-1"] == "new"  # still gp2, now the primary
@@ -252,11 +255,16 @@ async def test_engine_stores_dedupes_and_resolves(
     assert {r["id"] for r in again} >= {r["id"] for r in recs if r["resourceId"] != "vol-loose"}
 
     # Detached again: the same row reopens.
-    owner_sql("UPDATE resource SET state = 'available' WHERE resource_id = 'vol-loose'")
+    owner_sql(
+        "UPDATE resource SET state = 'available' WHERE resource_id = 'vol-loose' "
+        "AND tenant_id = %s",
+        tenant,
+    )
     await engine.run_analysis(tid, now=later)
     assert owner_sql(
         "SELECT id, status FROM recommendation WHERE resource_id = 'vol-loose' "
-        "AND region_id = 'eu-west-1' AND rule_id = 'R1_unattached_ebs'"
+        "AND region_id = 'eu-west-1' AND rule_id = 'R1_unattached_ebs' AND tenant_id = %s",
+        tenant,
     ) == [(uuid.UUID(volume["id"]), "new")]
 
 
