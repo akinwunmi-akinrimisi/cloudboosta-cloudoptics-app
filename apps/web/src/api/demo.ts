@@ -453,7 +453,11 @@ export class DemoApi implements Api {
     // In the demo the stack is always found: the demo cannot see a real AWS account.
     ;(this.state.resourceAccess ??= {})[conn.id] = true
     this.save()
-    return { status: 'succeeded' }
+    const accounts = (await this.listAccounts(tenantId)).accounts.filter((a) => a.connectionId === conn.id)
+    return {
+      status: 'succeeded',
+      accounts: accounts.map((a) => ({ awsAccountId: a.awsAccountId, access: true, error: null })),
+    }
   }
 
   async getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup> {

@@ -172,6 +172,8 @@ export interface CurrentRate {
 
 export interface ResourceScan {
   status: 'queued' | 'succeeded' | 'partial' | 'skipped'
+  /** The role check done at once, per account; `error` is the AWS error code. */
+  accounts: { awsAccountId: string; access: boolean; error: string | null }[]
 }
 
 export interface CloudAccount {
