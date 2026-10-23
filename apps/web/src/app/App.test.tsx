@@ -251,4 +251,32 @@ describe('Cloudoptics web app', () => {
     expect(screen.getByText(/Connected an AWS account/)).toBeTruthy()
     expect(screen.getByText('pending → healthy')).toBeTruthy()
   })
+
+  it('lets admins set up a connection again, disconnect it and reconnect it', async () => {
+    const { api, tenant, user } = await connectedWorkspace('folake@example.com')
+    await user.click(screen.getByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText('AWS account 343434343434')).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Set up again' }))
+    expect(await screen.findByRole('heading', { name: 'Deploy the read-only role' })).toBeTruthy()
+    expect(screen.getByText(/Setting up AWS account 343434343434 again/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'I have deployed the stack' }))
+    expect(await screen.findByText('Healthy')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Go to my workspace' }))
+
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    await user.click(await screen.findByRole('button', { name: 'Disconnect…' }))
+    expect(screen.getByText(/Disconnect AWS account 343434343434\?/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }))
+    expect(await screen.findByText(/Disconnected\. Cloudoptics no longer reads this account/)).toBeTruthy()
+    const [gone] = await api.listConnections(tenant.id)
+    expect(gone?.status).toBe('disconnected')
+
+    const before = (await api.getSetup(tenant.id, gone!.id)).externalId
+    await user.click(screen.getByRole('button', { name: 'Reconnect' }))
+    expect(await screen.findByRole('heading', { name: 'Deploy the read-only role' })).toBeTruthy()
+    const [conn] = await api.listConnections(tenant.id)
+    expect(conn?.status).toBe('pending')
+    expect((await api.getSetup(tenant.id, conn!.id)).externalId).not.toBe(before)
+  })
 })

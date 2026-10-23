@@ -131,6 +131,10 @@ export class HttpApi implements Api {
     return this.request('GET', `/v1/tenants/${tenantId}/fx/current`)
   }
 
+  disconnectConnection(tenantId: string, connectionId: string): Promise<void> {
+    return this.request('DELETE', `/v1/tenants/${tenantId}/connections/${connectionId}`)
+  }
+
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {
     const path = `/v1/tenants/${tenantId}/connections/${connectionId}`
     const result = await this.request<Connection | { status: 'validating' }>('POST', `${path}/validate`)

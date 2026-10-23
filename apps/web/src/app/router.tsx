@@ -56,14 +56,16 @@ const index = createRoute({
 const onboarding = createRoute({
   getParentRoute: () => root,
   path: '/onboarding',
-  validateSearch: (search: Record<string, unknown>): { step?: number } =>
-    search.step === undefined ? {} : { step: Number(search.step) === 1 ? 1 : 0 },
+  validateSearch: (search: Record<string, unknown>): { step?: number; connection?: string } => ({
+    ...(search.step === undefined ? {} : { step: Number(search.step) === 1 ? 1 : 0 }),
+    ...(typeof search.connection === 'string' ? { connection: search.connection } : {}),
+  }),
   beforeLoad: async ({ context }) => {
     await loadMe(context)
   },
   component: function OnboardingRoute() {
-    const { step } = onboarding.useSearch()
-    return <Onboarding startAt={step ?? 0} />
+    const { step, connection } = onboarding.useSearch()
+    return <Onboarding startAt={step ?? 0} connectionId={connection} />
   },
 })
 
