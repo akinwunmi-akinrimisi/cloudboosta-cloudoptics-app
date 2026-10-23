@@ -9,7 +9,7 @@ Description: >-
 
 Metadata:
   cloudoptics:
-    templateVersion: "1.1.0"
+    templateVersion: "1.1.1"
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: Connection (pre-filled by Cloudoptics) }
@@ -60,6 +60,7 @@ Resources:
                   - organizations:ListAWSServiceAccessForOrganization
                   - organizations:DescribeOrganization
                   - organizations:ListRoots
+                  - organizations:ListDelegatedAdministrators
                 Resource: "*"
               - Sid: StackSetsServiceLinkedRole
                 Effect: Allow
@@ -75,36 +76,70 @@ Resources:
       Description: Cloudoptics setup step for the organization-wide resource role.
       Runtime: python3.12
       Handler: index.handler
-      Timeout: 300
+      Timeout: 600
       Role: !GetAtt OrgSetupRole.Arn
       Code:
         ZipFile: |
           import time
           import boto3
           import cfnresponse
+          from botocore.exceptions import ClientError
+
+          ID = "cloudoptics-org-setup"
+
+
+          def code(exc):
+              return exc.response.get("Error", {}).get("Code", "") if isinstance(exc, ClientError) else ""
+
+
+          def retry(call):
+              # A role made seconds ago can be refused until IAM catches up: retry for ~2 minutes.
+              for attempt in range(12):
+                  try:
+                      return call()
+                  except ClientError as exc:
+                      if code(exc) not in ("AccessDenied", "AccessDeniedException") or attempt == 11:
+                          raise
+                      time.sleep(10)
+
+
+          def enable_directly():
+              # What the console did before ActivateOrganizationsAccess existed: the StackSets
+              # service-linked role here, then trusted access for member accounts.
+              try:
+                  boto3.client("iam").create_service_linked_role(
+                      AWSServiceName="stacksets.cloudformation.amazonaws.com"
+                  )
+              except ClientError as exc:
+                  if code(exc) != "InvalidInput":  # already exists
+                      raise
+              boto3.client("organizations").enable_aws_service_access(
+                  ServicePrincipal="member.org.stacksets.cloudformation.amazonaws.com"
+              )
 
 
           def handler(event, context):
               if event["RequestType"] == "Delete":
                   # Trusted access stays on: other StackSets may use it.
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, "cloudoptics-org-setup")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, ID)
                   return
               try:
                   cfn = boto3.client("cloudformation")
-                  if cfn.describe_organizations_access()["Status"] != "ENABLED":
-                      cfn.activate_organizations_access()
-                      for _ in range(30):
+                  if retry(cfn.describe_organizations_access)["Status"] != "ENABLED":
+                      try:
+                          retry(cfn.activate_organizations_access)
+                      except ClientError:
+                          enable_directly()
+                      for _ in range(24):
                           if cfn.describe_organizations_access()["Status"] == "ENABLED":
                               break
                           time.sleep(5)
                       time.sleep(15)  # let the new access reach the StackSets service
-                  roots = boto3.client("organizations").list_roots()["Roots"]
-                  data = {"RootId": roots[0]["Id"]}
-                  cfnresponse.send(event, context, cfnresponse.SUCCESS, data, "cloudoptics-org-setup")
-              except Exception as exc:  # report every failure to CloudFormation
+                  roots = retry(boto3.client("organizations").list_roots)["Roots"]
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {"RootId": roots[0]["Id"]}, ID)
+              except Exception as exc:  # report every failure to CloudFormation, in full
                   cfnresponse.send(
-                      event, context, cfnresponse.FAILED, {}, "cloudoptics-org-setup",
-                      reason=f"{type(exc).__name__}: {exc}"[:200],
+                      event, context, cfnresponse.FAILED, {}, ID, reason=f"{type(exc).__name__}: {exc}"[:900]
                   )
 
   OrgSetup:

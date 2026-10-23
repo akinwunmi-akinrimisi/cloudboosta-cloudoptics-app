@@ -117,6 +117,7 @@ def test_stackset_rolls_the_resource_role_out_to_the_organization() -> None:
     assert resources["OrgSetup"]["Properties"]["ServiceToken"] == {"GetAtt": "OrgSetupFunction.Arn"}
     code = resources["OrgSetupFunction"]["Properties"]["Code"]["ZipFile"]
     assert "activate_organizations_access" in code and "list_roots" in code
+    assert "enable_aws_service_access" in code  # fallback when the CloudFormation call is refused
     [policy] = resources["OrgSetupRole"]["Properties"]["Policies"]
     actions = {
         a
@@ -130,5 +131,6 @@ def test_stackset_rolls_the_resource_role_out_to_the_organization() -> None:
         "organizations:ListAWSServiceAccessForOrganization",
         "organizations:DescribeOrganization",
         "organizations:ListRoots",
+        "organizations:ListDelegatedAdministrators",
         "iam:CreateServiceLinkedRole",
     }
