@@ -24,7 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
-from cloudoptics.connectors.aws import RESOURCE_ROLE_NAME, STACK_REGION, session_name
+from cloudoptics.connectors.aws import STACK_REGION, resource_role_arn, session_name
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.service import get_connection, get_session_factory
 from cloudoptics.platform.db import get_sessionmaker, scope
@@ -37,10 +37,6 @@ REGION_CONCURRENCY = 4
 NO_ACCESS = {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
 
 ScanStatus = Literal["skipped", "succeeded", "partial", "failed"]
-
-
-def resource_role_arn(aws_account_id: str) -> str:
-    return f"arn:aws:iam::{aws_account_id}:role/{RESOURCE_ROLE_NAME}"
 
 
 @dataclass(frozen=True)
@@ -73,12 +69,18 @@ def _code(exc: Exception) -> str:
 
 
 def check_access(
-    factory: Any, account_id: str, external_id: str, tenant_id: uuid.UUID
+    factory: Any,
+    account_id: str,
+    external_id: str,
+    tenant_id: uuid.UUID,
+    stack_name: str | None = None,
 ) -> str | None:
     """Assume the resource role once: None when it works, else the AWS error code."""
     try:
         factory.assume(
-            resource_role_arn(account_id), external_id, session_name(tenant_id, "inventory")
+            resource_role_arn(account_id, stack_name),
+            external_id,
+            session_name(tenant_id, "inventory"),
         )
     except (ClientError, BotoCoreError) as exc:
         return _code(exc)
@@ -300,7 +302,9 @@ async def scan_connection(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> Sca
     def _scan(account_id: str) -> AccountScan:
         try:
             aws = factory.assume(
-                resource_role_arn(account_id), external_id, session_name(tenant_id, "inventory")
+                resource_role_arn(account_id, conn.stack_name),
+                external_id,
+                session_name(tenant_id, "inventory"),
             )
         except ClientError as exc:
             scan = AccountScan(account_id, access=False)

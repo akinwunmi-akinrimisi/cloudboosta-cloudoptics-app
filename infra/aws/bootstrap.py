@@ -30,7 +30,13 @@ ROLE = "CloudopticsBroker"
 USER = "cloudoptics-staging-broker"
 TEMPLATES = Path(__file__).resolve().parents[1] / "cloudformation"
 TEMPLATE_PREFIX = "cfn/v1"
-CUSTOMER_ROLES = ("CloudopticsBillingReadOnly", "CloudopticsResourceReadOnly")
+CUSTOMER_ROLES = (
+    "CloudopticsBillingReadOnly",
+    "CloudopticsResourceReadOnly",
+    # The single onboarding stack (cloudoptics-access.yaml).
+    "CloudopticsBillingReader",
+    "CloudopticsResourceReader",
+)
 TAGS = [{"Key": "app", "Value": "cloudoptics"}, {"Key": "env", "Value": "staging"}]
 
 

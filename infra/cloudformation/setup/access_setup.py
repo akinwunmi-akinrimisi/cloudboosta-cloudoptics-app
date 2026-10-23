@@ -257,6 +257,7 @@ def ensure_stackset(props, root):
             "ParameterKey": "CloudopticsPrincipalArn",
             "ParameterValue": props["CloudopticsPrincipalArn"],
         },
+        {"ParameterKey": "RoleName", "ParameterValue": "CloudopticsResourceReader"},
     ]
     try:
         cfn.describe_stack_set(StackSetName=STACKSET)

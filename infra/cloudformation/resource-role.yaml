@@ -18,12 +18,17 @@ Parameters:
   CloudopticsPrincipalArn:
     Type: String
     AllowedPattern: "arn:aws:iam::[0-9]{12}:role/[\\w+=,.@-]+"
+  RoleName:
+    Type: String
+    Default: CloudopticsResourceReadOnly
+    AllowedValues: [CloudopticsResourceReadOnly, CloudopticsResourceReader]
+    Description: CloudopticsResourceReader when rolled out by the single cloudoptics-access stack.
 
 Resources:
   ResourceRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: CloudopticsResourceReadOnly
+      RoleName: !Ref RoleName
       Description: Read-only resource metadata and metrics for Cloudoptics. No write actions.
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
