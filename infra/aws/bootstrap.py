@@ -121,7 +121,7 @@ def ensure_bucket(s3: Any, bucket: str) -> None:
 
 def upload_templates(s3: Any, bucket: str) -> dict[str, str]:
     urls = {}
-    for name in ("billing-role.yaml", "resource-role.yaml"):
+    for name in ("billing-role.yaml", "resource-role.yaml", "resource-stackset.yaml"):
         key = f"{TEMPLATE_PREFIX}/{name}"
         s3.put_object(
             Bucket=bucket,

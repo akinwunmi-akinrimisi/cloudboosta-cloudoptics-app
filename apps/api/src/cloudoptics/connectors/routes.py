@@ -78,6 +78,9 @@ class ConnectionSetup(ApiModel):
     resource_template_url: str
     resource_template_download_url: str
     resource_quick_create_url: str | None
+    # Management connections only: one stack that deploys the role to every member account.
+    resource_stackset_quick_create_url: str | None
+    resource_stackset_download_url: str
     stack_region: str = aws.STACK_REGION
     principal_arn: str
 
@@ -135,6 +138,18 @@ def _setup(row: Any, external_id: str) -> ConnectionSetup:
         )
         if settings.cfn_quick_create_enabled
         else None,
+        resource_stackset_quick_create_url=aws.stackset_quick_create_url(
+            # Hosted next to resource-role.yaml (infra/aws/bootstrap.py uploads both).
+            settings.cfn_resource_template_url.rsplit("/", 1)[0] + "/resource-stackset.yaml",
+            external_id=external_id,
+            principal_arn=settings.cloudoptics_principal_arn,
+            resource_template_url=settings.cfn_resource_template_url,
+        )
+        if settings.cfn_quick_create_enabled and row.account_type == "management"
+        else None,
+        resource_stackset_download_url=(
+            f"{settings.cfn_template_download_base}/resource-stackset.yaml"
+        ),
         principal_arn=settings.cloudoptics_principal_arn,
     )
 

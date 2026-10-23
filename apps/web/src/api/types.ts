@@ -69,6 +69,9 @@ export interface ConnectionSetup {
   resourceTemplateDownloadUrl: string
   /** One-click CloudFormation link for the resource read-only stack; null like quickCreateUrl. */
   resourceQuickCreateUrl: string | null
+  /** Management connections: one stack that rolls the role out to every member account (StackSet). */
+  resourceStacksetQuickCreateUrl: string | null
+  resourceStacksetDownloadUrl: string
   stackRegion: string
   principalArn: string
 }

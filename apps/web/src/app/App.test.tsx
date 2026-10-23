@@ -294,4 +294,23 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByText(/Resource access in this account/)).toBeTruthy()
     expect(screen.queryByText('Add resource access for recommendations')).toBeNull()
   })
+
+  it('offers payer accounts one stack for every member account', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('kofi@example.com')
+    const tenant = await api.createTenant({ name: 'Accra Apps', countryCode: 'GH' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '565656565656',
+      accountType: 'management',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'kofi@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText('All member accounts at once')).toBeTruthy()
+    expect(screen.getByText(/0 of 4 accounts have it/)).toBeTruthy()
+    expect(await screen.findByRole('link', { name: /Download the StackSet template/ })).toBeTruthy()
+  })
 })

@@ -92,3 +92,22 @@ def test_billing_role_reads_only_the_export_bucket() -> None:
     s3 = next(s["If"][1] for s in statements if "If" in s)
     assert s3["Sid"] == "ReadExportBucketOnly"
     assert all("If" in r for r in s3["Resource"])
+
+
+def test_stackset_rolls_the_resource_role_out_to_the_organization() -> None:
+    template = load("resource-stackset.yaml")
+    [stackset] = template["Resources"].values()
+    props = stackset["Properties"]
+    assert stackset["Type"] == "AWS::CloudFormation::StackSet"
+    assert props["PermissionModel"] == "SERVICE_MANAGED"
+    assert props["AutoDeployment"]["Enabled"] is True  # new accounts get the role too
+    assert props["Capabilities"] == ["CAPABILITY_NAMED_IAM"]
+    assert props["TemplateURL"] == {"Ref": "ResourceTemplateUrl"}
+    passed = {p["ParameterKey"]: p["ParameterValue"] for p in props["Parameters"]}
+    assert passed == {
+        "ExternalId": {"Ref": "ExternalId"},
+        "CloudopticsPrincipalArn": {"Ref": "CloudopticsPrincipalArn"},
+    }
+    assert template["Parameters"]["ExternalId"]["NoEcho"] is True
+    [group] = props["StackInstancesGroup"]
+    assert group["DeploymentTargets"]["OrganizationalUnitIds"] == [{"Ref": "OrganizationRootId"}]
