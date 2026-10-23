@@ -215,8 +215,11 @@ export interface CurrentRate {
 
 export interface ResourceScan {
   status: 'queued' | 'succeeded' | 'partial' | 'skipped'
-  /** The role check done at once, per account; `error` is the AWS error code. */
-  accounts: { awsAccountId: string; access: boolean; error: string | null }[]
+  /**
+   * The role check done at once, per account; `error` is the AWS error code. `rollout` says,
+   * in plain words, how AWS's rollout of the role to a member account without access is going.
+   */
+  accounts: { awsAccountId: string; access: boolean; error: string | null; rollout?: string | null }[]
 }
 
 export interface CloudAccount {

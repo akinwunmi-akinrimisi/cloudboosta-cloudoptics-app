@@ -103,6 +103,8 @@ class AccountAccess(ApiModel):
     access: bool
     # The AWS error code when the resource role could not be assumed (e.g. AccessDenied).
     error: str | None
+    # For a member account still without access: how AWS's rollout of the role is going.
+    rollout: str | None = None
 
 
 class ScanStarted(ApiModel):
@@ -409,6 +411,28 @@ async def scan_resources(
             check_access, factory, account_id, external_id, access.tenant_id, row.stack_name
         )
         checked.append(AccountAccess(aws_account_id=account_id, access=error is None, error=error))
+    if (
+        row.stack_name == aws.ACCESS_STACK_NAME
+        and row.account_type == "management"
+        and any(not a.access for a in checked)
+    ):
+        rollout = await run_in_threadpool(
+            _member_rollout, factory, row.role_arn, external_id, access.tenant_id
+        )
+        for a in checked:
+            if a.access or a.aws_account_id == row.aws_account_id.strip():
+                continue
+            if rollout is None:
+                a.rollout = (
+                    "Update the CloudOptics stack: AWS tries this account again, "
+                    "and CloudOptics can then show how it is going."
+                )
+            else:
+                a.rollout = rollout.get(
+                    a.aws_account_id,
+                    "AWS has not started adding the role to this account. "
+                    "Update the CloudOptics stack to start it.",
+                )
     if not any(a.access for a in checked):
         return ScanStarted(status="skipped", accounts=checked)
 
@@ -435,6 +459,16 @@ async def scan_resources(
     await defer_scan(get_job_app(), str(access.tenant_id), str(connection_id))
     response.status_code = status.HTTP_202_ACCEPTED
     return ScanStarted(status="queued", accounts=checked)
+
+
+def _member_rollout(
+    factory: Any, role_arn: str, external_id: str, tenant_id: uuid.UUID
+) -> dict[str, str] | None:
+    try:
+        payer = factory.assume(role_arn, external_id, aws.session_name(tenant_id, "rollout"))
+    except Exception:  # the billing check reports role problems; this is only a hint
+        return None
+    return aws.member_rollout(payer)
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)

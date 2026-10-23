@@ -8,7 +8,7 @@ Description: >-
 
 Metadata:
   cloudoptics:
-    templateVersion: "2.0.0"
+    templateVersion: "2.0.1"
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: Connection (pre-filled by Cloudoptics) }
@@ -661,6 +661,16 @@ Resources:
                   - organizations:DescribeOrganization
                   - organizations:ListAccounts
                 Resource: "*"
+              # So Cloudoptics can say why a member account has no resource access yet.
+              - Sid: ReadMemberRollout
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStackSet
+                  - cloudformation:ListStackInstances
+                  - cloudformation:DescribeStackInstance
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:cloudformation:*:${AWS::AccountId}:stackset/cloudoptics-resource-access:*"
+                  - !Sub "arn:${AWS::Partition}:cloudformation:*:${AWS::AccountId}:stackset-target/cloudoptics-resource-access:*"
               - Sid: ReadExportBucketOnly
                 Effect: Allow
                 Action: [s3:GetObject, s3:ListBucket, s3:GetBucketLocation]
@@ -776,7 +786,7 @@ Resources:
       ServiceTimeout: "960"
       Action: setup
       # A new version number makes every update run the setup step (and the callback) again.
-      TemplateVersion: "2.0.0"
+      TemplateVersion: "2.0.1"
       StackName: !Ref AWS::StackName
       AccountId: !Ref AWS::AccountId
       ExternalId: !Ref ExternalId
@@ -790,7 +800,7 @@ Resources:
 
 Outputs:
   TemplateVersion:
-    Value: "2.0.0"
+    Value: "2.0.1"
   BillingRoleArn:
     Value: !GetAtt BillingRole.Arn
   ResourceRoleArn:
