@@ -325,7 +325,7 @@ async def test_admins_scan_now_and_get_a_resource_quick_create_link(
     assert r.json() == {
         "status": "skipped",
         "accounts": [
-            {"awsAccountId": a, "access": False, "error": "AccessDenied"}
+            {"awsAccountId": a, "access": False, "error": "AccessDenied", "rollout": None}
             for a in sorted([account, "555555555555"])
         ],
     }

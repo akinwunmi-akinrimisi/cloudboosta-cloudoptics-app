@@ -488,7 +488,7 @@ export class DemoApi implements Api {
         lastValidatedAt: null,
         createdAt: new Date().toISOString(),
         stackName: 'cloudoptics-access',
-        stackVersion: '2.0.0',
+        stackVersion: '2.0.1',
       }
       ;(this.state.connections[tenantId] ??= []).push(conn)
       this.state.externalIds[conn.id] = this.state.externalIds[intentId] ?? externalId()
@@ -910,8 +910,8 @@ export class DemoApi implements Api {
       accessTemplateDownloadUrl: `${base}/cloudoptics-access.yaml`,
       callbackUrl: 'https://cloudoptics.example/api/v1/cfn/callback',
       connectionRef: `c:${conn.id}`,
-      latestStackVersion: '2.0.0',
-      updateAvailable: conn.stackName !== 'cloudoptics-access' || conn.stackVersion !== '2.0.0',
+      latestStackVersion: '2.0.1',
+      updateAvailable: conn.stackName !== 'cloudoptics-access' || conn.stackVersion !== '2.0.1',
       stackConsoleUrl:
         'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/stackinfo?stackId=' +
         (conn.stackName ?? 'cloudoptics-billing-access'),

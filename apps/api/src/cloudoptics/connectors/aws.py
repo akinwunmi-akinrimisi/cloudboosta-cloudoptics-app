@@ -20,7 +20,7 @@ RESOURCE_STACK_NAME = "cloudoptics-resource-access"
 STACKSET_STACK_NAME = "cloudoptics-resource-stackset"
 # The single stack (infra/cloudformation/cloudoptics-access.yaml) that replaces the three above.
 ACCESS_STACK_NAME = "cloudoptics-access"
-ACCESS_TEMPLATE_VERSION = "2.0.0"
+ACCESS_TEMPLATE_VERSION = "2.0.1"
 LEGACY_STACK_NAMES = (STACK_NAME, RESOURCE_STACK_NAME, STACKSET_STACK_NAME)
 # The single stack's roles have their own names: CloudFormation refuses to create a stack whose
 # named roles already exist, and the older stacks' roles are only removed once it is running.
@@ -36,6 +36,45 @@ def new_external_id() -> str:
 def billing_role_arn(aws_account_id: str, stack_name: str | None = None) -> str:
     name = ACCESS_BILLING_ROLE_NAME if stack_name == ACCESS_STACK_NAME else BILLING_ROLE_NAME
     return f"arn:aws:iam::{aws_account_id}:role/{name}"
+
+
+# The StackSet the single stack uses to give member accounts their resource role.
+MEMBER_STACKSET_NAME = "cloudoptics-resource-access"
+
+
+def member_rollout(session: AssumedSession) -> dict[str, str] | None:
+    """Each member account's rollout of the resource role, in plain words, by account ID.
+
+    Read with the payer's billing role (2.0.1 may read its own StackSet). None when the
+    role cannot read it, as before 2.0.1.
+    """
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    cfn = session.client("cloudformation", STACK_REGION)
+    found: dict[str, str] = {}
+    try:
+        for page in cfn.get_paginator("list_stack_instances").paginate(
+            StackSetName=MEMBER_STACKSET_NAME
+        ):
+            for item in page.get("Summaries", []):
+                found[item["Account"]] = _rollout_words(item)
+    except (ClientError, BotoCoreError):
+        return None
+    return found
+
+
+def _rollout_words(item: dict[str, Any]) -> str:
+    detail = (item.get("StackInstanceStatus") or {}).get("DetailedStatus", "")
+    reason = (item.get("StatusReason") or "").strip()
+    if detail in ("PENDING", "RUNNING"):
+        return "AWS is adding the read-only role to this account now."
+    if detail == "SUCCEEDED" or item.get("Status") == "CURRENT":
+        return "The role is in place. Check now in a minute; AWS can take that long to use it."
+    if detail == "SKIPPED_SUSPENDED_ACCOUNT":
+        return "AWS skipped this account because it is suspended."
+    words = "AWS could not add the read-only role to this account"
+    words += f": {reason}" if reason else "."
+    return words + " Update the CloudOptics stack to try again."
 
 
 def resource_role_arn(aws_account_id: str, stack_name: str | None = None) -> str:

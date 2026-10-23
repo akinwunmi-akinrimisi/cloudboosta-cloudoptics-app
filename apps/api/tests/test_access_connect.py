@@ -10,6 +10,8 @@ from fake_aws import healthy_clients
 from httpx import AsyncClient
 from test_connections import workspace
 
+from cloudoptics.connectors import aws
+
 
 def account() -> str:
     return "".join(secrets.choice("0123456789") for _ in range(12))
@@ -31,7 +33,7 @@ def callback_body(params: dict[str, str], account: str, **extra: Any) -> dict[st
         "curBucket": f"cloudoptics-cur-{account}",
         "curPrefix": "cloudoptics",
         "stackName": "cloudoptics-access",
-        "templateVersion": "2.0.0",
+        "templateVersion": aws.ACCESS_TEMPLATE_VERSION,
         **extra,
     }
 
@@ -84,7 +86,7 @@ async def test_the_stack_reports_its_account_and_the_connection_is_checked(
     assert c["awsAccountId"] == acct
     assert c["accountType"] == "management"
     assert c["stackName"] == "cloudoptics-access"
-    assert c["stackVersion"] == "2.0.0"
+    assert c["stackVersion"] == aws.ACCESS_TEMPLATE_VERSION
     assert c["status"] == "healthy"  # validated straight away (inline jobs in tests)
     assert fake_aws.calls[-1][0] == f"arn:aws:iam::{acct}:role/CloudopticsBillingReader"
 

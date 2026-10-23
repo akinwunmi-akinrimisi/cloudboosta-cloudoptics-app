@@ -562,9 +562,14 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
       {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
       {refused.length > 0 && (
         <Alert tone="warning">
-          Still waiting for {refused.map((a) => a.awsAccountId).join(', ')}. If an account stays like this, it may still
-          have an older Cloudoptics stack: sign in to it and delete the{' '}
-          <code className="font-mono text-xs">cloudoptics-resource-access</code> stack. Access follows within minutes.
+          <ul className="flex flex-col gap-1">
+            {refused.map((a) => (
+              <li key={a.awsAccountId}>
+                <span className="font-mono">{a.awsAccountId}</span>:{' '}
+                {a.rollout ?? 'No access yet. Check again in a few minutes.'}
+              </li>
+            ))}
+          </ul>
         </Alert>
       )}
       <div>

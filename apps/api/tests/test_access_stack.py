@@ -531,3 +531,55 @@ def test_custom_resources_time_out_soon_after_the_function() -> None:
     timeout = resources["SetupFunction"]["Properties"]["Timeout"]
     for name in ("CleanUp", "CurBucket", "Setup"):
         assert timeout < int(resources[name]["Properties"]["ServiceTimeout"]) <= timeout + 120
+
+
+class _Pages:
+    def __init__(self, pages: list[dict[str, Any]] | Exception) -> None:
+        self.pages = pages
+
+    def paginate(self, **_: Any) -> Any:
+        if isinstance(self.pages, Exception):
+            raise self.pages
+        return iter(self.pages)
+
+
+class _Session:
+    def __init__(self, pages: list[dict[str, Any]] | Exception) -> None:
+        self.pages = pages
+
+    def client(self, service: str, region: str = "us-east-1") -> Any:
+        assert service == "cloudformation"
+        return types.SimpleNamespace(get_paginator=lambda name: _Pages(self.pages))
+
+
+def test_member_rollout_is_explained_in_plain_words() -> None:
+    summaries = [
+        {"Account": "111111111111", "StackInstanceStatus": {"DetailedStatus": "RUNNING"}},
+        {
+            "Account": "222222222222",
+            "Status": "OUTDATED",
+            "StatusReason": "Account 222222222222 should have the service-linked role",
+            "StackInstanceStatus": {"DetailedStatus": "FAILED"},
+        },
+        {"Account": "333333333333", "StackInstanceStatus": {"DetailedStatus": "SUCCEEDED"}},
+    ]
+    words = aws.member_rollout(_Session([{"Summaries": summaries}]))  # type: ignore[arg-type]
+    assert words is not None
+    assert "adding" in words["111111111111"]
+    assert "should have the service-linked role" in words["222222222222"]
+    assert "Update the CloudOptics stack" in words["222222222222"]
+    assert "in place" in words["333333333333"]
+    refused = aws.member_rollout(_Session(client_error("AccessDenied")))  # type: ignore[arg-type]
+    assert refused is None
+
+
+def test_billing_role_may_read_only_its_own_member_rollout() -> None:
+    role = load("cloudoptics-access.yaml")["Resources"]["BillingRole"]["Properties"]
+    [stmt] = [
+        s
+        for p in role["Policies"]
+        for s in p["PolicyDocument"]["Statement"]
+        if s["Sid"] == "ReadMemberRollout"
+    ]
+    assert all(a.split(":")[1].startswith(("Describe", "List")) for a in stmt["Action"])
+    assert all(aws.MEMBER_STACKSET_NAME in str(r) for r in stmt["Resource"])
