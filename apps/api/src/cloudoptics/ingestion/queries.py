@@ -33,6 +33,17 @@ class MonthToDate:
 
 
 @dataclass(frozen=True)
+class Reconciliation:
+    """The latest check of a month's CUR totals against Cost Explorer (FR-ING-07)."""
+
+    status: Literal["ok", "mismatch", "failed"]
+    month: str
+    difference_pct: float | None
+    accounts_mismatched: int
+    checked_at: datetime
+
+
+@dataclass(frozen=True)
 class CostSummary:
     status: SummaryStatus
     source: Source | None
@@ -44,6 +55,7 @@ class CostSummary:
     month_to_date: MonthToDate | None
     forecast: Forecast | None
     previous_month: float | None
+    reconciliation: Reconciliation | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +92,32 @@ class Breakdown:
 def _month_bounds(day: date) -> tuple[date, date]:
     start = day.replace(day=1)
     return start, (start + timedelta(days=32)).replace(day=1)
+
+
+async def _reconciliation(
+    session: AsyncSession, prev_start: date, start: date
+) -> Reconciliation | None:
+    """This or last month's check, a mismatch first (any connection), else the newest."""
+    row = (
+        await session.execute(
+            text(
+                "SELECT status, billing_period, difference_pct, "
+                "jsonb_array_length(accounts) AS accounts, checked_at FROM cost_reconciliation "
+                "WHERE billing_period IN (:prev, :start) "
+                "ORDER BY status = 'mismatch' DESC, billing_period DESC, checked_at DESC LIMIT 1"
+            ),
+            {"prev": prev_start, "start": start},
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    return Reconciliation(
+        status=row.status,
+        month=f"{row.billing_period:%Y-%m}",
+        difference_pct=None if row.difference_pct is None else float(row.difference_pct),
+        accounts_mismatched=row.accounts,
+        checked_at=row.checked_at,
+    )
 
 
 def _run_rate(effective: float, run_rate_base: float, start: date, last_day: date) -> Forecast:
@@ -214,6 +252,7 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
         ),
         forecast=forecast,
         previous_month=None if previous is None else round(float(previous), 2),
+        reconciliation=await _reconciliation(session, prev_start, start),
         **base,
     )
 
