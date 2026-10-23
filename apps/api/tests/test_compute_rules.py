@@ -105,13 +105,12 @@ def test_idle_server_includes_its_disks_and_is_high_confidence_over_32_days() ->
 
 @pytest.mark.parametrize(
     "change",
-    ["busy_cpu", "busy_network", "missing_day", "autoscaling", "ignored", "new", "stopped"],
+    ["busy_cpu", "busy_network", "missing_day", "autoscaling", "new", "stopped"],
 )
 def test_servers_that_are_not_idle_or_are_excluded(change: str) -> None:
     ctx = context()
     tags = {
         "autoscaling": {"aws:autoscaling:groupName": "web"},
-        "ignored": {"cloudoptics:ignore": "true"},
     }.get(change, {})
     r = server(**tags)
     if change == "new":
@@ -269,3 +268,31 @@ def test_rightsizing_shows_compute_optimizer_side_by_side() -> None:
     assert "compute_optimizer_agrees" in c.confidence_notes
     optimizer = next(e for e in c.evidence if e["kind"] == "computeOptimizer")
     assert optimizer["options"][0]["instanceType"] == "m6g.large"
+
+
+def test_settings_turn_rules_off_hide_tagged_resources_and_set_thresholds() -> None:
+    from cloudoptics.analysis.settings import RuleSettings
+
+    r = server("m4.large")
+    hidden = server("m4.large", **{"Keep-Me": "yes"})
+    ctx = context()
+    quiet_server(ctx, r)
+    found = {s.candidate.rule_id for s in engine.evaluate(ctx, [r])}
+    assert found == {"R4_idle_ec2", "R6_newer_generation", "R6_graviton"}
+
+    ctx = context()
+    ctx.settings = RuleSettings.from_json(
+        {"disabledRules": ["R6_graviton", "unknown"], "ignoreTag": "keep-me", "idleCpuPercent": 1}
+    )
+    quiet_server(ctx, r)  # peak CPU 2%: idle at 5%, not at 1%
+    quiet_server(ctx, hidden)
+    found = {
+        (s.candidate.resource.id, s.candidate.rule_id) for s in engine.evaluate(ctx, [r, hidden])
+    }
+    assert found == {(r.id, "R6_newer_generation")}
+    assert ctx.settings.to_json()["disabledRules"] == ["R6_graviton"]
+
+    ctx = context()
+    ctx.settings = RuleSettings.from_json({"idleDays": 30})
+    quiet_server(ctx, r, days=20)  # not 30 days of history yet
+    assert run(compute.idle_instances, ctx, r) == []

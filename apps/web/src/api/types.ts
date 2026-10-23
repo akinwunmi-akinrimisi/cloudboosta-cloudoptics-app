@@ -298,6 +298,8 @@ export interface Recommendation {
   /** Set on an alternative to another recommendation for the same resource. */
   primaryOf: string | null
   status: RecommendationStatus
+  /** The member it is assigned to, if any. */
+  assigneeId: string | null
   firstDetectedAt: string
   lastEvaluatedAt: string
 }
@@ -314,9 +316,51 @@ export interface RecommendationQuery {
   alternatives?: boolean
 }
 
-export type StatusChange = {
-  status: 'new' | 'in_progress' | 'done' | 'dismissed'
+/** A status change, an assignment (null unassigns) or both. */
+export type RecommendationChange = {
+  status?: 'new' | 'in_progress' | 'done' | 'dismissed'
   reason?: string
+  assigneeId?: string | null
+}
+export type StatusChange = RecommendationChange
+
+export interface RecommendationEvent {
+  id: string
+  kind: 'status_changed' | 'assigned' | 'commented'
+  actorId: string | null
+  actorName: string | null
+  fromStatus: RecommendationStatus | null
+  toStatus: RecommendationStatus | null
+  assigneeId: string | null
+  assigneeName: string | null
+  body: string | null
+  createdAt: string
+}
+
+export interface Member {
+  userId: string
+  email: string
+  displayName: string | null
+  role: Role
+  joinedAt: string
+}
+
+export interface RuleSettings {
+  disabledRules: string[]
+  /** Resources with this tag key are left out of every rule. */
+  ignoreTag: string
+  idleCpuPercent: number
+  idleDays: number
+}
+
+export interface RuleSettingsView {
+  rules: string[]
+  settings: RuleSettings
+}
+
+export interface TenantChange {
+  displayCurrency?: string
+  timeZone?: string
 }
 
 export interface AuditEntry {
@@ -349,6 +393,8 @@ export interface Api {
   updateMe(view: CurrencyMode): Promise<Me>
   createTenant(body: { name: string; countryCode: string }): Promise<Tenant>
   getTenant(tenantId: string): Promise<Tenant>
+  updateTenant(tenantId: string, change: TenantChange): Promise<Tenant>
+  listMembers(tenantId: string): Promise<Member[]>
   listConnections(tenantId: string): Promise<Connection[]>
   createConnection(tenantId: string, body: ConnectionCreate): Promise<ConnectionSetup>
   createIntent(tenantId: string): Promise<IntentSetup>
@@ -366,7 +412,13 @@ export interface Api {
   listRecommendations(tenantId: string, query?: RecommendationQuery): Promise<Recommendation[]>
   recommendationSummary(tenantId: string): Promise<RecommendationSummary>
   getRecommendation(tenantId: string, id: string): Promise<Recommendation>
-  updateRecommendation(tenantId: string, id: string, change: StatusChange): Promise<Recommendation>
+  updateRecommendation(tenantId: string, id: string, change: RecommendationChange): Promise<Recommendation>
+  updateRecommendations(tenantId: string, ids: string[], change: RecommendationChange): Promise<{ updated: number }>
+  recommendationEvents(tenantId: string, id: string): Promise<RecommendationEvent[]>
+  addComment(tenantId: string, id: string, body: string): Promise<RecommendationEvent[]>
+  getRuleSettings(tenantId: string): Promise<RuleSettingsView>
+  /** Saving re-runs the rules, so recommendations change straight away. */
+  saveRuleSettings(tenantId: string, settings: RuleSettings): Promise<RuleSettingsView>
   auditLog(tenantId: string, before?: number): Promise<AuditPage>
 }
 

@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cloudoptics.analysis.compute import COMPUTE_RULES
 from cloudoptics.analysis.pricing import load_price_book
 from cloudoptics.analysis.rules import RULES, Candidate, Context, Resource, parse_time
+from cloudoptics.analysis.settings import RuleSettings, load_rule_settings
 from cloudoptics.metrics.puller import load_usage
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
@@ -115,8 +116,15 @@ def build_context(resources: list[Resource], ctx: Context) -> Context:
 
 
 def evaluate(ctx: Context, resources: list[Resource]) -> list[Scored]:
+    """Run every rule the tenant has on, over the resources it has not tagged to ignore."""
     build_context(resources, ctx)
-    return [score(c) for rule in [*RULES, *COMPUTE_RULES] for c in rule(ctx, resources)]
+    considered = [r for r in resources if not ctx.settings.ignores(r.tags)]
+    return [
+        score(c)
+        for rule in [*RULES, *COMPUTE_RULES]
+        for c in rule(ctx, considered)
+        if c.rule_id not in ctx.settings.disabled_rules
+    ]
 
 
 def _row(s: Scored, generation: int) -> dict[str, Any]:
@@ -224,7 +232,9 @@ async def store(
     return {"recommendations": len(scored), "resolved": len(resolved.all())}
 
 
-async def run_analysis(tenant_id: uuid.UUID, now: datetime | None = None) -> dict[str, int]:
+async def run_analysis(
+    tenant_id: uuid.UUID, now: datetime | None = None, settings: RuleSettings | None = None
+) -> dict[str, int]:
     """Evaluate every rule for one tenant and store the results."""
     async with get_sessionmaker()() as session, session.begin():
         await scope(session, tenant_id=tenant_id)
@@ -233,6 +243,7 @@ async def run_analysis(tenant_id: uuid.UUID, now: datetime | None = None) -> dic
             now=now or datetime.now(UTC),
             prices=await load_price_book(session),
             usage=await load_usage(session),
+            settings=settings or await load_rule_settings(session),
         )
         scored = evaluate(ctx, resources)
         return await store(session, tenant_id, scored, int(time.time() * 1000))

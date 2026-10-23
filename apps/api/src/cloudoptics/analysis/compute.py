@@ -28,11 +28,8 @@ from cloudoptics.analysis.rules import (
     volume_month_cost,
 )
 
-IGNORE_TAG = "cloudoptics:ignore"
 ASG_TAG = "aws:autoscaling:groupName"
-IDLE_CPU_PERCENT = 5.0
 IDLE_NETWORK_BYTES_DAY = 5 * 1024 * 1024
-IDLE_DAYS = 14
 HIGH_CONFIDENCE_DAYS = 32
 DB_IDLE_CONNECTION_DAYS = 7
 DB_HIGH_CONFIDENCE_DAYS = 30
@@ -90,10 +87,6 @@ def hourly_price(
     return large * factor, fallback
 
 
-def ignored(r: Resource) -> bool:
-    return any(k.lower() == IGNORE_TAG for k in r.tags)
-
-
 def complete_days(ctx: Context, r: Resource, metric: str, days: int) -> list[float] | None:
     """Every stored hourly value of the last ``days`` complete UTC days, or None when any
     of those days is missing (too little history to judge)."""
@@ -129,7 +122,7 @@ def percentile(values: list[float], p: float) -> float:
 
 def _old_enough(ctx: Context, r: Resource, created_key: str) -> bool:
     created = parse_time(r.config.get(created_key)) or r.first_seen_at
-    return (_age_days(ctx, created) or 0) >= IDLE_DAYS
+    return (_age_days(ctx, created) or 0) >= ctx.settings.idle_days
 
 
 def _price_notes(fallback: bool) -> list[str]:
@@ -150,7 +143,7 @@ def _idle_ec2(ctx: Context, r: Resource, days: int) -> tuple[float, float] | Non
         return None
     peak = max(cpu)
     network = max(daily_totals(ctx, r, ("network_in", "network_out"), days))
-    if peak >= IDLE_CPU_PERCENT or network >= IDLE_NETWORK_BYTES_DAY:
+    if peak >= ctx.settings.idle_cpu_percent or network >= IDLE_NETWORK_BYTES_DAY:
         return None
     return peak, network
 
@@ -159,9 +152,9 @@ def idle_instances(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
     for r in resources:
         if r.resource_type != "ec2_instance" or r.state != "running":
             continue
-        if ignored(r) or ASG_TAG in r.tags or not _old_enough(ctx, r, "launchTime"):
+        if ASG_TAG in r.tags or not _old_enough(ctx, r, "launchTime"):
             continue
-        idle = _idle_ec2(ctx, r, IDLE_DAYS)
+        idle = _idle_ec2(ctx, r, ctx.settings.idle_days)
         if idle is None:
             continue
         kind = str(r.config.get("instanceType") or "")
@@ -192,7 +185,7 @@ def idle_instances(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
             type="stop_idle_instance",
             resource=r,
             title=f"Stop idle server {name} ({kind}): almost no CPU or network for "
-            f"{IDLE_DAYS} days",
+            f"{ctx.settings.idle_days} days",
             current_config={"instanceType": kind, "state": "running"},
             recommended_config={"action": "stop_then_terminate"},
             cost_now=compute + storage,
@@ -204,16 +197,16 @@ def idle_instances(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
             confidence_notes=notes,
             risk_factors=[*env_factor(r.tags), {"factor": "stops_running_server", "points": 15}],
             evidence=[
-                {"kind": "peakCpuPercent", "value": round(peak, 2), "days": IDLE_DAYS},
+                {"kind": "peakCpuPercent", "value": round(peak, 2), "days": ctx.settings.idle_days},
                 {"kind": "busiestDayNetworkMb", "value": round(network / 1024 / 1024, 2),
-                 "days": IDLE_DAYS},
+                 "days": ctx.settings.idle_days},
                 {"kind": "stopSavesUsdMonth", "value": round(compute, 2)},
                 {"kind": "volumesUsdMonth", "value": round(storage, 2)},
             ],
             rule_config={
-                "maxCpuPercent": IDLE_CPU_PERCENT,
+                "maxCpuPercent": ctx.settings.idle_cpu_percent,
                 "maxNetworkMbPerDay": 5,
-                "days": IDLE_DAYS,
+                "days": ctx.settings.idle_days,
                 "highConfidenceDays": HIGH_CONFIDENCE_DAYS,
             },
             restart_required=True,
@@ -261,14 +254,15 @@ def idle_databases(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
         if r.resource_type != "rds_instance" or r.state != "available":
             continue
         c = r.config
-        if ignored(r) or c.get("readReplicaOf") or c.get("clusterId"):
+        if c.get("readReplicaOf") or c.get("clusterId"):
             continue
         if not _old_enough(ctx, r, "createTime"):
             continue
+        idle_days = ctx.settings.idle_days
         connections = complete_days(ctx, r, "connections", DB_IDLE_CONNECTION_DAYS)
-        cpu = complete_days(ctx, r, "cpu", IDLE_DAYS)
-        reads = complete_days(ctx, r, "read_iops", IDLE_DAYS)
-        writes = complete_days(ctx, r, "write_iops", IDLE_DAYS)
+        cpu = complete_days(ctx, r, "cpu", ctx.settings.idle_days)
+        reads = complete_days(ctx, r, "read_iops", ctx.settings.idle_days)
+        writes = complete_days(ctx, r, "write_iops", ctx.settings.idle_days)
         if not connections or not cpu or reads is None or writes is None:
             continue
         if max(connections) > 0:
@@ -277,7 +271,7 @@ def idle_databases(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
         iops_p95 = (percentile(reads, 95) if reads else 0.0) + (
             percentile(writes, 95) if writes else 0.0
         )
-        if cpu_p95 >= IDLE_CPU_PERCENT or iops_p95 >= DB_IDLE_IOPS:
+        if cpu_p95 >= ctx.settings.idle_cpu_percent or iops_p95 >= DB_IDLE_IOPS:
             continue
         price = _db_hourly(ctx, r)
         if price is None:
@@ -310,12 +304,12 @@ def idle_databases(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
             risk_factors=[*env_factor(r.tags), {"factor": "deletes_database", "points": 20}],
             evidence=[
                 {"kind": "maxConnections", "value": 0, "days": DB_IDLE_CONNECTION_DAYS},
-                {"kind": "cpuP95Percent", "value": round(cpu_p95, 2), "days": IDLE_DAYS},
-                {"kind": "iopsP95", "value": round(iops_p95, 2), "days": IDLE_DAYS},
+                {"kind": "cpuP95Percent", "value": round(cpu_p95, 2), "days": idle_days},
+                {"kind": "iopsP95", "value": round(iops_p95, 2), "days": idle_days},
             ],
             rule_config={
                 "connectionDays": DB_IDLE_CONNECTION_DAYS,
-                "maxCpuP95Percent": IDLE_CPU_PERCENT,
+                "maxCpuP95Percent": ctx.settings.idle_cpu_percent,
                 "maxIopsP95": DB_IDLE_IOPS,
             },
             fix={
@@ -397,7 +391,7 @@ def previous_generation(ctx: Context, resources: list[Resource]) -> Iterator[Can
     for r in resources:
         if r.resource_type != "ec2_instance" or r.state != "running":
             continue
-        if ignored(r) or ASG_TAG in r.tags:
+        if ASG_TAG in r.tags:
             continue
         kind = str(r.config.get("instanceType"))
         split = split_type(kind)
@@ -498,7 +492,7 @@ def rightsizing(ctx: Context, resources: list[Resource]) -> Iterator[Candidate]:
     for r in resources:
         if r.resource_type != "ec2_instance" or r.state != "running":
             continue
-        if ignored(r) or ASG_TAG in r.tags:
+        if ASG_TAG in r.tags:
             continue
         kind = str(r.config.get("instanceType"))
         split = split_type(kind)
@@ -513,7 +507,7 @@ def rightsizing(ctx: Context, resources: list[Resource]) -> Iterator[Candidate]:
         cpu = complete_days(ctx, r, "cpu_max", RIGHTSIZE_DAYS)
         if not cpu:
             days, cpu = RIGHTSIZE_MIN_DAYS, complete_days(ctx, r, "cpu_max", RIGHTSIZE_MIN_DAYS)
-        if not cpu or _idle_ec2(ctx, r, IDLE_DAYS) is not None:
+        if not cpu or _idle_ec2(ctx, r, ctx.settings.idle_days) is not None:
             continue  # too little history, or idle (R4 covers it)
         optimizer = r.config.get("computeOptimizer") or {}
         if optimizer.get("finding") in ("Optimized", "Underprovisioned"):

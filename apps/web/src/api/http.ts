@@ -17,11 +17,16 @@ import type {
   CurrentRate,
   DailyCosts,
   Me,
+  Member,
   Recommendation,
+  RecommendationChange,
+  RecommendationEvent,
   RecommendationQuery,
   RecommendationSummary,
+  RuleSettings,
+  RuleSettingsView,
+  TenantChange,
   ResourceScan,
-  StatusChange,
   Tenant,
 } from './types'
 import { ApiError } from './types'
@@ -79,6 +84,14 @@ export class HttpApi implements Api {
     return this.request('GET', `/v1/tenants/${tenantId}`)
   }
 
+  updateTenant(tenantId: string, change: TenantChange): Promise<Tenant> {
+    return this.request('PATCH', `/v1/tenants/${tenantId}`, change)
+  }
+
+  listMembers(tenantId: string): Promise<Member[]> {
+    return this.request('GET', `/v1/tenants/${tenantId}/members`)
+  }
+
   listConnections(tenantId: string): Promise<Connection[]> {
     return this.request('GET', `/v1/tenants/${tenantId}/connections`)
   }
@@ -125,8 +138,28 @@ export class HttpApi implements Api {
     return this.request('GET', `/v1/tenants/${tenantId}/recommendations/${id}`)
   }
 
-  updateRecommendation(tenantId: string, id: string, change: StatusChange): Promise<Recommendation> {
+  updateRecommendation(tenantId: string, id: string, change: RecommendationChange): Promise<Recommendation> {
     return this.request('PATCH', `/v1/tenants/${tenantId}/recommendations/${id}`, change)
+  }
+
+  updateRecommendations(tenantId: string, ids: string[], change: RecommendationChange): Promise<{ updated: number }> {
+    return this.request('POST', `/v1/tenants/${tenantId}/recommendations/bulk`, { ids, ...change })
+  }
+
+  recommendationEvents(tenantId: string, id: string): Promise<RecommendationEvent[]> {
+    return this.request('GET', `/v1/tenants/${tenantId}/recommendations/${id}/events`)
+  }
+
+  addComment(tenantId: string, id: string, body: string): Promise<RecommendationEvent[]> {
+    return this.request('POST', `/v1/tenants/${tenantId}/recommendations/${id}/comments`, { body })
+  }
+
+  getRuleSettings(tenantId: string): Promise<RuleSettingsView> {
+    return this.request('GET', `/v1/tenants/${tenantId}/rule-settings`)
+  }
+
+  saveRuleSettings(tenantId: string, settings: RuleSettings): Promise<RuleSettingsView> {
+    return this.request('PUT', `/v1/tenants/${tenantId}/rule-settings`, settings)
   }
 
   auditLog(tenantId: string, before?: number): Promise<AuditPage> {

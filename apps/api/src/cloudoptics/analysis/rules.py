@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 from cloudoptics.analysis.pricing import HOURS_PER_MONTH, Basis, PriceBook
+from cloudoptics.analysis.settings import RuleSettings
 
 Confidence = Literal["high", "medium", "low"]
 Reversibility = Literal["reversible", "with_snapshot", "irreversible"]
@@ -47,6 +48,7 @@ class Resource:
 class Context:
     now: datetime
     prices: PriceBook
+    settings: RuleSettings = field(default_factory=RuleSettings)
     # (account, region) -> {volume id -> newest completed snapshot start}
     snapshots: dict[tuple[str, str], dict[str, datetime]] = field(default_factory=dict)
     # (account, region) -> {instance id -> Resource}

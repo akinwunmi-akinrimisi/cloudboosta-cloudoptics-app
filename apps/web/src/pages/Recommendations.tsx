@@ -4,23 +4,17 @@ import { ArrowLeft, Check, Copy } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi } from '../app/context'
-import type { Recommendation, RecommendationStatus, StatusChange } from '../api/types'
+import type {
+  Member,
+  Recommendation,
+  RecommendationChange,
+  RecommendationEvent,
+  RecommendationStatus,
+} from '../api/types'
 import { ApiError } from '../api/types'
 import { Alert, Button, Card, cx } from '../components/ui'
+import { RULES } from '../lib/rules'
 import { Kpi, useMoney, useWorkspace } from './Workspace'
-
-const RULES: Record<string, string> = {
-  R1_unattached_ebs: 'Unattached volume',
-  R1_old_snapshot: 'Old snapshot',
-  R2_idle_eip: 'Idle Elastic IP',
-  R2_idle_lb: 'Idle load balancer',
-  R3_gp2_gp3: 'gp2 to gp3',
-  R4_idle_ec2: 'Idle server',
-  R4_idle_rds: 'Unused database',
-  R5_rightsize_ec2: 'Smaller server size',
-  R6_newer_generation: 'Older server type',
-  R6_graviton: 'Move to Graviton (Arm)',
-}
 
 const FACTORS: Record<string, string> = {
   production: 'Tagged as production',
@@ -99,13 +93,40 @@ function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
+type Assigned = 'anyone' | 'me' | 'nobody' | string
+
+function memberName(m: Member): string {
+  return m.displayName ?? m.email
+}
+
+/** Who can be assigned: the workspace's members and admins (viewers only read). */
+function useAssignees(tenantId: string | null) {
+  const api = useApi()
+  const members = useQuery({
+    queryKey: ['members', tenantId],
+    queryFn: () => api.listMembers(tenantId as string),
+    enabled: tenantId !== null,
+  })
+  const all = members.data ?? []
+  return { all, assignable: all.filter((m) => m.role !== 'viewer') }
+}
+
 /** Recommendations, best first (PRD US-3.1): savings, risk and confidence at a glance. */
 export function Recommendations() {
   const api = useApi()
-  const { tenantId } = useWorkspace()
+  const qc = useQueryClient()
+  const { me, tenantId } = useWorkspace()
+  const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
+  const canChange = role !== undefined && role !== 'viewer'
   const { money } = useMoney()
+  const { all: members, assignable } = useAssignees(tenantId)
   const [rule, setRule] = useState<string>('all')
+  const [risk, setRisk] = useState<'all' | Recommendation['riskLevel']>('all')
+  const [assigned, setAssigned] = useState<Assigned>('anyone')
   const [showClosed, setShowClosed] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [dismissing, setDismissing] = useState(false)
+  const [reason, setReason] = useState('')
   const summary = useQuery({
     queryKey: ['recommendation-summary', tenantId],
     queryFn: () => api.recommendationSummary(tenantId as string),
@@ -119,8 +140,36 @@ export function Recommendations() {
       }),
     enabled: tenantId !== null,
   })
-  const recs = (list.data ?? []).filter((r) => rule === 'all' || r.ruleId === rule)
+  const bulk = useMutation({
+    mutationFn: (change: RecommendationChange) => api.updateRecommendations(tenantId as string, [...selected], change),
+    onSuccess: () => {
+      setSelected(new Set())
+      setDismissing(false)
+      setReason('')
+      void qc.invalidateQueries({ queryKey: ['recommendations', tenantId] })
+      void qc.invalidateQueries({ queryKey: ['recommendation-summary', tenantId] })
+    },
+  })
+  const recs = (list.data ?? []).filter(
+    (r) =>
+      (rule === 'all' || r.ruleId === rule) &&
+      (risk === 'all' || r.riskLevel === risk) &&
+      (assigned === 'anyone' ||
+        (assigned === 'me' && r.assigneeId === me?.id) ||
+        (assigned === 'nobody' && r.assigneeId === null) ||
+        r.assigneeId === assigned),
+  )
   const evaluated = summary.data?.lastEvaluatedAt
+  const names = new Map(members.map((m) => [m.userId, memberName(m)]))
+  const shown = recs.filter((r) => selected.has(r.id))
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const select = 'h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm'
 
   return (
     <div className="flex flex-col gap-6">
@@ -173,26 +222,119 @@ export function Recommendations() {
       </div>
       <Card className="p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-secondary">Type</span>
-            <select
-              className="h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm"
-              value={rule}
-              onChange={(e) => setRule(e.target.value)}
-            >
-              <option value="all">All</option>
-              {Object.entries(RULES).map(([id, label]) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-secondary">Type</span>
+              <select className={select} value={rule} onChange={(e) => setRule(e.target.value)}>
+                <option value="all">All</option>
+                {Object.entries(RULES).map(([id, label]) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-secondary">Risk</span>
+              <select
+                className={select}
+                value={risk}
+                onChange={(e) => setRisk(e.target.value as 'all' | Recommendation['riskLevel'])}
+              >
+                <option value="all">Any</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-secondary">Assigned to</span>
+              <select className={select} value={assigned} onChange={(e) => setAssigned(e.target.value)}>
+                <option value="anyone">Anyone</option>
+                <option value="me">Me</option>
+                <option value="nobody">Nobody yet</option>
+                {members
+                  .filter((m) => m.userId !== me?.id)
+                  .map((m) => (
+                    <option key={m.userId} value={m.userId}>
+                      {memberName(m)}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </div>
           <label className="flex items-center gap-2 text-sm text-secondary">
             <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
             Show done and dismissed
           </label>
         </div>
+        {canChange && shown.length > 0 && (
+          <div className="flex flex-col gap-2 border-b border-border bg-surface-2 px-5 py-3">
+            {bulk.error && (
+              <Alert tone="error">{bulk.error instanceof ApiError ? bulk.error.message : 'Could not update.'}</Alert>
+            )}
+            {dismissing ? (
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  bulk.mutate({ status: 'dismissed', reason })
+                }}
+              >
+                <label className="text-sm font-medium" htmlFor="bulk-reason">
+                  Why are you dismissing {shown.length === 1 ? 'it' : 'them'}?
+                </label>
+                <input
+                  id="bulk-reason"
+                  className="h-8 min-w-48 flex-1 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm"
+                  value={reason}
+                  maxLength={500}
+                  required
+                  onChange={(e) => setReason(e.target.value)}
+                />
+                <Button type="submit" disabled={!reason.trim() || bulk.isPending}>
+                  Dismiss
+                </Button>
+                <Button variant="ghost" onClick={() => setDismissing(false)}>
+                  Cancel
+                </Button>
+              </form>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">{shown.length} selected</span>
+                <Button variant="secondary" disabled={bulk.isPending} onClick={() => bulk.mutate({ status: 'in_progress' })}>
+                  Start
+                </Button>
+                <Button variant="secondary" disabled={bulk.isPending} onClick={() => bulk.mutate({ status: 'done' })}>
+                  Mark as done
+                </Button>
+                <Button variant="ghost" onClick={() => setDismissing(true)}>
+                  Dismiss…
+                </Button>
+                <select
+                  aria-label="Assign selected to"
+                  className={select}
+                  value=""
+                  disabled={bulk.isPending}
+                  onChange={(e) => bulk.mutate({ assigneeId: e.target.value === 'nobody' ? null : e.target.value })}
+                >
+                  <option value="" disabled>
+                    Assign to…
+                  </option>
+                  {assignable.map((m) => (
+                    <option key={m.userId} value={m.userId}>
+                      {m.userId === me?.id ? 'Me' : memberName(m)}
+                    </option>
+                  ))}
+                  <option value="nobody">Nobody</option>
+                </select>
+                <Button variant="ghost" onClick={() => setSelected(new Set())}>
+                  Clear
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
         {list.isLoading && <p className="px-5 py-4 text-sm text-secondary">Loading…</p>}
         {list.data && recs.length === 0 && (
           <p className="px-5 py-4 text-sm text-secondary">
@@ -201,17 +343,27 @@ export function Recommendations() {
         )}
         <ul className="divide-y divide-border">
           {recs.map((r) => (
-            <li key={r.id}>
+            <li key={r.id} className="flex items-center hover:bg-surface-2">
+              {canChange && (
+                <input
+                  type="checkbox"
+                  className="ml-5"
+                  aria-label={`Select ${r.title}`}
+                  checked={selected.has(r.id)}
+                  onChange={() => toggle(r.id)}
+                />
+              )}
               <Link
                 to="/recommendations/$recommendationId"
                 params={{ recommendationId: r.id }}
-                className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 hover:bg-surface-2"
+                className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-3 px-5 py-3"
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">{r.title}</p>
                   <p className="text-xs text-muted">
                     {RULES[r.ruleId] ?? r.ruleId} · {r.accountId} · {r.regionId}
                     {r.status !== 'new' && ` · ${STATUS[r.status]}`}
+                    {r.assigneeId && ` · ${r.assigneeId === me?.id ? 'You' : (names.get(r.assigneeId) ?? 'A teammate')}`}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -269,7 +421,7 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
   const [dismissing, setDismissing] = useState(false)
   const [reason, setReason] = useState('')
   const change = useMutation({
-    mutationFn: (body: StatusChange) => api.updateRecommendation(tenantId, rec.id, body),
+    mutationFn: (body: RecommendationChange) => api.updateRecommendation(tenantId, rec.id, body),
     onSuccess: (updated) => {
       qc.setQueryData(['recommendation', tenantId, rec.id], updated)
       void qc.invalidateQueries({ queryKey: ['recommendations', tenantId] })
@@ -277,11 +429,30 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
         queryKey: ['recommendation-summary', tenantId],
       })
       setDismissing(false)
+      void qc.invalidateQueries({ queryKey: ['recommendation-events', tenantId, rec.id] })
     },
   })
+  const { me } = useWorkspace()
+  const { assignable } = useAssignees(tenantId)
   const closed = !['new', 'assigned', 'in_progress'].includes(rec.status)
   return (
     <div className="flex flex-col gap-3">
+      <label className="flex items-center gap-2 text-sm">
+        <span className="font-medium">Assigned to</span>
+        <select
+          className="h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm"
+          value={rec.assigneeId ?? ''}
+          disabled={change.isPending}
+          onChange={(e) => change.mutate({ assigneeId: e.target.value || null })}
+        >
+          <option value="">Nobody yet</option>
+          {assignable.map((m) => (
+            <option key={m.userId} value={m.userId}>
+              {m.userId === me?.id ? `Me (${memberName(m)})` : memberName(m)}
+            </option>
+          ))}
+        </select>
+      </label>
       {change.error && (
         <Alert tone="error">{change.error instanceof ApiError ? change.error.message : 'Could not update.'}</Alert>
       )}
@@ -341,6 +512,81 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
         </div>
       )}
     </div>
+  )
+}
+
+const DID: Partial<Record<RecommendationStatus, string>> = {
+  new: 'reopened it',
+  assigned: 'moved it to assigned',
+  in_progress: 'started work on it',
+  done: 'marked it as fixed',
+  dismissed: 'dismissed it',
+}
+
+function describe(e: RecommendationEvent): string {
+  if (e.kind === 'assigned') return e.assigneeId ? `assigned it to ${e.assigneeName ?? 'a teammate'}` : 'unassigned it'
+  if (e.kind === 'status_changed') return e.toStatus ? (DID[e.toStatus] ?? 'changed its status') : 'changed its status'
+  return 'commented'
+}
+
+/** Who did what, oldest first, and a box to add a comment (members and admins). */
+function History({ rec, tenantId, canComment }: { rec: Recommendation; tenantId: string; canComment: boolean }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const [body, setBody] = useState('')
+  const key = ['recommendation-events', tenantId, rec.id]
+  const events = useQuery({ queryKey: key, queryFn: () => api.recommendationEvents(tenantId, rec.id) })
+  const comment = useMutation({
+    mutationFn: () => api.addComment(tenantId, rec.id, body),
+    onSuccess: (updated) => {
+      qc.setQueryData(key, updated)
+      setBody('')
+    },
+  })
+  return (
+    <Card className="flex flex-col gap-4 p-5">
+      <h2 className="text-base font-semibold">Activity</h2>
+      {events.data && events.data.length === 0 && (
+        <p className="text-sm text-secondary">Nobody has worked on this yet.</p>
+      )}
+      <ol className="flex flex-col gap-3">
+        {(events.data ?? []).map((e) => (
+          <li key={e.id} className="text-sm">
+            <p>
+              <span className="font-medium">{e.actorName ?? 'Someone'}</span> {describe(e)}
+              <span className="text-xs text-muted"> · {new Date(e.createdAt).toLocaleString('en-GB')}</span>
+            </p>
+            {e.body && <p className="mt-1 whitespace-pre-wrap rounded-sm bg-surface-2 px-3 py-2">{e.body}</p>}
+          </li>
+        ))}
+      </ol>
+      {canComment && (
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            comment.mutate()
+          }}
+        >
+          <label className="text-sm font-medium" htmlFor="comment">
+            Add a comment
+          </label>
+          <textarea
+            id="comment"
+            className="min-h-20 rounded-sm border border-border-strong bg-surface-1 px-3 py-2 text-sm"
+            value={body}
+            maxLength={2000}
+            onChange={(e) => setBody(e.target.value)}
+          />
+          {comment.error && <Alert tone="error">Could not add the comment. Try again.</Alert>}
+          <div>
+            <Button type="submit" disabled={!body.trim() || comment.isPending}>
+              Comment
+            </Button>
+          </div>
+        </form>
+      )}
+    </Card>
   )
 }
 
@@ -466,6 +712,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
           </p>
         </Card>
       </div>
+      <History rec={r} tenantId={tenantId} canComment={role !== undefined && role !== 'viewer'} />
     </div>
   )
 }

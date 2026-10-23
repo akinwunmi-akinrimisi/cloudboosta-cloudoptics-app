@@ -224,6 +224,41 @@ describe('Cloudoptics web app', () => {
     expect(screen.getByText('4')).toBeTruthy()
   })
 
+  it('assigns, comments, acts on several at once and changes the rules', async () => {
+    const { user } = await connectedWorkspace('kofi@example.com')
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    await user.click(await screen.findByRole('link', { name: /build-cache/ }))
+    await user.selectOptions(await screen.findByLabelText('Assigned to'), screen.getByRole('option', { name: /^Me/ }))
+    expect(await screen.findByText(/assigned it to/)).toBeTruthy()
+    await user.type(screen.getByLabelText('Add a comment'), 'Checking with the data team')
+    await user.click(screen.getByRole('button', { name: 'Comment' }))
+    expect(await screen.findByText('Checking with the data team')).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: /All recommendations/ }))
+    await user.selectOptions(await screen.findByLabelText('Assigned to'), 'me')
+    expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(1)
+    await user.selectOptions(screen.getByLabelText('Assigned to'), 'anyone')
+
+    const boxes = screen.getAllByRole('checkbox', { name: /^Select / })
+    await user.click(boxes[0])
+    await user.click(boxes[1])
+    expect(screen.getByText('2 selected')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Dismiss…' }))
+    await user.type(screen.getByLabelText(/Why are you dismissing them/), 'Kept on purpose')
+    await user.click(screen.getByRole('button', { name: 'Dismiss' }))
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(3))
+    expect(screen.getByRole('link', { name: /Release idle Elastic IP/ })).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: 'Settings' }))
+    const eip = await screen.findByRole('checkbox', { name: 'Idle Elastic IP' })
+    await user.click(eip)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true))
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    await screen.findAllByRole('link', { name: /\/mo$/ })
+    expect(screen.queryByRole('link', { name: /Release idle Elastic IP/ })).toBeNull()
+  })
+
   it('explores costs by dimension and range', async () => {
     const { user } = await connectedWorkspace('otieno@example.com')
     await user.click(screen.getByRole('link', { name: 'Cost Explorer' }))
