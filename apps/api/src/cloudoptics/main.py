@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from cloudoptics import __version__
 from cloudoptics.audit import routes as audit_routes
+from cloudoptics.connectors import access as connector_access
 from cloudoptics.connectors import routes as connector_routes
 from cloudoptics.fx import routes as fx_routes
 from cloudoptics.identity import dev as dev_routes
@@ -82,6 +83,8 @@ def create_app() -> FastAPI:
         return JSONResponse({"status": "ready", "environment": settings.environment})
 
     app.include_router(identity_routes.router)
+    app.include_router(connector_access.intents_router)
+    app.include_router(connector_access.callback_router)
     app.include_router(connector_routes.router)
     app.include_router(connector_routes.accounts_router)
     app.include_router(ingestion_routes.router)

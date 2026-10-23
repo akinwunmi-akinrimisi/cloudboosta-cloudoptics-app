@@ -1,19 +1,8 @@
 import secrets
 from urllib.parse import parse_qs, urlparse
 
-import pytest
-from fake_aws import FakeClient, FakeSessionFactory, client_error, healthy_clients
+from fake_aws import FakeClient, client_error, healthy_clients
 from httpx import AsyncClient
-
-from cloudoptics.connectors import service
-
-
-@pytest.fixture
-def fake_aws():  # type: ignore[no-untyped-def]
-    factory = FakeSessionFactory()
-    service.set_session_factory(factory)
-    yield factory
-    service.set_session_factory(None)
 
 
 async def workspace(client: AsyncClient, login) -> tuple[str, dict[str, str]]:
@@ -33,16 +22,6 @@ async def test_setup_offers_the_template_download_until_templates_are_hosted(
     assert body["quickCreateUrl"] is None
     assert body["templateDownloadUrl"].endswith("/infra/cloudformation/billing-role.yaml")
     assert body["resourceTemplateDownloadUrl"].endswith("/infra/cloudformation/resource-role.yaml")
-
-
-@pytest.fixture
-def quick_create():  # type: ignore[no-untyped-def]
-    from cloudoptics.platform.settings import get_settings
-
-    settings = get_settings()
-    settings.cfn_quick_create_enabled = True
-    yield
-    settings.cfn_quick_create_enabled = False
 
 
 async def test_create_connection_returns_a_quick_create_link(

@@ -9,12 +9,14 @@ import type {
   AuthConfig,
   Connection,
   ConnectionCreate,
+  ConnectionIntent,
   ConnectionSetup,
   CostBreakdown,
   CostDimension,
   CostSummary,
   CurrentRate,
   DailyCosts,
+  IntentSetup,
   Me,
   PermissionCheck,
   Recommendation,
@@ -65,6 +67,8 @@ interface State {
   recommendationStatus: Record<string, RecommendationStatus>
   /** Connections whose accounts have the resource stack (after a demo scan). */
   resourceAccess?: Record<string, boolean>
+  /** One-click links waiting for the (simulated) stack to report back. */
+  intents?: Record<string, { tenantId: string; createdAt: number; connectionId: string | null }>
 }
 
 const empty = (): State => ({
@@ -431,11 +435,74 @@ export class DemoApi implements Api {
       lastError: null,
       lastValidatedAt: null,
       createdAt: new Date().toISOString(),
+      stackName: 'cloudoptics-billing-access',
+      stackVersion: null,
     }
     ;(this.state.connections[tenantId] ??= []).push(conn)
     this.state.externalIds[conn.id] = externalId()
     this.save()
     return this.setup(conn)
+  }
+
+  async createIntent(tenantId: string): Promise<IntentSetup> {
+    await this.tick()
+    this.tenant(tenantId)
+    const id = randomId()
+    ;(this.state.intents ??= {})[id] = { tenantId, createdAt: Date.now(), connectionId: null }
+    this.state.externalIds[id] = externalId()
+    this.save()
+    const base = `${import.meta.env.BASE_URL}cfn`
+    return {
+      intent: { id, status: 'waiting', connectionId: null, error: null },
+      // No S3-hosted template in the demo: the stack "reports back" by itself after a few seconds.
+      quickCreateUrl: null,
+      templateUrl: `${base}/cloudoptics-access.yaml`,
+      templateDownloadUrl: `${base}/cloudoptics-access.yaml`,
+      externalId: this.state.externalIds[id] ?? '',
+      principalArn: 'arn:aws:iam::000000000000:role/CloudopticsBroker',
+      resourceTemplateUrl: `${base}/resource-role.yaml`,
+      callbackUrl: 'https://cloudoptics.example/api/v1/cfn/callback',
+      connectionRef: `i:${id}`,
+      stackRegion: 'us-east-1',
+    }
+  }
+
+  async getIntent(tenantId: string, intentId: string): Promise<ConnectionIntent> {
+    await this.tick()
+    const intent = this.state.intents?.[intentId]
+    if (!intent || intent.tenantId !== tenantId) throw new ApiError(404, 'Link not found')
+    if (!intent.connectionId && Date.now() - intent.createdAt >= this.latencyMs * 24) {
+      const account = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b % 10).join('')
+      const conn: Connection = {
+        id: randomId(),
+        awsAccountId: account,
+        accountType: 'standalone',
+        roleArn: `arn:aws:iam::${account}:role/CloudopticsBillingReadOnly`,
+        status: 'pending',
+        createCurExport: true,
+        curBucket: null,
+        curPrefix: null,
+        curExportArn: null,
+        permissionChecks: [],
+        lastError: null,
+        lastValidatedAt: null,
+        createdAt: new Date().toISOString(),
+        stackName: 'cloudoptics-access',
+        stackVersion: '2.0.0',
+      }
+      ;(this.state.connections[tenantId] ??= []).push(conn)
+      this.state.externalIds[conn.id] = this.state.externalIds[intentId] ?? externalId()
+      ;(this.state.resourceAccess ??= {})[conn.id] = true
+      intent.connectionId = conn.id
+      this.save()
+      await this.validateConnection(tenantId, conn.id)
+    }
+    return {
+      id: intentId,
+      status: intent.connectionId ? 'connected' : 'waiting',
+      connectionId: intent.connectionId,
+      error: null,
+    }
   }
 
   async disconnectConnection(tenantId: string, connectionId: string): Promise<void> {
@@ -838,6 +905,16 @@ export class DemoApi implements Api {
       resourceStacksetDownloadUrl: `${base}/resource-stackset.yaml`,
       stackRegion: 'us-east-1',
       principalArn: 'arn:aws:iam::000000000000:role/CloudopticsBroker',
+      accessQuickCreateUrl: null,
+      accessTemplateUrl: `${base}/cloudoptics-access.yaml`,
+      accessTemplateDownloadUrl: `${base}/cloudoptics-access.yaml`,
+      callbackUrl: 'https://cloudoptics.example/api/v1/cfn/callback',
+      connectionRef: `c:${conn.id}`,
+      latestStackVersion: '2.0.0',
+      updateAvailable: conn.stackName !== 'cloudoptics-access' || conn.stackVersion !== '2.0.0',
+      stackConsoleUrl:
+        'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/stackinfo?stackId=' +
+        (conn.stackName ?? 'cloudoptics-billing-access'),
     }
   }
 }

@@ -109,11 +109,12 @@ export function Recommendations() {
       </div>
       {summary.data && evaluated === null && (
         <Alert tone="info">
-          Recommendations need the read-only resource stack in each AWS account. Deploy it from{' '}
+          Recommendations need resource access in your AWS accounts. The single Cloudoptics stack adds it; if{' '}
           <Link to="/settings/connections" className="font-medium text-accent underline">
             Connections
-          </Link>
-          ; the first results appear within a few minutes of the next scan.
+          </Link>{' '}
+          offers to move your account to it, do that first. The first results appear within a few minutes of the next
+          scan.
         </Alert>
       )}
       <div className="grid gap-4 sm:grid-cols-3">

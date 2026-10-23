@@ -80,6 +80,18 @@ class Settings(BaseSettings):
     email_from: str = "CloudOptics <alerts@cloudboosta.com>"
     # Public address of the web app, for links in emails.
     app_url: str = "http://localhost:5173"
+    # Public address of this API, for the stack's callback. Empty: ``app_url`` + ``/api``
+    # (App Platform routes /api to the API).
+    api_public_url: str = ""
+
+    @property
+    def public_api_url(self) -> str:
+        return (self.api_public_url or f"{self.app_url}/api").rstrip("/")
+
+    @property
+    def cfn_access_template_url(self) -> str:
+        """The single stack, hosted next to the billing template (infra/aws/bootstrap.py)."""
+        return self.cfn_billing_template_url.rsplit("/", 1)[0] + "/cloudoptics-access.yaml"
 
     @property
     def oidc_configured(self) -> bool:

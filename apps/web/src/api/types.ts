@@ -56,7 +56,13 @@ export interface Connection {
   lastError: Record<string, string> | null
   lastValidatedAt: string | null
   createdAt: string
+  /** ``cloudoptics-access`` once on the single stack; the older billing stack's name before. */
+  stackName: string
+  /** The single stack's version as last reported; null while on the older stacks. */
+  stackVersion: string | null
 }
+
+export const ACCESS_STACK_NAME = 'cloudoptics-access'
 
 export interface ConnectionSetup {
   connection: Connection
@@ -74,6 +80,40 @@ export interface ConnectionSetup {
   resourceStacksetDownloadUrl: string
   stackRegion: string
   principalArn: string
+  /** One-click link to the single stack for this connection (move or set up again). */
+  accessQuickCreateUrl: string | null
+  accessTemplateUrl: string
+  accessTemplateDownloadUrl: string
+  callbackUrl: string
+  connectionRef: string
+  latestStackVersion: string
+  /** True while on the older stacks, or when the single stack is older than the latest. */
+  updateAvailable: boolean
+  /** The stack's page in the AWS console (Update and Delete are there). */
+  stackConsoleUrl: string
+}
+
+/** A one-click link made before the AWS account is known; the stack reports the account. */
+export interface ConnectionIntent {
+  id: string
+  status: 'waiting' | 'connected'
+  connectionId: string | null
+  /** Why the stack's report was refused (for example, the account is already connected). */
+  error: string | null
+}
+
+export interface IntentSetup {
+  intent: ConnectionIntent
+  /** Null when quick-create links are off: set the stack up by hand with the values below. */
+  quickCreateUrl: string | null
+  templateUrl: string
+  templateDownloadUrl: string
+  externalId: string
+  principalArn: string
+  resourceTemplateUrl: string
+  callbackUrl: string
+  connectionRef: string
+  stackRegion: string
 }
 
 export interface ConnectionCreate {
@@ -304,6 +344,8 @@ export interface Api {
   getTenant(tenantId: string): Promise<Tenant>
   listConnections(tenantId: string): Promise<Connection[]>
   createConnection(tenantId: string, body: ConnectionCreate): Promise<ConnectionSetup>
+  createIntent(tenantId: string): Promise<IntentSetup>
+  getIntent(tenantId: string, intentId: string): Promise<ConnectionIntent>
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
   disconnectConnection(tenantId: string, connectionId: string): Promise<void>
