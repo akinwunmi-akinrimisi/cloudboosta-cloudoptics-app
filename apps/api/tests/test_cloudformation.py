@@ -96,7 +96,8 @@ def test_billing_role_reads_only_the_export_bucket() -> None:
 
 def test_stackset_rolls_the_resource_role_out_to_the_organization() -> None:
     template = load("resource-stackset.yaml")
-    [stackset] = template["Resources"].values()
+    resources = template["Resources"]
+    stackset = resources["ResourceStackSet"]
     props = stackset["Properties"]
     assert stackset["Type"] == "AWS::CloudFormation::StackSet"
     assert props["PermissionModel"] == "SERVICE_MANAGED"
@@ -110,4 +111,24 @@ def test_stackset_rolls_the_resource_role_out_to_the_organization() -> None:
     }
     assert template["Parameters"]["ExternalId"]["NoEcho"] is True
     [group] = props["StackInstancesGroup"]
-    assert group["DeploymentTargets"]["OrganizationalUnitIds"] == [{"Ref": "OrganizationRootId"}]
+    # Nothing to paste: the setup step finds the root and turns on StackSets trusted access.
+    assert "OrganizationRootId" not in template["Parameters"]
+    assert group["DeploymentTargets"]["OrganizationalUnitIds"] == [{"GetAtt": "OrgSetup.RootId"}]
+    assert resources["OrgSetup"]["Properties"]["ServiceToken"] == {"GetAtt": "OrgSetupFunction.Arn"}
+    code = resources["OrgSetupFunction"]["Properties"]["Code"]["ZipFile"]
+    assert "activate_organizations_access" in code and "list_roots" in code
+    [policy] = resources["OrgSetupRole"]["Properties"]["Policies"]
+    actions = {
+        a
+        for stmt in policy["PolicyDocument"]["Statement"]
+        for a in ([stmt["Action"]] if isinstance(stmt["Action"], str) else stmt["Action"])
+    }
+    assert actions == {
+        "cloudformation:ActivateOrganizationsAccess",
+        "cloudformation:DescribeOrganizationsAccess",
+        "organizations:EnableAWSServiceAccess",
+        "organizations:ListAWSServiceAccessForOrganization",
+        "organizations:DescribeOrganization",
+        "organizations:ListRoots",
+        "iam:CreateServiceLinkedRole",
+    }

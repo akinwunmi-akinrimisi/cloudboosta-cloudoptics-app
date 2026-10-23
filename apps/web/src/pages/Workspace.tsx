@@ -494,21 +494,18 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
           <p className="font-medium">All member accounts at once</p>
           <ol className="list-decimal space-y-1 pl-5 text-secondary">
             <li>
-              One time: in AWS Organizations, open <strong>Services</strong> → <strong>CloudFormation StackSets</strong>{' '}
-              and choose <strong>Enable trusted access</strong>.
+              Signed in to the payer account {c.awsAccountId}, open the link below, tick the boxes at the bottom and
+              choose <strong>Create stack</strong>. Everything else is filled in.
             </li>
             <li>
-              In AWS Organizations → <strong>AWS accounts</strong>, copy your organization&apos;s Root ID (starts with{' '}
-              <code className="font-mono text-xs">r-</code>).
-            </li>
-            <li>
-              Signed in to the payer account {c.awsAccountId}, open the link below, paste the Root ID, tick the IAM box
-              and choose <strong>Create stack</strong>. New accounts in the organization get the role automatically.
-            </li>
-            <li>
-              Give AWS a few minutes to reach every account, then choose <strong>Check now</strong>.
+              Give AWS a few minutes to reach every account, then choose <strong>Check now</strong>. Accounts you add
+              later get access automatically.
             </li>
           </ol>
+          <p className="text-xs text-muted">
+            The stack also switches on CloudFormation StackSets for your organization, which AWS needs to reach member
+            accounts. It does not give Cloudoptics any write access.
+          </p>
           {s && (
             <div>
               <a
