@@ -67,6 +67,9 @@ class Connection(ApiModel):
     last_error: dict[str, Any] | None
     last_validated_at: datetime | None
     created_at: datetime
+    stack_name: str
+    # The single stack's version as last reported; None while on the older stacks.
+    stack_version: str | None = None
 
 
 class ConnectionSetup(ApiModel):
@@ -83,6 +86,16 @@ class ConnectionSetup(ApiModel):
     resource_stackset_download_url: str
     stack_region: str = aws.STACK_REGION
     principal_arn: str
+    # The single stack (cloudoptics-access): moves this connection to it, or sets it up again.
+    access_quick_create_url: str | None
+    access_template_url: str
+    access_template_download_url: str
+    callback_url: str
+    connection_ref: str
+    latest_stack_version: str = aws.ACCESS_TEMPLATE_VERSION
+    # True when the stack is older than the latest version (or still the older stacks).
+    update_available: bool
+    stack_console_url: str
 
 
 class AccountAccess(ApiModel):
@@ -112,8 +125,25 @@ def _to_model(row: Any) -> Connection:
     return Connection.model_validate(row._mapping)
 
 
+def access_link(
+    settings: Any, *, external_id: str, connection_ref: str, tenant_id: uuid.UUID
+) -> str | None:
+    if not settings.cfn_quick_create_enabled:
+        return None
+    return aws.access_quick_create_url(
+        settings.cfn_access_template_url,
+        external_id=external_id,
+        principal_arn=settings.cloudoptics_principal_arn,
+        resource_template_url=settings.cfn_resource_template_url,
+        callback_url=f"{settings.public_api_url}/v1/cfn/callback",
+        connection_ref=connection_ref,
+        tenant_id=tenant_id,
+    )
+
+
 def _setup(row: Any, external_id: str) -> ConnectionSetup:
     settings = get_settings()
+    on_access_stack = row.stack_name == aws.ACCESS_STACK_NAME
     return ConnectionSetup(
         connection=_to_model(row),
         external_id=external_id,
@@ -151,6 +181,18 @@ def _setup(row: Any, external_id: str) -> ConnectionSetup:
             f"{settings.cfn_template_download_base}/resource-stackset.yaml"
         ),
         principal_arn=settings.cloudoptics_principal_arn,
+        access_quick_create_url=access_link(
+            settings, external_id=external_id, connection_ref=f"c:{row.id}", tenant_id=row.tenant_id
+        ),
+        access_template_url=settings.cfn_access_template_url,
+        access_template_download_url=(
+            f"{settings.cfn_template_download_base}/cloudoptics-access.yaml"
+        ),
+        callback_url=f"{settings.public_api_url}/v1/cfn/callback",
+        connection_ref=f"c:{row.id}",
+        update_available=not on_access_stack
+        or aws.version_tuple(row.stack_version) < aws.version_tuple(aws.ACCESS_TEMPLATE_VERSION),
+        stack_console_url=aws.stack_console_url(row.stack_name),
     )
 
 
@@ -296,16 +338,25 @@ async def validate(
     session: Session,
 ) -> Connection | ValidationAccepted:
     await _load(session, connection_id)
+    if not await start_validation(
+        session, access.tenant_id, connection_id, user_actor(request, access.user.id)
+    ):
+        return _to_model(await _load(session, connection_id))
+    response.status_code = status.HTTP_202_ACCEPTED
+    return ValidationAccepted(connection_id=connection_id)
+
+
+async def start_validation(
+    session: Session, tenant_id: uuid.UUID, connection_id: uuid.UUID, actor: audit.Actor
+) -> bool:
+    """Validate now (inline jobs, returns False) or queue it for the worker (returns True)."""
     if get_settings().jobs_mode == "inline":
         result = await run_validation(
-            session,
-            tenant_id=access.tenant_id,
-            connection_id=connection_id,
-            actor=user_actor(request, access.user.id),
+            session, tenant_id=tenant_id, connection_id=connection_id, actor=actor
         )
         if result.health_worsened:
-            await send_connection_alert(session, access.tenant_id, connection_id)
-        return _to_model(await _load(session, connection_id))
+            await send_connection_alert(session, tenant_id, connection_id)
+        return False
 
     from cloudoptics.platform.jobs import get_job_app
 
@@ -315,13 +366,12 @@ async def validate(
             await job_app.configure_task(
                 "connectors:connection.validate",
                 queueing_lock=f"validate:{connection_id}",
-            ).defer_async(tenant_id=str(access.tenant_id), connection_id=str(connection_id))
+            ).defer_async(tenant_id=str(tenant_id), connection_id=str(connection_id))
     await session.execute(
         text("UPDATE cloud_connection SET status = 'validating' WHERE id = :c"),
         {"c": connection_id},
     )
-    response.status_code = status.HTTP_202_ACCEPTED
-    return ValidationAccepted(connection_id=connection_id)
+    return True
 
 
 @router.post(
@@ -392,6 +442,19 @@ async def disconnect(
     connection_id: uuid.UUID, request: Request, access: AdminAccess, session: Session
 ) -> Response:
     row = await _load(session, connection_id)
+    await mark_disconnected(
+        session, access.tenant_id, connection_id, row.status, user_actor(request, access.user.id)
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+async def mark_disconnected(
+    session: Session,
+    tenant_id: uuid.UUID,
+    connection_id: uuid.UUID,
+    previous: str,
+    actor: audit.Actor,
+) -> None:
     await session.execute(
         text("UPDATE cloud_connection SET status = 'disconnected', health = NULL WHERE id = :c"),
         {"c": connection_id},
@@ -406,15 +469,14 @@ async def disconnect(
     )
     await audit.record(
         session,
-        tenant_id=access.tenant_id,
-        actor=user_actor(request, access.user.id),
+        tenant_id=tenant_id,
+        actor=actor,
         action="connection.disconnected",
         target_type="cloud_connection",
         target_id=str(connection_id),
-        before={"status": row.status},
+        before={"status": previous},
         after={"status": "disconnected"},
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 class CloudAccount(ApiModel):

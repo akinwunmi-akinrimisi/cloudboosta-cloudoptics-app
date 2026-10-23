@@ -102,3 +102,25 @@ def login(client: AsyncClient) -> Callable[..., object]:
         return {"Authorization": f"Bearer {r.json()['accessToken']}"}
 
     return _login
+
+
+@pytest.fixture
+def fake_aws():  # type: ignore[no-untyped-def]
+    from fake_aws import FakeSessionFactory
+
+    from cloudoptics.connectors import service
+
+    factory = FakeSessionFactory()
+    service.set_session_factory(factory)
+    yield factory
+    service.set_session_factory(None)
+
+
+@pytest.fixture
+def quick_create():  # type: ignore[no-untyped-def]
+    from cloudoptics.platform.settings import get_settings
+
+    settings = get_settings()
+    settings.cfn_quick_create_enabled = True
+    yield
+    settings.cfn_quick_create_enabled = False

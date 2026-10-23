@@ -25,13 +25,13 @@ from cloudoptics.platform.settings import get_settings
 SELECT_CONNECTION = text(
     "SELECT id, tenant_id, aws_account_id, account_type, role_arn, stack_name, "
     "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
-    "permission_checks, last_error, last_validated_at, created_at, external_id_enc, health "
-    "FROM cloud_connection WHERE id = :c"
+    "permission_checks, last_error, last_validated_at, created_at, external_id_enc, health, "
+    "stack_version FROM cloud_connection WHERE id = :c"
 )
 LIST_CONNECTIONS = text(
     "SELECT id, tenant_id, aws_account_id, account_type, role_arn, stack_name, "
     "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
-    "permission_checks, last_error, last_validated_at, created_at "
+    "permission_checks, last_error, last_validated_at, created_at, stack_version "
     "FROM cloud_connection ORDER BY created_at"
 )
 

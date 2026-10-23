@@ -18,6 +18,10 @@ RESOURCE_ROLE_NAME = "CloudopticsResourceReadOnly"
 STACK_NAME = "cloudoptics-billing-access"
 RESOURCE_STACK_NAME = "cloudoptics-resource-access"
 STACKSET_STACK_NAME = "cloudoptics-resource-stackset"
+# The single stack (infra/cloudformation/cloudoptics-access.yaml) that replaces the three above.
+ACCESS_STACK_NAME = "cloudoptics-access"
+ACCESS_TEMPLATE_VERSION = "2.0.0"
+LEGACY_STACK_NAMES = (STACK_NAME, RESOURCE_STACK_NAME, STACKSET_STACK_NAME)
 
 
 def new_external_id() -> str:
@@ -82,6 +86,49 @@ def stackset_quick_create_url(
         f"https://{STACK_REGION}.console.aws.amazon.com/cloudformation/home"
         f"?region={STACK_REGION}#/stacks/create/review?{urlencode(params)}"
     )
+
+
+def access_quick_create_url(
+    template_url: str,
+    *,
+    external_id: str,
+    principal_arn: str,
+    resource_template_url: str,
+    callback_url: str,
+    connection_ref: str,
+    tenant_id: uuid.UUID,
+) -> str:
+    """The single stack. ``connection_ref`` is ``i:<intent>`` for a new account (the stack
+    reports which account it is in) or ``c:<connection>`` to move or set up one again."""
+    params = {
+        "templateURL": template_url,
+        "stackName": ACCESS_STACK_NAME,
+        "param_ExternalId": external_id,
+        "param_CloudopticsPrincipalArn": principal_arn,
+        "param_ResourceTemplateUrl": resource_template_url,
+        "param_CallbackUrl": callback_url,
+        "param_ConnectionRef": connection_ref,
+        "param_TenantId": str(tenant_id),
+    }
+    return (
+        f"https://{STACK_REGION}.console.aws.amazon.com/cloudformation/home"
+        f"?region={STACK_REGION}#/stacks/create/review?{urlencode(params)}"
+    )
+
+
+def stack_console_url(stack_name: str = ACCESS_STACK_NAME) -> str:
+    """The stack's page in the AWS console, where Update and Delete are."""
+    return (
+        f"https://{STACK_REGION}.console.aws.amazon.com/cloudformation/home"
+        f"?region={STACK_REGION}#/stacks/stackinfo?{urlencode({'stackId': stack_name})}"
+    )
+
+
+def version_tuple(version: str | None) -> tuple[int, ...]:
+    try:
+        return tuple(int(p) for p in (version or "0").split("."))
+    except ValueError:
+        return (0,)
 
 
 def session_name(tenant_id: uuid.UUID, job: str) -> str:
