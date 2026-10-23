@@ -43,13 +43,13 @@ def test_cloudoptics_roles_are_read_only_and_need_the_external_id() -> None:
     resources = template["Resources"]
     assert template["Parameters"]["ExternalId"]["NoEcho"] is True
     for name, role_name in (
-        ("BillingRole", "CloudopticsBillingReadOnly"),
-        ("ResourceRole", "CloudopticsResourceReadOnly"),
+        ("BillingRole", aws.ACCESS_BILLING_ROLE_NAME),
+        ("ResourceRole", aws.ACCESS_RESOURCE_ROLE_NAME),
     ):
         role = resources[name]
         props = role["Properties"]
         assert props["RoleName"] == role_name
-        assert role["DependsOn"] == "CleanUp"  # the old stacks with these names go first
+        assert role["DependsOn"] == "CleanUp"
         assert props["MaxSessionDuration"] == 3600
         [trust] = props["AssumeRolePolicyDocument"]["Statement"]
         assert trust["Condition"]["StringEquals"]["sts:ExternalId"] == {"Ref": "ExternalId"}
@@ -61,6 +61,27 @@ def test_cloudoptics_roles_are_read_only_and_need_the_external_id() -> None:
                     assert service not in {"iam", "sts", "secretsmanager", "ssm", "kms"}, action
                     assert not verb.startswith(WRITE_VERBS), action
                     assert verb != "*", action
+
+
+def test_roles_do_not_clash_with_the_older_stacks() -> None:
+    """CloudFormation checks role names before any step runs, so the old roles still exist."""
+    new = {
+        load("cloudoptics-access.yaml")["Resources"][r]["Properties"]["RoleName"]
+        for r in ("BillingRole", "ResourceRole")
+    }
+    old = {
+        load("billing-role.yaml")["Resources"]["BillingRole"]["Properties"]["RoleName"],
+        load("resource-role.yaml")["Parameters"]["RoleName"]["Default"],
+    }
+    assert new.isdisjoint(old)
+    assert (
+        aws.ACCESS_RESOURCE_ROLE_NAME
+        in load("resource-role.yaml")["Parameters"]["RoleName"]["AllowedValues"]
+    )
+    assert aws.billing_role_arn("1" * 12, aws.ACCESS_STACK_NAME).endswith(
+        "/CloudopticsBillingReader"
+    )
+    assert aws.resource_role_arn("1" * 12, aws.STACK_NAME).endswith("/CloudopticsResourceReadOnly")
 
 
 def test_setup_role_writes_only_to_cloudoptics_resources() -> None:
@@ -274,6 +295,7 @@ def test_management_account_rolls_the_role_out_to_members(setup_step: Any) -> No
     assert params == {
         "ExternalId": PROPS["ExternalId"],
         "CloudopticsPrincipalArn": PROPS["CloudopticsPrincipalArn"],
+        "RoleName": aws.ACCESS_RESOURCE_ROLE_NAME,
     }
     assert calls["create_stack_instances"]["DeploymentTargets"] == {
         "OrganizationalUnitIds": ["r-ab12"]

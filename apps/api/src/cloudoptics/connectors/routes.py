@@ -406,7 +406,7 @@ async def scan_resources(
     checked: list[AccountAccess] = []
     for account_id in account_ids:
         error = await run_in_threadpool(
-            check_access, factory, account_id, external_id, access.tenant_id
+            check_access, factory, account_id, external_id, access.tenant_id, row.stack_name
         )
         checked.append(AccountAccess(aws_account_id=account_id, access=error is None, error=error))
     if not any(a.access for a in checked):

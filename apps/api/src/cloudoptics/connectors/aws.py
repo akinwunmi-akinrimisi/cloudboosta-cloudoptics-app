@@ -22,6 +22,10 @@ STACKSET_STACK_NAME = "cloudoptics-resource-stackset"
 ACCESS_STACK_NAME = "cloudoptics-access"
 ACCESS_TEMPLATE_VERSION = "2.0.0"
 LEGACY_STACK_NAMES = (STACK_NAME, RESOURCE_STACK_NAME, STACKSET_STACK_NAME)
+# The single stack's roles have their own names: CloudFormation refuses to create a stack whose
+# named roles already exist, and the older stacks' roles are only removed once it is running.
+ACCESS_BILLING_ROLE_NAME = "CloudopticsBillingReader"
+ACCESS_RESOURCE_ROLE_NAME = "CloudopticsResourceReader"
 
 
 def new_external_id() -> str:
@@ -29,8 +33,15 @@ def new_external_id() -> str:
     return secrets.token_urlsafe(32)
 
 
-def billing_role_arn(aws_account_id: str) -> str:
-    return f"arn:aws:iam::{aws_account_id}:role/{BILLING_ROLE_NAME}"
+def billing_role_arn(aws_account_id: str, stack_name: str | None = None) -> str:
+    name = ACCESS_BILLING_ROLE_NAME if stack_name == ACCESS_STACK_NAME else BILLING_ROLE_NAME
+    return f"arn:aws:iam::{aws_account_id}:role/{name}"
+
+
+def resource_role_arn(aws_account_id: str, stack_name: str | None = None) -> str:
+    """Member accounts get the role from the connection's stack, so it has the same name."""
+    name = ACCESS_RESOURCE_ROLE_NAME if stack_name == ACCESS_STACK_NAME else RESOURCE_ROLE_NAME
+    return f"arn:aws:iam::{aws_account_id}:role/{name}"
 
 
 def quick_create_url(

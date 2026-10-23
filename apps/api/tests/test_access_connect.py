@@ -86,7 +86,7 @@ async def test_the_stack_reports_its_account_and_the_connection_is_checked(
     assert c["stackName"] == "cloudoptics-access"
     assert c["stackVersion"] == "2.0.0"
     assert c["status"] == "healthy"  # validated straight away (inline jobs in tests)
-    assert fake_aws.calls[-1][0] == f"arn:aws:iam::{acct}:role/CloudopticsBillingReadOnly"
+    assert fake_aws.calls[-1][0] == f"arn:aws:iam::{acct}:role/CloudopticsBillingReader"
 
     # The setup step may call again (an update): same connection, no duplicate.
     again = await client.post(

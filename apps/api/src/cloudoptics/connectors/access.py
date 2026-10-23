@@ -169,7 +169,7 @@ async def _connection_from_intent(
         "t": body.tenant_id,
         "acct": body.account_id,
         "type": "management" if body.management else "standalone",
-        "arn": aws.billing_role_arn(body.account_id),
+        "arn": aws.billing_role_arn(body.account_id, body.stack_name),
         "ext": bytes(intent.external_id_enc),
         "stack": body.stack_name,
         "by": created_by,
@@ -300,7 +300,8 @@ async def stack_callback(body: StackCallback, session: Session) -> CallbackResul
 
     await session.execute(
         text(
-            "UPDATE cloud_connection SET account_type = :type, stack_name = :stack, "
+            "UPDATE cloud_connection SET account_type = :type, role_arn = :arn, "
+            "stack_name = :stack, "
             "stack_version = :version, create_cur_export = true, "
             "cur_bucket = COALESCE(:bucket, cur_bucket), "
             "cur_prefix = COALESCE(:prefix, cur_prefix), "
@@ -309,6 +310,7 @@ async def stack_callback(body: StackCallback, session: Session) -> CallbackResul
         ),
         {
             "type": "management" if body.management else "standalone",
+            "arn": aws.billing_role_arn(body.account_id, body.stack_name),
             "stack": body.stack_name,
             "version": body.template_version,
             "bucket": body.cur_bucket,
