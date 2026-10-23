@@ -387,6 +387,30 @@ export class DemoApi implements Api {
       ])
     }
     const all = Object.values(this.state.connections).flat()
+    const own = (this.state.connections[tenantId] ?? []).find((c) => c.awsAccountId === body.awsAccountId)
+    if (own && own.status !== 'disconnected') {
+      throw new ApiError(
+        409,
+        'This AWS account is already connected to this workspace. Use Set up again or Disconnect on the Connections page.',
+      )
+    }
+    if (own) {
+      // Reconnect: same connection, fresh External ID, back to pending.
+      Object.assign(own, {
+        accountType: body.accountType,
+        createCurExport: body.createCurExport,
+        status: 'pending',
+        curBucket: null,
+        curPrefix: null,
+        curExportArn: null,
+        permissionChecks: [],
+        lastError: null,
+        lastValidatedAt: null,
+      })
+      this.state.externalIds[own.id] = externalId()
+      this.save()
+      return this.setup(own)
+    }
     if (all.some((c) => c.awsAccountId === body.awsAccountId && c.status !== 'disconnected')) {
       throw new ApiError(409, 'This AWS account is already connected to a Cloudoptics workspace.')
     }
@@ -409,6 +433,12 @@ export class DemoApi implements Api {
     this.state.externalIds[conn.id] = externalId()
     this.save()
     return this.setup(conn)
+  }
+
+  async disconnectConnection(tenantId: string, connectionId: string): Promise<void> {
+    await this.tick()
+    this.connection(tenantId, connectionId).status = 'disconnected'
+    this.save()
   }
 
   async getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup> {

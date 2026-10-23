@@ -1,3 +1,4 @@
+import secrets
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -194,6 +195,44 @@ async def test_disconnect(client: AsyncClient, login) -> None:
     assert r.status_code == 204
     conn = (await client.get(f"/v1/tenants/{tenant}/connections/{cid}", headers=headers)).json()
     assert conn["status"] == "disconnected"
+
+
+async def test_reconnect_reuses_the_connection_with_a_new_external_id(
+    client: AsyncClient, login, fake_aws, owner_sql
+) -> None:
+    tenant, headers = await workspace(client, login)
+    account = "".join(secrets.choice("0123456789") for _ in range(12))
+    base = f"/v1/tenants/{tenant}/connections"
+    first = (await client.post(base, json={"awsAccountId": account}, headers=headers)).json()
+    cid = first["connection"]["id"]
+    fake_aws.clients = healthy_clients(account)
+    await client.post(f"{base}/{cid}/validate", headers=headers)
+
+    # Still connected: connecting it again is refused with a pointer to the fix.
+    again = await client.post(base, json={"awsAccountId": account}, headers=headers)
+    assert again.status_code == 409 and "Set up again" in again.json()["title"]
+
+    assert (await client.delete(f"{base}/{cid}", headers=headers)).status_code == 204
+    r = await client.post(
+        base, json={"awsAccountId": account, "accountType": "standalone"}, headers=headers
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["connection"]["id"] == cid
+    assert body["connection"]["status"] == "pending"
+    assert body["connection"]["accountType"] == "standalone"
+    assert body["connection"]["permissionChecks"] == []
+    assert body["externalId"] != first["externalId"]
+    assert owner_sql("SELECT health FROM cloud_connection WHERE id = %s", cid) == [(None,)]
+    setup = (await client.get(f"{base}/{cid}/setup", headers=headers)).json()
+    assert setup["externalId"] == body["externalId"]
+    actions = [
+        e["action"]
+        for e in (await client.get(f"/v1/tenants/{tenant}/audit-log", headers=headers)).json()[
+            "entries"
+        ]
+    ]
+    assert actions[:2] == ["connection.reconnected", "connection.disconnected"]
 
 
 async def test_rejects_bad_account_ids(client: AsyncClient, login) -> None:

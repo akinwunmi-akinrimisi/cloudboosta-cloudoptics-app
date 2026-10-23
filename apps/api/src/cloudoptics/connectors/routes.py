@@ -22,7 +22,7 @@ from cloudoptics.connectors.service import (
     get_connection,
     run_validation,
 )
-from cloudoptics.identity.deps import AdminAccess, Session, ViewerAccess
+from cloudoptics.identity.deps import AdminAccess, Session, TenantAccess, ViewerAccess
 from cloudoptics.notifications.alerts import send_connection_alert
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.ids import uuid7
@@ -123,6 +123,20 @@ async def create_connection(
     body: ConnectionCreate, request: Request, access: AdminAccess, session: Session
 ) -> ConnectionSetup:
     external_id = aws.new_external_id()
+    existing = (
+        await session.execute(
+            text("SELECT id, status FROM cloud_connection WHERE aws_account_id = :acct"),
+            {"acct": body.aws_account_id},
+        )
+    ).one_or_none()
+    if existing is not None and existing.status != "disconnected":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This AWS account is already connected to this workspace. Use Set up again or "
+            "Disconnect on the Connections page.",
+        )
+    if existing is not None:
+        return await _reconnect(existing.id, body, external_id, request, access, session)
     connection_id = uuid7()
     try:
         async with session.begin_nested():
@@ -158,6 +172,48 @@ async def create_connection(
         action="connection.created",
         target_type="cloud_connection",
         target_id=str(connection_id),
+        after={"awsAccountId": body.aws_account_id, "accountType": body.account_type},
+    )
+    return _setup(await _load(session, connection_id), external_id)
+
+
+async def _reconnect(
+    connection_id: uuid.UUID,
+    body: ConnectionCreate,
+    external_id: str,
+    request: Request,
+    access: TenantAccess,
+    session: Session,
+) -> ConnectionSetup:
+    """A disconnected account connected again: same row (its cost history stays), fresh
+    External ID and settings, back to pending until the new stack is checked."""
+    await session.execute(
+        text(
+            "UPDATE cloud_connection SET status = 'pending', health = NULL, account_type = :type, "
+            "role_arn = :arn, external_id_enc = :ext, stack_name = :stack, "
+            "create_cur_export = :cur, cur_bucket = :bucket, cur_prefix = NULL, "
+            "cur_region = NULL, cur_export_arn = NULL, permission_checks = '[]', "
+            "last_error = NULL, last_validated_at = NULL, created_by = :by WHERE id = :id"
+        ),
+        {
+            "id": connection_id,
+            "type": body.account_type,
+            "arn": aws.billing_role_arn(body.aws_account_id),
+            "ext": get_encryptor().encrypt(external_id, access.tenant_id),
+            "stack": aws.STACK_NAME,
+            "cur": body.create_cur_export and not body.existing_cur_bucket_name,
+            "bucket": body.existing_cur_bucket_name,
+            "by": access.user.id,
+        },
+    )
+    await audit.record(
+        session,
+        tenant_id=access.tenant_id,
+        actor=user_actor(request, access.user.id),
+        action="connection.reconnected",
+        target_type="cloud_connection",
+        target_id=str(connection_id),
+        before={"status": "disconnected"},
         after={"awsAccountId": body.aws_account_id, "accountType": body.account_type},
     )
     return _setup(await _load(session, connection_id), external_id)
@@ -231,7 +287,15 @@ async def disconnect(
 ) -> Response:
     row = await _load(session, connection_id)
     await session.execute(
-        text("UPDATE cloud_connection SET status = 'disconnected' WHERE id = :c"),
+        text("UPDATE cloud_connection SET status = 'disconnected', health = NULL WHERE id = :c"),
+        {"c": connection_id},
+    )
+    # Its open recommendations can no longer be checked or verified.
+    await session.execute(
+        text(
+            "UPDATE recommendation SET status = 'expired' WHERE status IN ('new', 'assigned', "
+            "'in_progress') AND resource_ref IN (SELECT id FROM resource WHERE connection_id = :c)"
+        ),
         {"c": connection_id},
     )
     await audit.record(

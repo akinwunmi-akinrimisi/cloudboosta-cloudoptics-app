@@ -294,6 +294,7 @@ export interface Api {
   createConnection(tenantId: string, body: ConnectionCreate): Promise<ConnectionSetup>
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
+  disconnectConnection(tenantId: string, connectionId: string): Promise<void>
   costSummary(tenantId: string): Promise<CostSummary>
   costDaily(tenantId: string, days?: number): Promise<DailyCosts>
   costBreakdown(tenantId: string, dimension: CostDimension, limit?: number): Promise<CostBreakdown>

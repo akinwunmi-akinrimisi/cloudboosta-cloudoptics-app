@@ -1,12 +1,12 @@
-import { Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
-import type { CostDimension, CostSummary, CurrentRate, RecommendationSummary } from '../api/types'
+import type { Connection, CostDimension, CostSummary, CurrentRate, RecommendationSummary } from '../api/types'
 import { DailySpendChart, ShareList } from '../components/charts'
-import { Alert, Card, StatusPill, cx } from '../components/ui'
+import { Alert, Button, Card, StatusPill, cx } from '../components/ui'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
 
@@ -299,7 +299,8 @@ function rateTile(currency: string, current: CurrentRate | undefined): { label: 
 }
 
 export function Connections() {
-  const { tenantId, connections } = useWorkspace()
+  const { me, tenantId, connections } = useWorkspace()
+  const isAdmin = me?.memberships.find((m) => m.tenantId === tenantId)?.role === 'admin'
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -329,7 +330,8 @@ export function Connections() {
             </div>
             <StatusPill status={c.status} />
           </div>
-          {c.permissionChecks.length > 0 && (
+          {isAdmin && tenantId !== null && <ConnectionActions connection={c} tenantId={tenantId} />}
+          {c.status !== 'disconnected' && c.permissionChecks.length > 0 && (
             <ul className="mt-4 divide-y divide-border">
               {c.permissionChecks.map((check) => (
                 <li key={check.id} className="flex items-start justify-between gap-4 py-2">
@@ -345,6 +347,93 @@ export function Connections() {
         </Card>
       ))}
       {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}
+    </div>
+  )
+}
+
+/** Check again, set the stack up again, disconnect, or reconnect (admins). */
+function ConnectionActions({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const navigate = useNavigate()
+  const [confirming, setConfirming] = useState(false)
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['connections', tenantId] })
+    void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
+  }
+  const check = useMutation({ mutationFn: () => api.validateConnection(tenantId, c.id), onSettled: refresh })
+  const disconnect = useMutation({
+    mutationFn: () => api.disconnectConnection(tenantId, c.id),
+    onSuccess: () => setConfirming(false),
+    onSettled: refresh,
+  })
+  const reconnect = useMutation({
+    mutationFn: () =>
+      api.createConnection(tenantId, {
+        awsAccountId: c.awsAccountId,
+        accountType: c.accountType,
+        createCurExport: c.createCurExport,
+      }),
+    onSuccess: (setup) => {
+      refresh()
+      void navigate({ to: '/onboarding', search: { connection: setup.connection.id } })
+    },
+  })
+  const error = check.error ?? disconnect.error ?? reconnect.error
+  const busy = check.isPending || disconnect.isPending || reconnect.isPending
+
+  if (c.status === 'disconnected') {
+    return (
+      <div className="mt-4 flex flex-col gap-2">
+        <p className="text-sm text-secondary">
+          Disconnected. Cloudoptics no longer reads this account; past costs stay.
+        </p>
+        {error && <Alert tone="error">{error.message}</Alert>}
+        <div>
+          <Button variant="secondary" disabled={busy} onClick={() => reconnect.mutate()}>
+            Reconnect
+          </Button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-4 flex flex-col gap-3">
+      {error && <Alert tone="error">{error.message}</Alert>}
+      {confirming ? (
+        <div className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
+          <p>
+            Disconnect AWS account {c.awsAccountId}? Cloudoptics stops reading it and its open recommendations close.
+            Past costs stay. Afterwards, delete the{' '}
+            <code className="font-mono text-xs">cloudoptics-billing-access</code> stack in AWS (us-east-1) to remove our
+            access completely.
+          </p>
+          <div className="flex gap-2">
+            <Button disabled={busy} onClick={() => disconnect.mutate()}>
+              Disconnect
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" disabled={busy || c.status === 'validating'} onClick={() => check.mutate()}>
+            {check.isPending || c.status === 'validating' ? 'Checking…' : 'Check again'}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => void navigate({ to: '/onboarding', search: { connection: c.id } })}
+          >
+            Set up again
+          </Button>
+          <Button variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
+            Disconnect…
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router'
-import { useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, Download, ExternalLink } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useState } from 'react'
@@ -60,14 +60,15 @@ function CopyValue({ label, value }: { label: string; value: string }) {
   )
 }
 
-export function Onboarding({ startAt = 0 }: { startAt?: number }) {
+/** ``connectionId`` reopens the deploy step for an existing connection (set up again). */
+export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; connectionId?: string }) {
   const api = useApi()
   const qc = useQueryClient()
   const navigate = useNavigate()
   const { data: me } = useMe()
   const [currentTenant] = useCurrentTenantId(me)
-  const [step, setStep] = useState(startAt)
-  const [tenantId, setTenantId] = useState<string | null>(startAt > 0 ? currentTenant : null)
+  const [step, setStep] = useState(connectionId ? 2 : startAt)
+  const [tenantId, setTenantId] = useState<string | null>(startAt > 0 || connectionId ? currentTenant : null)
   const [setup, setSetup] = useState<ConnectionSetup | null>(null)
   const [result, setResult] = useState<Connection | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -81,6 +82,13 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
   const [accountId, setAccountId] = useState('')
   const [accountType, setAccountType] = useState<'management' | 'standalone'>('management')
   const [createExport, setCreateExport] = useState(true)
+
+  const existing = useQuery({
+    queryKey: ['setup', currentTenant, connectionId],
+    queryFn: () => api.getSetup(currentTenant as string, connectionId as string),
+    enabled: Boolean(connectionId && currentTenant),
+  })
+  const active = setup ?? existing.data ?? null
 
   async function run(action: () => Promise<void>) {
     setBusy(true)
@@ -127,10 +135,11 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
   }
 
   const check = () => {
-    if (!tenantId || !setup) return
+    const tid = tenantId ?? currentTenant
+    if (!tid || !active) return
     setStep(3)
     void run(async () => {
-      setResult(await api.validateConnection(tenantId, setup.connection.id))
+      setResult(await api.validateConnection(tid, active.connection.id))
       await qc.invalidateQueries({ queryKey: ['connections'] })
     })
   }
@@ -186,8 +195,7 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
         <Card>
           <h1 className="text-2xl font-semibold">Connect your AWS account</h1>
           <p className="mt-1 text-sm text-secondary">
-            Cloudoptics only reads billing data. It never gets permission to change anything in your
-            account.
+            Cloudoptics only reads billing data. It never gets permission to change anything in your account.
           </p>
           <form className="mt-6 flex flex-col gap-4" onSubmit={connect}>
             <Field
@@ -241,24 +249,46 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
         </Card>
       )}
 
-      {step === 2 && setup && (
+      {step === 2 && !active && (
+        <Card>
+          {existing.error ? (
+            <Alert tone="error">
+              {existing.error instanceof ApiError ? existing.error.message : 'Could not load this connection.'}
+            </Alert>
+          ) : (
+            <p className="text-sm text-secondary">Loading…</p>
+          )}
+        </Card>
+      )}
+
+      {step === 2 && active && (
         <Card>
           <h1 className="text-2xl font-semibold">Deploy the read-only role</h1>
-          {setup.quickCreateUrl ? (
+          {connectionId && (
+            <div className="mt-3">
+              <Alert tone="info">
+                Setting up AWS account {active.connection.awsAccountId} again. If an old{' '}
+                <code className="font-mono text-xs">cloudoptics-billing-access</code> stack is still in the account,
+                delete it first: the new stack creates a role with the same name.
+              </Alert>
+            </div>
+          )}
+          {active.quickCreateUrl ? (
             <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-secondary">
-              <li>Sign in to AWS account {setup.connection.awsAccountId} as an administrator.</li>
+              <li>Sign in to AWS account {active.connection.awsAccountId} as an administrator.</li>
               <li>
-                Open the CloudFormation link below. It opens in <strong>us-east-1</strong> with the
-                values filled in.
+                Open the CloudFormation link below. It opens in <strong>us-east-1</strong> with the values filled in.
               </li>
-              <li>Tick the IAM acknowledgement box and choose <strong>Create stack</strong>.</li>
+              <li>
+                Tick the IAM acknowledgement box and choose <strong>Create stack</strong>.
+              </li>
               <li>Wait for CREATE_COMPLETE (about 2 minutes), then come back here.</li>
             </ol>
           ) : (
             <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-secondary">
               <li>Download the template below.</li>
               <li>
-                Sign in to AWS account {setup.connection.awsAccountId} as an administrator and open{' '}
+                Sign in to AWS account {active.connection.awsAccountId} as an administrator and open{' '}
                 <a
                   className="text-accent underline"
                   href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create"
@@ -270,20 +300,20 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
                 .
               </li>
               <li>
-                Choose <strong>Upload a template file</strong>, select the downloaded file, and name
-                the stack <code className="font-mono text-xs">cloudoptics-billing-access</code>.
+                Choose <strong>Upload a template file</strong>, select the downloaded file, and name the stack{' '}
+                <code className="font-mono text-xs">cloudoptics-billing-access</code>.
               </li>
               <li>Paste the External ID and the Cloudoptics principal shown below into the parameters.</li>
               <li>
-                Tick the IAM acknowledgement box, choose <strong>Submit</strong>, wait for
-                CREATE_COMPLETE (about 2 minutes), then come back here.
+                Tick the IAM acknowledgement box, choose <strong>Submit</strong>, wait for CREATE_COMPLETE (about 2
+                minutes), then come back here.
               </li>
             </ol>
           )}
           <div className="mt-6 flex flex-col gap-4">
-            {setup.quickCreateUrl ? (
+            {active.quickCreateUrl ? (
               <a
-                href={setup.quickCreateUrl}
+                href={active.quickCreateUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
@@ -292,7 +322,7 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
               </a>
             ) : (
               <a
-                href={setup.templateDownloadUrl}
+                href={active.templateDownloadUrl}
                 download="cloudoptics-billing-role.yaml"
                 target="_blank"
                 rel="noreferrer"
@@ -301,18 +331,18 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
                 Download template <Download size={16} />
               </a>
             )}
-            <CopyValue label="External ID" value={setup.externalId} />
-            {setup.quickCreateUrl ? (
+            <CopyValue label="External ID" value={active.externalId} />
+            {active.quickCreateUrl ? (
               <details className="text-sm">
                 <summary className="cursor-pointer text-secondary">Set it up by hand instead</summary>
                 <div className="mt-3 flex flex-col gap-3">
-                  <CopyValue label="Template URL" value={setup.templateUrl} />
-                  <CopyValue label="Cloudoptics principal" value={setup.principalArn} />
-                  <CopyValue label="Role we will assume" value={setup.connection.roleArn} />
+                  <CopyValue label="Template URL" value={active.templateUrl} />
+                  <CopyValue label="Cloudoptics principal" value={active.principalArn} />
+                  <CopyValue label="Role we will assume" value={active.connection.roleArn} />
                 </div>
               </details>
             ) : (
-              <CopyValue label="Cloudoptics principal" value={setup.principalArn} />
+              <CopyValue label="Cloudoptics principal" value={active.principalArn} />
             )}
           </div>
           <div className="mt-6 flex justify-end">
@@ -349,9 +379,14 @@ export function Onboarding({ startAt = 0 }: { startAt?: number }) {
               </ul>
               <div className="mt-6 flex justify-end gap-2">
                 {result.status !== 'healthy' && (
-                  <Button variant="secondary" onClick={check} disabled={busy}>
-                    Check again
-                  </Button>
+                  <>
+                    <Button variant="ghost" onClick={() => setStep(2)} disabled={busy}>
+                      Back to the stack setup
+                    </Button>
+                    <Button variant="secondary" onClick={check} disabled={busy}>
+                      Check again
+                    </Button>
+                  </>
                 )}
                 <Button onClick={() => void navigate({ to: '/overview' })}>Go to my workspace</Button>
               </div>
