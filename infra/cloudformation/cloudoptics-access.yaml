@@ -202,6 +202,7 @@ Resources:
               "FailureTolerancePercentage": 100,
           }
           DENIED = ("AccessDenied", "AccessDeniedException")
+          ORG_ACCESS_TRIES = 12  # about 6 minutes, inside the function's 15
 
 
           class _Retrying:
@@ -376,16 +377,14 @@ Resources:
 
 
           def trusted_access():
-              """Turn on StackSets trusted access in AWS Organizations, if it is off."""
+              """Turn on StackSets trusted access in AWS Organizations.
+
+              Always asked for, even when it reads as on: the status can say ENABLED before
+              StackSets will create a service-managed stack set, and asking again is harmless.
+              """
               cfn = client("cloudformation")
-              if cfn.describe_organizations_access()["Status"] == "ENABLED":
-                  return
               try:
                   cfn.activate_organizations_access()
-                  for _ in range(30):
-                      if cfn.describe_organizations_access()["Status"] == "ENABLED":
-                          break
-                      time.sleep(5)
               except ClientError as exc:
                   if _code(exc) not in DENIED:
                       raise
@@ -400,7 +399,27 @@ Resources:
                   client("organizations").enable_aws_service_access(
                       ServicePrincipal="member.org.stacksets.cloudformation.amazonaws.com"
                   )
-              time.sleep(15)  # let the new access reach the StackSets service
+              for _ in range(30):
+                  if cfn.describe_organizations_access()["Status"] == "ENABLED":
+                      break
+                  time.sleep(5)
+
+
+          def _no_org_access(exc):
+              return _code(exc) == "ValidationError" and "organizations access" in str(exc).lower()
+
+
+          def with_org_access(call, tries=ORG_ACCESS_TRIES):
+              """StackSets can take minutes to see newly enabled trusted access: ask again and wait."""
+              for attempt in range(tries):
+                  try:
+                      return call()
+                  except ClientError as exc:
+                      if not _no_org_access(exc) or attempt == tries - 1:
+                          raise
+                  trusted_access()
+                  time.sleep(30)
+              return None
 
 
           def root_id():
@@ -441,33 +460,39 @@ Resources:
                   exists = False
               if exists:
                   wait_idle(cfn)
-                  op = cfn.update_stack_set(
-                      StackSetName=STACKSET,
-                      TemplateURL=props["ResourceTemplateUrl"],
-                      Parameters=params,
-                      Capabilities=["CAPABILITY_NAMED_IAM"],
-                      OperationPreferences=PREFS,
+                  op = with_org_access(
+                      lambda: cfn.update_stack_set(
+                          StackSetName=STACKSET,
+                          TemplateURL=props["ResourceTemplateUrl"],
+                          Parameters=params,
+                          Capabilities=["CAPABILITY_NAMED_IAM"],
+                          OperationPreferences=PREFS,
+                      )
                   )
                   wait_operation(cfn, op["OperationId"])
                   if cfn.list_stack_instances(StackSetName=STACKSET)["Summaries"]:
                       return
               else:
-                  cfn.create_stack_set(
-                      StackSetName=STACKSET,
-                      Description="Read-only resource role for Cloudoptics in every member account.",
-                      TemplateURL=props["ResourceTemplateUrl"],
-                      Parameters=params,
-                      Capabilities=["CAPABILITY_NAMED_IAM"],
-                      PermissionModel="SERVICE_MANAGED",
-                      AutoDeployment={"Enabled": True, "RetainStacksOnAccountRemoval": False},
-                      ManagedExecution={"Active": True},
+                  with_org_access(
+                      lambda: cfn.create_stack_set(
+                          StackSetName=STACKSET,
+                          Description="Read-only resource role for Cloudoptics in every member account.",
+                          TemplateURL=props["ResourceTemplateUrl"],
+                          Parameters=params,
+                          Capabilities=["CAPABILITY_NAMED_IAM"],
+                          PermissionModel="SERVICE_MANAGED",
+                          AutoDeployment={"Enabled": True, "RetainStacksOnAccountRemoval": False},
+                          ManagedExecution={"Active": True},
+                      )
                   )
               # Not waited for: member accounts show up in Cloudoptics as the rollout reaches them.
-              cfn.create_stack_instances(
-                  StackSetName=STACKSET,
-                  DeploymentTargets={"OrganizationalUnitIds": [root]},
-                  Regions=REGIONS,
-                  OperationPreferences=PREFS,
+              with_org_access(
+                  lambda: cfn.create_stack_instances(
+                      StackSetName=STACKSET,
+                      DeploymentTargets={"OrganizationalUnitIds": [root]},
+                      Regions=REGIONS,
+                      OperationPreferences=PREFS,
+                  )
               )
 
 
@@ -541,10 +566,18 @@ Resources:
                       remove_stackset()
                   callback(kind, props, management)
                   return None
+              rollout = "not an Organization's management account"
               if management:
-                  ensure_stackset(props, root_id())
+                  # Billing and this account's resource role work without it, so a failed rollout
+                  # does not undo the whole stack; updating the stack tries the rollout again.
+                  try:
+                      ensure_stackset(props, root_id())
+                      rollout = "started"
+                  except Exception as exc:
+                      rollout = f"failed: {type(exc).__name__}: {exc}"[:400]
+                      print(f"member rollout {rollout}")
               callback(kind, props, management)
-              return {"Management": str(management).lower()}
+              return {"Management": str(management).lower(), "MemberRollout": rollout}
 
 
           ACTIONS = {"cleanup": cleanup, "bucket": bucket, "setup": setup}
@@ -744,3 +777,6 @@ Outputs:
     Value: !GetAtt CurExport.ExportArn
   OrganizationManagementAccount:
     Value: !GetAtt Setup.Management
+  MemberRollout:
+    Description: The read-only role for member accounts. Update the stack to try again if it failed.
+    Value: !GetAtt Setup.MemberRollout
