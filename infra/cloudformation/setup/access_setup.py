@@ -5,6 +5,7 @@
 #   bucket:  create the bill export bucket, or reuse it when an earlier stack left it behind.
 #   setup:   roll the resource role out to member accounts when this is an Organization's
 #            management account, then tell Cloudoptics the stack is ready (or gone).
+import contextlib
 import json
 import time
 import urllib.error
@@ -16,9 +17,17 @@ from botocore.exceptions import ClientError
 
 STACKSET = "cloudoptics-resource-access"
 # The StackSet stack first: if it cannot be removed, the billing role is still in place.
-OLD_STACKS = ("cloudoptics-resource-stackset", "cloudoptics-resource-access", "cloudoptics-billing-access")
+OLD_STACKS = (
+    "cloudoptics-resource-stackset",
+    "cloudoptics-resource-access",
+    "cloudoptics-billing-access",
+)
 REGIONS = ["us-east-1"]  # IAM is global: one region is enough
-PREFS = {"RegionConcurrencyType": "PARALLEL", "MaxConcurrentPercentage": 100, "FailureTolerancePercentage": 100}
+PREFS = {
+    "RegionConcurrencyType": "PARALLEL",
+    "MaxConcurrentPercentage": 100,
+    "FailureTolerancePercentage": 100,
+}
 DENIED = ("AccessDenied", "AccessDeniedException")
 
 
@@ -91,7 +100,8 @@ def cleanup(kind, props):
             )
         except Exception as exc:
             raise RuntimeError(
-                f"Could not remove the old stack {name}. Delete it in CloudFormation, then try again."
+                f"Could not remove the old stack {name}. "
+                "Delete it in CloudFormation, then try again."
             ) from exc
         removed.append(name)
     return {"Removed": ",".join(removed)}
@@ -105,7 +115,9 @@ def bucket_policy(bucket, account):
             {
                 "Sid": "AllowBcmDataExportsDelivery",
                 "Effect": "Allow",
-                "Principal": {"Service": ["bcm-data-exports.amazonaws.com", "billingreports.amazonaws.com"]},
+                "Principal": {
+                    "Service": ["bcm-data-exports.amazonaws.com", "billingreports.amazonaws.com"]
+                },
                 "Action": ["s3:PutObject", "s3:GetBucketPolicy"],
                 "Resource": arns,
                 "Condition": {
@@ -140,7 +152,9 @@ def bucket(kind, props):
         reused = True
     except ClientError as exc:
         if _code(exc) not in ("404", "NoSuchBucket", "NotFound"):
-            raise RuntimeError(f"The S3 bucket name {name} belongs to another AWS account.") from exc
+            raise RuntimeError(
+                f"The S3 bucket name {name} belongs to another AWS account."
+            ) from exc
         s3.create_bucket(Bucket=name)
         reused = False
     s3.put_public_access_block(
@@ -157,12 +171,21 @@ def bucket(kind, props):
     )
     s3.put_bucket_encryption(
         Bucket=name,
-        ServerSideEncryptionConfiguration={"Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]},
+        ServerSideEncryptionConfiguration={
+            "Rules": [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}]
+        },
     )
     s3.put_bucket_lifecycle_configuration(
         Bucket=name,
         LifecycleConfiguration={
-            "Rules": [{"ID": "expire-old-exports", "Status": "Enabled", "Filter": {"Prefix": ""}, "Expiration": {"Days": 400}}]
+            "Rules": [
+                {
+                    "ID": "expire-old-exports",
+                    "Status": "Enabled",
+                    "Filter": {"Prefix": ""},
+                    "Expiration": {"Days": 400},
+                }
+            ]
         },
     )
     s3.put_bucket_policy(Bucket=name, Policy=json.dumps(bucket_policy(name, props["AccountId"])))
@@ -195,7 +218,9 @@ def trusted_access():
             raise
         # The same result by hand: the StackSets service-linked role, then trusted access.
         try:
-            client("iam").create_service_linked_role(AWSServiceName="stacksets.cloudformation.amazonaws.com")
+            client("iam").create_service_linked_role(
+                AWSServiceName="stacksets.cloudformation.amazonaws.com"
+            )
         except ClientError as iam_exc:
             if _code(iam_exc) != "InvalidInput":  # the role already exists
                 raise
@@ -228,7 +253,10 @@ def ensure_stackset(props, root):
     cfn = client("cloudformation")
     params = [
         {"ParameterKey": "ExternalId", "ParameterValue": props["ExternalId"]},
-        {"ParameterKey": "CloudopticsPrincipalArn", "ParameterValue": props["CloudopticsPrincipalArn"]},
+        {
+            "ParameterKey": "CloudopticsPrincipalArn",
+            "ParameterValue": props["CloudopticsPrincipalArn"],
+        },
     ]
     try:
         cfn.describe_stack_set(StackSetName=STACKSET)
@@ -309,18 +337,19 @@ def callback(kind, props, management):
     error = "no answer"
     for delay in (0, 3, 10):
         time.sleep(delay)
-        request = urllib.request.Request(
-            props["CallbackUrl"], data=body, method="POST", headers={"Content-Type": "application/json"}
+        request = urllib.request.Request(  # noqa: S310 - our https URL
+            props["CallbackUrl"],
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
         )
         try:
             with urllib.request.urlopen(request, timeout=20):  # noqa: S310 - our https URL
                 return
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode(errors="replace")
-            try:
+            with contextlib.suppress(ValueError, AttributeError):
                 detail = json.loads(detail).get("title") or detail
-            except (ValueError, AttributeError):
-                pass
             error = f"HTTP {exc.code} {detail[:300]}"
             if exc.code < 500:
                 break

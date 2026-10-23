@@ -14,7 +14,9 @@ END = "\n  CleanUp:\n"
 def main() -> None:
     text = TEMPLATE.read_text()
     code = (HERE / "access_setup.py").read_text()
-    indented = "".join(f"          {line}" if line.strip() else "\n" for line in code.splitlines(True))
+    indented = "".join(
+        f"          {line}" if line.strip() else "\n" for line in code.splitlines(True)
+    )
     head, rest = text.split(START, 1)
     _, tail = rest.split(END, 1)
     TEMPLATE.write_text(head + START + indented + END + tail)
