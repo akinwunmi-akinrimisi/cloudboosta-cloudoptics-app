@@ -174,6 +174,20 @@ def stack_console_url(stack_name: str = ACCESS_STACK_NAME) -> str:
     )
 
 
+def stack_update_url(template_url: str, stack_name: str = ACCESS_STACK_NAME) -> str:
+    """Opens AWS's Update stack page for the stack with the new template already chosen.
+
+    AWS documents quick-create links for new stacks only; for updates the console takes the
+    same templateURL on its update page. The app keeps the template address on screen too,
+    in case AWS ever stops filling it in.
+    """
+    query = urlencode({"stackId": stack_name, "templateURL": template_url})
+    return (
+        f"https://{STACK_REGION}.console.aws.amazon.com/cloudformation/home"
+        f"?region={STACK_REGION}#/stacks/update/template?{query}"
+    )
+
+
 def version_tuple(version: str | None) -> tuple[int, ...]:
     try:
         return tuple(int(p) for p in (version or "0").split("."))

@@ -91,6 +91,8 @@ export interface ConnectionSetup {
   updateAvailable: boolean
   /** The stack's page in the AWS console (Update and Delete are there). */
   stackConsoleUrl: string
+  /** AWS's Update stack page with the latest template already chosen. */
+  stackUpdateUrl: string
 }
 
 /** A one-click link made before the AWS account is known; the stack reports the account. */
