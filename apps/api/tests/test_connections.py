@@ -244,3 +244,10 @@ async def test_queue_mode_defers_a_job_that_the_worker_completes(
     assert status == "healthy"
     conn = (await client.get(f"/v1/tenants/{tenant}/connections/{cid}", headers=headers)).json()
     assert conn["status"] == "healthy"
+    # A healthy connection with an export queues its first billing ingest straight away.
+    queued = owner_sql(
+        "SELECT task_name FROM procrastinate_jobs WHERE status = 'todo'"
+        " AND args->>'connection_id' = %s ORDER BY id",
+        cid,
+    )
+    assert queued[-1] == ("ingestion:cur.ingest",)
