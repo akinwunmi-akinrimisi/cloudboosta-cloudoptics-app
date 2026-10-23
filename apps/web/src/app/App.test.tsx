@@ -40,24 +40,18 @@ describe('Cloudoptics web app', () => {
     await user.selectOptions(screen.getByLabelText('Country'), 'KE')
     await user.click(screen.getByRole('button', { name: 'Create workspace' }))
 
-    const accountField = await screen.findByLabelText('AWS account ID')
-    await user.type(accountField, '12345')
-    await user.click(screen.getByRole('button', { name: 'Continue' }))
-    expect(await screen.findByText('An AWS account ID has exactly 12 digits')).toBeTruthy()
-
-    await user.clear(accountField)
-    await user.type(accountField, '1234-5678-9012')
-    await user.click(screen.getByRole('button', { name: 'Continue' }))
-
+    // No account ID to type: one link, and the stack reports which account it is in.
+    expect(await screen.findByRole('heading', { name: 'Connect your AWS account' })).toBeTruthy()
+    expect(screen.queryByLabelText('AWS account ID')).toBeNull()
+    // No S3-hosted template in the demo: the template download and the values to copy.
     const download = await screen.findByRole('link', { name: /Download template/ })
-    expect(download.getAttribute('href')).toMatch(/cfn\/billing-role\.yaml$/)
-    expect(screen.getByText('Upload a template file')).toBeTruthy()
-    expect(screen.getByLabelText('Copy External ID')).toBeTruthy()
+    expect(download.getAttribute('href')).toMatch(/cfn\/cloudoptics-access\.yaml$/)
+    expect(screen.getByLabelText('Copy ConnectionRef')).toBeTruthy()
 
-    await user.click(screen.getByRole('button', { name: 'I have deployed the stack' }))
-    expect(await screen.findByText('Healthy')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'I have created the stack' }))
+    expect(await screen.findByRole('heading', { name: 'Connected' })).toBeTruthy()
+    expect(screen.getByText('Healthy')).toBeTruthy()
     expect(screen.getByText('Find the CUR 2.0 export')).toBeTruthy()
-
     await user.click(screen.getByRole('button', { name: 'Go to my workspace' }))
     expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
     await waitFor(() => expect(screen.getByText(/Lagos Ledger · KES · Africa\/Nairobi/)).toBeTruthy())
@@ -258,12 +252,9 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByText('AWS account 343434343434')).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: 'Set up again' }))
-    expect(await screen.findByRole('heading', { name: 'Deploy the read-only role' })).toBeTruthy()
-    expect(screen.getByText(/Setting up AWS account 343434343434 again/)).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: 'I have deployed the stack' }))
-    expect(await screen.findByText('Healthy')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: 'Go to my workspace' }))
-
+    expect(await screen.findByRole('heading', { name: 'Move to the single CloudOptics stack' })).toBeTruthy()
+    expect(screen.getByText(/sign in to AWS account 343434343434/)).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: 'Back to Connections' }))
     await user.click(await screen.findByRole('link', { name: 'Connections' }))
     await user.click(await screen.findByRole('button', { name: 'Disconnect…' }))
     expect(screen.getByText(/Disconnect AWS account 343434343434\?/)).toBeTruthy()
@@ -274,28 +265,26 @@ describe('Cloudoptics web app', () => {
 
     const before = (await api.getSetup(tenant.id, gone!.id)).externalId
     await user.click(screen.getByRole('button', { name: 'Reconnect' }))
-    expect(await screen.findByRole('heading', { name: 'Deploy the read-only role' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Move to the single CloudOptics stack' })).toBeTruthy()
     const [conn] = await api.listConnections(tenant.id)
     expect(conn?.status).toBe('pending')
     expect((await api.getSetup(tenant.id, conn!.id)).externalId).not.toBe(before)
   })
 
-  it('lets admins add resource access from the Connections page', async () => {
-    const { api, tenant, user } = await connectedWorkspace('amara@example.com')
+  it('offers connections on the older stacks a move to the single stack', async () => {
+    const { user } = await connectedWorkspace('amara@example.com')
     await user.click(screen.getByRole('link', { name: 'Connections' }))
-    expect(await screen.findByText('Add resource access for recommendations')).toBeTruthy()
-    expect(screen.getByText(/0 of 1 accounts have it/)).toBeTruthy()
-    // No S3-hosted template in the demo: the template download and the values to paste.
-    expect(await screen.findByRole('link', { name: /Download the template/ })).toBeTruthy()
-    const [conn] = await api.listConnections(tenant.id)
-    expect(screen.getByText((await api.getSetup(tenant.id, conn!.id)).externalId)).toBeTruthy()
-
-    await user.click(screen.getByRole('button', { name: 'Check now' }))
-    expect(await screen.findByText(/Resource access in this account/)).toBeTruthy()
-    expect(screen.queryByText('Add resource access for recommendations')).toBeNull()
+    expect(await screen.findByText('Move to the single CloudOptics stack')).toBeTruthy()
+    expect(screen.getByText(/covers your bill, recommendations and this account/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Move to the single stack' }))
+    expect(await screen.findByRole('heading', { name: 'Move to the single CloudOptics stack' })).toBeTruthy()
+    expect(screen.getByText(/Cloudoptics removes the old stacks for you/i)).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Download template/ }).getAttribute('href')).toMatch(
+      /cloudoptics-access\.yaml$/,
+    )
   })
 
-  it('offers payer accounts one stack for every member account', async () => {
+  it('offers payer accounts on the older stacks the whole organization in one move', async () => {
     const { api } = renderApp('/sign-in')
     await api.signIn('kofi@example.com')
     const tenant = await api.createTenant({ name: 'Accra Apps', countryCode: 'GH' })
@@ -309,8 +298,21 @@ describe('Cloudoptics web app', () => {
     await user.type(await screen.findByLabelText('Work email'), 'kofi@example.com')
     await user.click(screen.getByRole('button', { name: 'Continue' }))
     await user.click(await screen.findByRole('link', { name: 'Connections' }))
-    expect(await screen.findByText('All member accounts at once')).toBeTruthy()
-    expect(screen.getByText(/0 of 4 accounts have it/)).toBeTruthy()
-    expect(await screen.findByRole('link', { name: /Download the StackSet template/ })).toBeTruthy()
+    expect(await screen.findByText(/every account in your organization/)).toBeTruthy()
+  })
+
+  it('shows resource access once on the single stack', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('efua@example.com')
+    const tenant = await api.createTenant({ name: 'Tema Tech', countryCode: 'GH' })
+    const link = await api.createIntent(tenant.id)
+    const intent = await api.getIntent(tenant.id, link.intent.id)
+    expect(intent.status).toBe('connected')
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'efua@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText(/Resource access in this account/)).toBeTruthy()
+    expect(screen.queryByText('Move to the single CloudOptics stack')).toBeNull()
   })
 })

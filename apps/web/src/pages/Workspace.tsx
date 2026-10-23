@@ -7,6 +7,8 @@ import { useApi, useCurrentTenantId, useMe } from '../app/context'
 import type { Connection, CostDimension, CostSummary, CurrentRate, RecommendationSummary } from '../api/types'
 import { DailySpendChart, ShareList } from '../components/charts'
 import { Alert, Button, Card, StatusPill, cx } from '../components/ui'
+import { ACCESS_STACK_NAME } from '../api/types'
+import { CopyValue } from './Onboarding'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
 
@@ -257,7 +259,7 @@ function savingsTile(
     return {
       label,
       value: '—',
-      note: 'Needs the resource read-only stack (see Connections)',
+      note: 'Appears after the first resource scan (see Connections)',
     }
   }
   if (summary.openCount === 0) return { label, value: money(0), note: 'No open recommendations' }
@@ -344,9 +346,18 @@ export function Connections() {
               ))}
             </ul>
           )}
-          {isAdmin && tenantId !== null && (c.status === 'healthy' || c.status === 'degraded') && (
-            <ResourceAccess connection={c} tenantId={tenantId} />
+          {isAdmin && tenantId !== null && c.status !== 'disconnected' && c.stackName !== ACCESS_STACK_NAME && (
+            <MoveToSingleStack connection={c} />
           )}
+          {isAdmin &&
+            tenantId !== null &&
+            c.stackName === ACCESS_STACK_NAME &&
+            (c.status === 'healthy' || c.status === 'degraded') && (
+              <>
+                <StackUpdate connection={c} tenantId={tenantId} />
+                <ResourceAccess connection={c} tenantId={tenantId} />
+              </>
+            )}
         </Card>
       ))}
       {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}
@@ -407,11 +418,12 @@ function ConnectionActions({ connection: c, tenantId }: { connection: Connection
         <div className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
           <p>
             Disconnect AWS account {c.awsAccountId}? Cloudoptics stops reading it and its open recommendations close.
-            Past costs stay. Afterwards, delete the{' '}
-            <code className="font-mono text-xs">cloudoptics-billing-access</code> stack in AWS (us-east-1) to remove our
-            access completely. AWS keeps the S3 bucket{' '}
-            <code className="font-mono text-xs">cloudoptics-cur-{c.awsAccountId}</code>; empty and delete it too before
-            you connect this account again.
+            Past costs stay. To remove our access completely, also delete the{' '}
+            <code className="font-mono text-xs">{c.stackName}</code> stack in{' '}
+            <a className="text-accent underline" href={STACKS_URL} target="_blank" rel="noreferrer">
+              CloudFormation
+            </a>
+            . AWS keeps the S3 bucket with your bills, and Cloudoptics reuses it if you connect again.
           </p>
           <div className="flex gap-2">
             <Button disabled={busy} onClick={() => disconnect.mutate()}>
@@ -443,7 +455,70 @@ function ConnectionActions({ connection: c, tenantId }: { connection: Connection
   )
 }
 
-/** Add the resource read-only stack from here: one-click link, then Check now (admins). */
+const STACKS_URL =
+  'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks?filteringText=cloudoptics'
+
+/** Connections still on the older billing and resource stacks: one stack replaces them. */
+function MoveToSingleStack({ connection: c }: { connection: Connection }) {
+  const navigate = useNavigate()
+  return (
+    <div className="mt-4 flex flex-col gap-3 rounded-sm bg-accent-soft p-3 text-sm">
+      <div>
+        <p className="font-medium">Move to the single CloudOptics stack</p>
+        <p className="text-secondary">
+          One stack now covers your bill, recommendations and{' '}
+          {c.accountType === 'management' ? 'every account in your organization' : 'this account'}, and gets future
+          updates in place. It takes one click in AWS, Cloudoptics removes the old stacks for you, and your costs and
+          history stay.
+        </p>
+      </div>
+      <div>
+        <Button onClick={() => void navigate({ to: '/onboarding', search: { connection: c.id } })}>
+          Move to the single stack
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** A newer version of the single stack: update it in place in AWS. */
+function StackUpdate({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
+  const api = useApi()
+  const setup = useQuery({ queryKey: ['setup', tenantId, c.id], queryFn: () => api.getSetup(tenantId, c.id) })
+  const s = setup.data
+  if (!s?.updateAvailable) return null
+  return (
+    <div className="mt-4 flex flex-col gap-3 rounded-sm bg-accent-soft p-3 text-sm">
+      <div>
+        <p className="font-medium">Update Cloudoptics access to version {s.latestStackVersion}</p>
+        <p className="text-secondary">
+          A newer version of the {ACCESS_STACK_NAME} stack is ready. Until you update, everything that works today keeps
+          working.
+        </p>
+      </div>
+      <ol className="list-decimal space-y-1 pl-5 text-secondary">
+        <li>Open the stack in AWS, signed in to account {c.awsAccountId}, and choose <strong>Update</strong>.</li>
+        <li>
+          Choose <strong>Replace existing template</strong> and paste the template address below.
+        </li>
+        <li>Choose Next until the last page, tick the box that starts “I acknowledge” and choose Submit.</li>
+      </ol>
+      <CopyValue label="Template address" value={s.accessTemplateUrl} />
+      <div>
+        <a
+          href={s.stackConsoleUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
+        >
+          Open the stack in AWS <ExternalLink size={16} />
+        </a>
+      </div>
+    </div>
+  )
+}
+
+/** Resource access on the single stack: member accounts get it on their own; Check now. */
 function ResourceAccess({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
   const api = useApi()
   const qc = useQueryClient()
@@ -453,11 +528,6 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
   })
   const accounts = (list.data?.accounts ?? []).filter((a) => a.connectionId === c.id && a.orgStatus !== 'NOT_LISTED')
   const missing = accounts.filter((a) => !a.resourceAccess)
-  const setup = useQuery({
-    queryKey: ['setup', tenantId, c.id],
-    queryFn: () => api.getSetup(tenantId, c.id),
-    enabled: missing.length > 0,
-  })
   const scan = useMutation({
     mutationFn: () => api.scanResources(tenantId, c.id),
     onSuccess: () => {
@@ -476,115 +546,30 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
       </p>
     )
   }
-  const checking = scan.isPending
   const refused = scan.data?.accounts.filter((a) => !a.access) ?? []
-  const s = setup.data
-  const membersMissing = c.accountType === 'management' && missing.some((a) => a.accountType === 'member')
   return (
     <div className="mt-4 flex flex-col gap-3 rounded-sm bg-surface-2 p-3 text-sm">
       <div>
-        <p className="font-medium">Add resource access for recommendations</p>
+        <p className="font-medium">
+          Resource access in {accounts.length - missing.length} of {accounts.length} accounts
+        </p>
         <p className="text-secondary">
-          {accounts.length - missing.length} of {accounts.length} accounts have it. A second read-only stack lets
-          Cloudoptics list resources and their metrics, never change them. Each account needs its own copy.
+          {c.accountType === 'management'
+            ? 'Member accounts get access on their own as AWS reaches them, usually within 10 minutes, and new accounts get it when they join.'
+            : 'Access is added by the CloudOptics stack. Check now to look again.'}
         </p>
       </div>
-      {membersMissing && (
-        <div className="flex flex-col gap-2">
-          <p className="font-medium">All member accounts at once</p>
-          <ol className="list-decimal space-y-1 pl-5 text-secondary">
-            <li>
-              Signed in to the payer account {c.awsAccountId}, open the link below, tick the boxes at the bottom and
-              choose <strong>Create stack</strong>. Everything else is filled in.
-            </li>
-            <li>
-              Give AWS a few minutes to reach every account, then choose <strong>Check now</strong>. Accounts you add
-              later get access automatically.
-            </li>
-          </ol>
-          <p className="text-xs text-muted">
-            The stack also switches on CloudFormation StackSets for your organization, which AWS needs to reach member
-            accounts. It does not give Cloudoptics any write access.
-          </p>
-          {s && (
-            <div>
-              <a
-                href={s.resourceStacksetQuickCreateUrl ?? s.resourceStacksetDownloadUrl}
-                target="_blank"
-                rel="noreferrer"
-                download={s.resourceStacksetQuickCreateUrl ? undefined : 'cloudoptics-resource-stackset.yaml'}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
-              >
-                {s.resourceStacksetQuickCreateUrl ? 'Deploy to all member accounts' : 'Download the StackSet template'}{' '}
-                <ExternalLink size={16} />
-              </a>
-            </div>
-          )}
-          <p className="font-medium">Or one account at a time</p>
-        </div>
-      )}
-      <ol className="list-decimal space-y-1 pl-5 text-secondary">
-        <li>
-          Sign in to AWS as an administrator of{' '}
-          {missing.length === 1 ? (
-            <>
-              account {missing[0]?.awsAccountId}
-              {missing[0]?.name && ` (${missing[0].name})`}, not one that already has it
-            </>
-          ) : (
-            <>
-              each account: {missing.map((a) => (a.name ? `${a.name} (${a.awsAccountId})` : a.awsAccountId)).join(', ')}
-            </>
-          )}
-          .
-        </li>
-        {s?.resourceQuickCreateUrl ? (
-          <li>
-            Open CloudFormation below, tick the IAM acknowledgement box and choose <strong>Create stack</strong>.
-          </li>
-        ) : (
-          <li>
-            In CloudFormation, create a stack from the downloaded template with the External ID and principal below.
-          </li>
-        )}
-        <li>
-          When it shows CREATE_COMPLETE (about a minute), choose <strong>Check now</strong>.
-        </li>
-      </ol>
-      {setup.error && <Alert tone="error">{setup.error.message}</Alert>}
-      {s && !s.resourceQuickCreateUrl && (
-        <dl className="grid gap-1 text-xs">
-          <dt className="text-muted">External ID</dt>
-          <dd className="font-mono break-all">{s.externalId}</dd>
-          <dt className="text-muted">Cloudoptics principal</dt>
-          <dd className="font-mono break-all">{s.principalArn}</dd>
-        </dl>
-      )}
       {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
       {refused.length > 0 && (
-        <Alert tone="error">
-          AWS refused the role <code className="font-mono text-xs">CloudopticsResourceReadOnly</code> in account{' '}
-          {refused.map((a) => `${a.awsAccountId} (${a.error ?? 'no access'})`).join(', ')}. Sign in to AWS as{' '}
-          {refused.length === 1 ? 'that account' : 'each of those accounts'} and create the stack there: a stack in
-          another account does not count. If it is already there, check that the role&apos;s trust relationship has the
-          same principal and External ID as <code className="font-mono text-xs">CloudopticsBillingReadOnly</code>.
+        <Alert tone="warning">
+          Still waiting for {refused.map((a) => a.awsAccountId).join(', ')}. If an account stays like this, it may still
+          have an older Cloudoptics stack: sign in to it and delete the{' '}
+          <code className="font-mono text-xs">cloudoptics-resource-access</code> stack. Access follows within minutes.
         </Alert>
       )}
-      <div className="flex flex-wrap gap-2">
-        {s && (
-          <a
-            href={s.resourceQuickCreateUrl ?? s.resourceTemplateDownloadUrl}
-            target="_blank"
-            rel="noreferrer"
-            download={s.resourceQuickCreateUrl ? undefined : 'cloudoptics-resource-role.yaml'}
-            className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
-          >
-            {s.resourceQuickCreateUrl ? 'Open CloudFormation in AWS' : 'Download the template'}{' '}
-            <ExternalLink size={16} />
-          </a>
-        )}
-        <Button variant="secondary" disabled={checking} onClick={() => scan.mutate()}>
-          {checking ? 'Checking…' : 'Check now'}
+      <div>
+        <Button variant="secondary" disabled={scan.isPending} onClick={() => scan.mutate()}>
+          {scan.isPending ? 'Checking…' : 'Check now'}
         </Button>
       </div>
     </div>

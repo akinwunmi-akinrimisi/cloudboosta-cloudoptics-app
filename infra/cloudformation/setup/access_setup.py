@@ -19,6 +19,40 @@ STACKSET = "cloudoptics-resource-access"
 OLD_STACKS = ("cloudoptics-resource-stackset", "cloudoptics-resource-access", "cloudoptics-billing-access")
 REGIONS = ["us-east-1"]  # IAM is global: one region is enough
 PREFS = {"RegionConcurrencyType": "PARALLEL", "MaxConcurrentPercentage": 100, "FailureTolerancePercentage": 100}
+DENIED = ("AccessDenied", "AccessDeniedException")
+
+
+class _Retrying:
+    """A boto3 client whose calls retry AccessDenied for two minutes: a role created moments
+    ago can be refused until IAM has propagated it."""
+
+    def __init__(self, client):
+        self._client = client
+
+    def __getattr__(self, name):
+        attr = getattr(self._client, name)
+        if not callable(attr) or name == "get_waiter":
+            return attr
+
+        def call(*args, **kwargs):
+            for attempt in range(12):
+                try:
+                    return attr(*args, **kwargs)
+                except ClientError as exc:
+                    if _code(exc) not in DENIED or attempt == 11:
+                        raise
+                    time.sleep(10)
+            return None
+
+        return call
+
+
+def client(name):
+    return _Retrying(boto3.client(name))
+
+
+def _code(exc):
+    return exc.response.get("Error", {}).get("Code")
 
 
 def handler(event, context):
@@ -28,18 +62,18 @@ def handler(event, context):
         data = ACTIONS[props["Action"]](event["RequestType"], props) or {}
         cfnresponse.send(event, context, cfnresponse.SUCCESS, data, physical)
     except Exception as exc:  # report every failure to CloudFormation
-        reason = f"{type(exc).__name__}: {exc}"[:400]
+        reason = f"{type(exc).__name__}: {exc}"[:900]
         cfnresponse.send(event, context, cfnresponse.FAILED, {}, physical, reason=reason)
 
 
 def _missing(exc):
-    return exc.response.get("Error", {}).get("Code") in ("ValidationError", "StackSetNotFoundException")
+    return _code(exc) in ("ValidationError", "StackSetNotFoundException")
 
 
 def cleanup(kind, props):
     if kind != "Create":
         return None
-    cfn = boto3.client("cloudformation")
+    cfn = client("cloudformation")
     removed = []
     for name in OLD_STACKS:
         try:
@@ -100,12 +134,12 @@ def bucket(kind, props):
     name = props["BucketName"]
     if kind == "Delete":
         return {"BucketName": name}  # kept on purpose, like the bills in it
-    s3 = boto3.client("s3")
+    s3 = client("s3")
     try:
         s3.head_bucket(Bucket=name, ExpectedBucketOwner=props["AccountId"])
         reused = True
     except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") not in ("404", "NoSuchBucket", "NotFound"):
+        if _code(exc) not in ("404", "NoSuchBucket", "NotFound"):
             raise RuntimeError(f"The S3 bucket name {name} belongs to another AWS account.") from exc
         s3.create_bucket(Bucket=name)
         reused = False
@@ -137,25 +171,43 @@ def bucket(kind, props):
 
 def is_management(account):
     try:
-        org = boto3.client("organizations").describe_organization()["Organization"]
+        org = client("organizations").describe_organization()["Organization"]
     except ClientError as exc:
-        if exc.response.get("Error", {}).get("Code") == "AWSOrganizationsNotInUseException":
+        if _code(exc) == "AWSOrganizationsNotInUseException":
             return False
         raise
     return org["MasterAccountId"] == account
 
 
-def root_id():
-    orgs = boto3.client("organizations")
-    cfn = boto3.client("cloudformation")
-    if cfn.describe_organizations_access()["Status"] != "ENABLED":
+def trusted_access():
+    """Turn on StackSets trusted access in AWS Organizations, if it is off."""
+    cfn = client("cloudformation")
+    if cfn.describe_organizations_access()["Status"] == "ENABLED":
+        return
+    try:
         cfn.activate_organizations_access()
         for _ in range(30):
             if cfn.describe_organizations_access()["Status"] == "ENABLED":
                 break
             time.sleep(5)
-        time.sleep(15)  # let the new access reach the StackSets service
-    return orgs.list_roots()["Roots"][0]["Id"]
+    except ClientError as exc:
+        if _code(exc) not in DENIED:
+            raise
+        # The same result by hand: the StackSets service-linked role, then trusted access.
+        try:
+            client("iam").create_service_linked_role(AWSServiceName="stacksets.cloudformation.amazonaws.com")
+        except ClientError as iam_exc:
+            if _code(iam_exc) != "InvalidInput":  # the role already exists
+                raise
+        client("organizations").enable_aws_service_access(
+            ServicePrincipal="member.org.stacksets.cloudformation.amazonaws.com"
+        )
+    time.sleep(15)  # let the new access reach the StackSets service
+
+
+def root_id():
+    trusted_access()
+    return client("organizations").list_roots()["Roots"][0]["Id"]
 
 
 def wait_operation(cfn, operation_id):
@@ -173,7 +225,7 @@ def wait_idle(cfn):
 
 
 def ensure_stackset(props, root):
-    cfn = boto3.client("cloudformation")
+    cfn = client("cloudformation")
     params = [
         {"ParameterKey": "ExternalId", "ParameterValue": props["ExternalId"]},
         {"ParameterKey": "CloudopticsPrincipalArn", "ParameterValue": props["CloudopticsPrincipalArn"]},
@@ -218,7 +270,7 @@ def ensure_stackset(props, root):
 
 
 def remove_stackset():
-    cfn = boto3.client("cloudformation")
+    cfn = client("cloudformation")
     try:
         cfn.describe_stack_set(StackSetName=STACKSET)
     except ClientError as exc:
@@ -227,7 +279,7 @@ def remove_stackset():
         raise
     wait_idle(cfn)
     if cfn.list_stack_instances(StackSetName=STACKSET)["Summaries"]:
-        root = boto3.client("organizations").list_roots()["Roots"][0]["Id"]
+        root = client("organizations").list_roots()["Roots"][0]["Id"]
         op = cfn.delete_stack_instances(
             StackSetName=STACKSET,
             DeploymentTargets={"OrganizationalUnitIds": [root]},

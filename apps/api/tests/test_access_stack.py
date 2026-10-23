@@ -347,3 +347,38 @@ def test_a_failed_callback_does_not_block_a_delete(setup_step: Any) -> None:
 
 def test_setup_source_is_plain_python() -> None:
     compile(Path(SETUP_SOURCE).read_text(), str(SETUP_SOURCE), "exec")
+
+
+def test_access_denied_is_retried_while_iam_catches_up(setup_step: Any) -> None:
+    tries = iter([client_error("AccessDenied"), client_error("AccessDenied")])
+
+    def describe() -> Any:
+        error = next(tries, None)
+        if error:
+            raise error
+        raise client_error("AWSOrganizationsNotInUseException")
+
+    setup_step.clients["organizations"] = Fake(describe_organization=describe)
+    assert run(setup_step, "setup")["status"] == "SUCCESS"
+    assert len(setup_step.clients["organizations"].calls) == 3
+
+
+def test_trusted_access_falls_back_when_activation_is_refused(setup_step: Any) -> None:
+    orgs = Fake(
+        describe_organization={"Organization": {"MasterAccountId": PROPS["AccountId"]}},
+        list_roots={"Roots": [{"Id": "r-ab12"}]},
+    )
+    iam = Fake(create_service_linked_role=client_error("InvalidInput"))  # already there
+    cfn = Fake(
+        describe_organizations_access={"Status": "DISABLED"},
+        activate_organizations_access=client_error("AccessDeniedException"),
+        describe_stack_set=client_error("StackSetNotFoundException"),
+    )
+    setup_step.clients.update(organizations=orgs, iam=iam, cloudformation=cfn)
+    assert run(setup_step, "setup")["status"] == "SUCCESS"
+    assert cfn.names().count("activate_organizations_access") == 12
+    assert (
+        "enable_aws_service_access",
+        {"ServicePrincipal": "member.org.stacksets.cloudformation.amazonaws.com"},
+    ) in orgs.calls
+    assert "create_stack_set" in cfn.names()

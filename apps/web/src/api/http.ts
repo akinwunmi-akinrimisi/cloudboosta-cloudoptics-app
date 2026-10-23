@@ -8,7 +8,9 @@ import type {
   AuthProvider,
   Connection,
   ConnectionCreate,
+  ConnectionIntent,
   ConnectionSetup,
+  IntentSetup,
   CostBreakdown,
   CostDimension,
   CostSummary,
@@ -83,6 +85,14 @@ export class HttpApi implements Api {
 
   createConnection(tenantId: string, body: ConnectionCreate): Promise<ConnectionSetup> {
     return this.request('POST', `/v1/tenants/${tenantId}/connections`, body)
+  }
+
+  createIntent(tenantId: string): Promise<IntentSetup> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connections/intents`)
+  }
+
+  getIntent(tenantId: string, intentId: string): Promise<ConnectionIntent> {
+    return this.request('GET', `/v1/tenants/${tenantId}/connections/intents/${intentId}`)
   }
 
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup> {
