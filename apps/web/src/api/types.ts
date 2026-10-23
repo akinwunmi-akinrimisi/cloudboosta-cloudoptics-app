@@ -99,9 +99,16 @@ export interface AuthProvider {
   signOut(): void
 }
 
+/** cur: the Cost and Usage Report; cost_explorer: provisional figures until it arrives. */
+export type CostSource = 'cur' | 'cost_explorer'
+
 export interface CostSummary {
-  /** no_connection: nothing connected; waiting: connected, no Cost and Usage Report loaded yet. */
-  status: 'no_connection' | 'waiting' | 'ready'
+  /**
+   * no_connection: nothing connected; waiting: connected, nothing loaded yet;
+   * provisional: no Cost and Usage Report for the month yet, figures from Cost Explorer.
+   */
+  status: 'no_connection' | 'waiting' | 'provisional' | 'ready'
+  source: CostSource | null
   /** The UTC month the totals cover, YYYY-MM. */
   month: string
   currency: 'USD'
@@ -113,6 +120,64 @@ export interface CostSummary {
   monthToDate: { effective: number; billed: number; credits: number } | null
   forecast: { amount: number; method: 'run_rate'; daysCovered: number; daysInMonth: number } | null
   previousMonth: number | null
+}
+
+export interface DailyCosts {
+  source: CostSource | null
+  currency: 'USD'
+  /** Amortised cost after credits per UTC day, oldest first. */
+  points: { date: string; amount: number }[]
+}
+
+export type CostDimension = 'service' | 'account' | 'region'
+
+export interface CostBreakdown {
+  source: CostSource | null
+  month: string
+  dimension: CostDimension
+  currency: 'USD'
+  /** This month's spend excluding tax. */
+  total: number
+  /** The largest items, then one "N more" item with key "other". */
+  items: { key: string; label: string; amount: number; share: number }[]
+}
+
+export interface FxQuote {
+  currency: string
+  /** Local currency units per 1 USD. */
+  rate: number
+  rateDate: string
+  basis: 'official' | 'market'
+  /** manual: set by Cloudoptics staff; feed: reference feed (only when no staff rate exists). */
+  source: 'manual' | 'feed'
+  /** Carried forward from an earlier day, or from the feed. */
+  estimated: boolean
+}
+
+export interface CurrentRate {
+  currency: string
+  basis: 'official' | 'market'
+  /** Null when no usable rate exists: show USD only. */
+  quote: FxQuote | null
+}
+
+export interface CloudAccount {
+  awsAccountId: string
+  name: string | null
+  accountType: 'management' | 'member' | 'standalone'
+  /** Status in the AWS Organization (ACTIVE, SUSPENDED, NOT_LISTED…); null if never discovered. */
+  orgStatus: string | null
+  orgSeenAt: string | null
+  /** The resource read-only role is deployed in this account. */
+  resourceAccess: boolean
+  /** The Cost and Usage Report has costs for it this month or last. */
+  hasCostData: boolean
+}
+
+export interface AccountList {
+  /** Counts accounts still in the organization. */
+  coverage: { accounts: number; withCostData: number; withResourceAccess: number }
+  accounts: CloudAccount[]
 }
 
 export interface Api {
@@ -130,6 +195,10 @@ export interface Api {
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
   costSummary(tenantId: string): Promise<CostSummary>
+  costDaily(tenantId: string): Promise<DailyCosts>
+  costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown>
+  fxCurrent(tenantId: string): Promise<CurrentRate>
+  listAccounts(tenantId: string): Promise<AccountList>
 }
 
 export class ApiError extends Error {

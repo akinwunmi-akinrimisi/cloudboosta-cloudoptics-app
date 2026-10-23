@@ -8,7 +8,7 @@ from cloudoptics.platform.jobs import get_job_app
 async def main() -> None:
     app = get_job_app()
     async with app.open_async():
-        await app.run_worker_async(queues=["connections", "ingestion"])
+        await app.run_worker_async(queues=["connections", "ingestion", "fx"])
 
 
 if __name__ == "__main__":

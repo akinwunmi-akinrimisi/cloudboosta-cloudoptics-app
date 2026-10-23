@@ -67,15 +67,22 @@ describe('Cloudoptics web app', () => {
     const user = userEvent.setup()
     const { api } = renderApp('/sign-in')
     await api.signIn('kofi@example.com')
-    await api.createTenant({ name: 'Accra Apps', countryCode: 'GH' })
+    const tenant = await api.createTenant({ name: 'Accra Apps', countryCode: 'GH' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '456456456456',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
     await user.type(await screen.findByLabelText('Work email'), 'kofi@example.com')
     await user.click(screen.getByRole('button', { name: 'Continue' }))
 
     const both = await screen.findByRole('button', { name: 'Both' })
     expect(both.getAttribute('aria-pressed')).toBe('true')
-    expect(await screen.findByText('$1,000.00 · GH₵15,500.00')).toBeTruthy()
+    expect((await screen.findAllByText(/^\$[\d,.]+ · GH₵[\d,.]+$/)).length).toBe(2)
     await user.click(screen.getByRole('button', { name: 'Local' }))
-    expect(await screen.findByText('GH₵15,500.00')).toBeTruthy()
+    expect((await screen.findAllByText(/^GH₵[\d,.]+$/)).length).toBeGreaterThanOrEqual(2)
+    expect(screen.getByText('1 USD = GH₵15.50')).toBeTruthy()
   })
 
   it('lists connections with their checks', async () => {
@@ -94,6 +101,25 @@ describe('Cloudoptics web app', () => {
     await user.click(await screen.findByRole('link', { name: 'Connections' }))
     expect(await screen.findByText('AWS account 210987654321')).toBeTruthy()
     expect(screen.getByText('Read Savings Plans')).toBeTruthy()
+    expect(await screen.findByText('1 of 1 accounts have cost data', { exact: false })).toBeTruthy()
+  })
+
+  it('lists the accounts discovered in the organization', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('zola@example.com')
+    const tenant = await api.createTenant({ name: 'Joburg Group', countryCode: 'ZA' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '999988887777',
+      accountType: 'management',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'zola@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText('3 of 4 accounts have cost data', { exact: false })).toBeTruthy()
+    expect(screen.getByText('sandbox')).toBeTruthy()
   })
 
   it('fills the spend and forecast tiles once cost data exists', async () => {
@@ -117,5 +143,13 @@ describe('Cloudoptics web app', () => {
     await user.click(await screen.findByRole('link', { name: 'Overview' }))
     expect(await screen.findByText(/Amortised, after credits · data to/)).toBeTruthy()
     expect(screen.getByText(/Estimate from the daily run rate/)).toBeTruthy()
+    expect(await screen.findByRole('img', { name: /Daily spend, 30 days/ })).toBeTruthy()
+    expect(await screen.findByText('Amazon Elastic Compute Cloud')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Account' }))
+    expect(await screen.findByText('demo-prod')).toBeTruthy()
+    // Nigerian workspace: the staff-set NGN rate, and spend in both currencies by default.
+    expect(screen.getByText(/^1 USD = ₦1,530.25$/)).toBeTruthy()
+    expect(screen.getByText(/Official rate set by Cloudoptics staff/)).toBeTruthy()
+    expect(screen.getAllByText(/^\$[\d,.]+ · ₦[\d,.]+$/).length).toBe(2)
   })
 })

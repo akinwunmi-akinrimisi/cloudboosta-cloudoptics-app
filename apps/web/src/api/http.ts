@@ -1,13 +1,18 @@
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
+  AccountList,
   Api,
   AuthConfig,
   AuthProvider,
   Connection,
   ConnectionCreate,
   ConnectionSetup,
+  CostBreakdown,
+  CostDimension,
   CostSummary,
+  CurrentRate,
+  DailyCosts,
   Me,
   Tenant,
 } from './types'
@@ -80,6 +85,22 @@ export class HttpApi implements Api {
 
   costSummary(tenantId: string): Promise<CostSummary> {
     return this.request('GET', `/v1/tenants/${tenantId}/costs/summary`)
+  }
+
+  costDaily(tenantId: string): Promise<DailyCosts> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/daily`)
+  }
+
+  costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}`)
+  }
+
+  listAccounts(tenantId: string): Promise<AccountList> {
+    return this.request('GET', `/v1/tenants/${tenantId}/accounts`)
+  }
+
+  fxCurrent(tenantId: string): Promise<CurrentRate> {
+    return this.request('GET', `/v1/tenants/${tenantId}/fx/current`)
   }
 
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {

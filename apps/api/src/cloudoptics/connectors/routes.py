@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -14,7 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from cloudoptics.audit import log as audit
-from cloudoptics.connectors import aws
+from cloudoptics.connectors import accounts, aws
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.service import (
     LIST_CONNECTIONS,
@@ -28,6 +28,7 @@ from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/connections", tags=["connections"])
+accounts_router = APIRouter(prefix="/v1/tenants/{tenant_id}/accounts", tags=["connections"])
 
 AccountType = Literal["management", "standalone"]
 
@@ -241,3 +242,35 @@ async def disconnect(
         after={"status": "disconnected"},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class CloudAccount(ApiModel):
+    aws_account_id: str
+    name: str | None
+    account_type: Literal["management", "member", "standalone"]
+    org_status: str | None
+    org_seen_at: datetime | None
+    resource_access: bool
+    has_cost_data: bool
+
+
+class AccountCoverage(ApiModel):
+    accounts: int
+    with_cost_data: int
+    with_resource_access: int
+
+
+class AccountList(ApiModel):
+    """``coverage`` counts accounts still in the organization (US-1.3: "12 of 15")."""
+
+    coverage: AccountCoverage
+    accounts: list[CloudAccount]
+
+
+@accounts_router.get("", response_model=AccountList)
+async def list_cloud_accounts(access: ViewerAccess, session: Session) -> AccountList:
+    rows, coverage = await accounts.list_accounts(session, datetime.now(UTC).date())
+    return AccountList(
+        coverage=AccountCoverage.model_validate(coverage),
+        accounts=[CloudAccount.model_validate(r) for r in rows],
+    )

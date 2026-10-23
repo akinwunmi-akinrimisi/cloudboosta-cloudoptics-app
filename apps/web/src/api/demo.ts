@@ -1,12 +1,18 @@
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
+  AccountList,
   Api,
+  CloudAccount,
   AuthConfig,
   Connection,
   ConnectionCreate,
   ConnectionSetup,
+  CostBreakdown,
+  CostDimension,
   CostSummary,
+  CurrentRate,
+  DailyCosts,
   Me,
   PermissionCheck,
   Tenant,
@@ -17,6 +23,19 @@ import { ApiError } from './types'
 // the browser and no AWS call is made; state lives in this viewer's localStorage only.
 
 const KEY = 'co.demo.v1'
+// Illustrative rates for the demo only; real rates are set by Cloudoptics staff (FR-FX-06).
+const DEMO_RATES: Record<string, number> = {
+  NGN: 1530.25,
+  KES: 129.4,
+  GHS: 15.5,
+  ZAR: 18.1,
+  EGP: 48.6,
+  RWF: 1410,
+  UGX: 3690,
+  TZS: 2600,
+  GBP: 0.79,
+  EUR: 0.92,
+}
 const COUNTRY: Record<string, [string, string]> = {
   NG: ['NGN', 'Africa/Lagos'],
   KE: ['KES', 'Africa/Nairobi'],
@@ -248,6 +267,7 @@ export class DemoApi implements Api {
     const connected = (this.state.connections[tenantId] ?? []).filter((c) => c.status !== 'disconnected')
     const empty: CostSummary = {
       status: connected.length ? 'waiting' : 'no_connection',
+      source: null,
       month,
       currency: 'USD',
       dataThrough: null,
@@ -257,7 +277,7 @@ export class DemoApi implements Api {
       forecast: null,
       previousMonth: null,
     }
-    if (!connected.some((c) => c.status === 'healthy' || c.status === 'degraded')) return empty
+    if (!this.hasData(tenantId)) return empty
     // Illustrative figures in the shape of tools/cur-fixture: about USD 41 a day.
     const days = Math.max(now.getUTCDate() - 1, 1)
     const daysInMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate()
@@ -266,6 +286,7 @@ export class DemoApi implements Api {
     return {
       ...empty,
       status: 'ready',
+      source: 'cur',
       dataThrough: through.toISOString().slice(0, 10),
       lastLoadAt: now.toISOString(),
       lastLoadStatus: 'succeeded',
@@ -273,6 +294,122 @@ export class DemoApi implements Api {
       forecast: { amount: daily * daysInMonth, method: 'run_rate', daysCovered: days, daysInMonth },
       previousMonth: 1237.75,
     }
+  }
+
+  async costDaily(tenantId: string): Promise<DailyCosts> {
+    await this.tick()
+    this.tenant(tenantId)
+    if (!this.hasData(tenantId)) return { source: null, currency: 'USD', points: [] }
+    const today = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())
+    const points = Array.from({ length: 30 }, (_, i) => {
+      const day = new Date(today - (30 - i) * 86_400_000)
+      // Weekdays cost more than weekends, like a typical dev/test estate.
+      const weekend = day.getUTCDay() === 0 || day.getUTCDay() === 6
+      const amount = (weekend ? 31.4 : 45.2) + ((i * 7) % 5) * 0.9
+      return { date: day.toISOString().slice(0, 10), amount: Math.round(amount * 100) / 100 }
+    })
+    return { source: 'cur', currency: 'USD', points }
+  }
+
+  async costBreakdown(tenantId: string, dimension: CostDimension): Promise<CostBreakdown> {
+    await this.tick()
+    this.tenant(tenantId)
+    const month = new Date().toISOString().slice(0, 7)
+    if (!this.hasData(tenantId)) return { source: null, month, dimension, currency: 'USD', total: 0, items: [] }
+    const rows: Record<CostDimension, [string, string, number][]> = {
+      service: [
+        ['AmazonEC2', 'Amazon Elastic Compute Cloud', 512.4],
+        ['AmazonRDS', 'Amazon Relational Database Service', 214.9],
+        ['AmazonS3', 'Amazon Simple Storage Service', 88.3],
+        ['AWSELB', 'Elastic Load Balancing', 61.7],
+        ['AmazonCloudWatch', 'AmazonCloudWatch', 24.1],
+      ],
+      account: [
+        ['111111111111', 'demo-prod', 598.2],
+        ['333333333333', 'demo-dev', 303.2],
+      ],
+      region: [
+        ['eu-west-1', 'eu-west-1', 640.8],
+        ['af-south-1', 'af-south-1', 236.5],
+        ['global', 'Global', 24.1],
+      ],
+    }
+    const total = rows[dimension].reduce((sum, [, , amount]) => sum + amount, 0)
+    return {
+      source: 'cur',
+      month,
+      dimension,
+      currency: 'USD',
+      total: Math.round(total * 100) / 100,
+      items: rows[dimension].map(([key, label, amount]) => ({
+        key,
+        label,
+        amount,
+        share: Math.round((amount / total) * 10_000) / 10_000,
+      })),
+    }
+  }
+
+  async fxCurrent(tenantId: string): Promise<CurrentRate> {
+    await this.tick()
+    const tenant = this.tenant(tenantId)
+    const currency = tenant.displayCurrency
+    const rate = currency === 'USD' ? 1 : DEMO_RATES[currency]
+    return {
+      currency,
+      basis: 'official',
+      quote: rate
+        ? {
+            currency,
+            rate,
+            rateDate: new Date().toISOString().slice(0, 10),
+            basis: 'official',
+            source: 'manual',
+            estimated: false,
+          }
+        : null,
+    }
+  }
+
+  async listAccounts(tenantId: string): Promise<AccountList> {
+    await this.tick()
+    this.tenant(tenantId)
+    const now = new Date().toISOString()
+    const accounts: CloudAccount[] = []
+    for (const c of this.state.connections[tenantId] ?? []) {
+      if (c.status === 'disconnected' || c.status === 'pending') continue
+      const usable = c.status === 'healthy' || c.status === 'degraded'
+      const own: CloudAccount = {
+        awsAccountId: c.awsAccountId,
+        name: c.accountType === 'management' ? 'payer' : null,
+        accountType: c.accountType,
+        orgStatus: c.accountType === 'management' && usable ? 'ACTIVE' : null,
+        orgSeenAt: c.accountType === 'management' && usable ? now : null,
+        resourceAccess: false,
+        hasCostData: usable,
+      }
+      accounts.push(own)
+      if (c.accountType === 'management' && usable) {
+        accounts.push(
+          { ...own, awsAccountId: '111111111111', name: 'demo-prod', accountType: 'member' },
+          { ...own, awsAccountId: '333333333333', name: 'demo-dev', accountType: 'member' },
+          { ...own, awsAccountId: '444444444444', name: 'sandbox', accountType: 'member', hasCostData: false },
+        )
+      }
+    }
+    const current = accounts.filter((a) => a.orgStatus !== 'NOT_LISTED')
+    return {
+      coverage: {
+        accounts: current.length,
+        withCostData: current.filter((a) => a.hasCostData).length,
+        withResourceAccess: current.filter((a) => a.resourceAccess).length,
+      },
+      accounts,
+    }
+  }
+
+  private hasData(tenantId: string): boolean {
+    return (this.state.connections[tenantId] ?? []).some((c) => c.status === 'healthy' || c.status === 'degraded')
   }
 
   private connection(tenantId: string, connectionId: string): Connection {

@@ -3,9 +3,11 @@ assembles them so the queue can be swapped without touching those modules."""
 
 from __future__ import annotations
 
+import contextlib
 from functools import lru_cache
 
 import procrastinate
+from procrastinate.exceptions import AlreadyEnqueued, AppNotOpen
 
 from cloudoptics.platform.settings import get_settings
 
@@ -17,6 +19,7 @@ def _conninfo(sqlalchemy_url: str) -> str:
 @lru_cache
 def get_job_app() -> procrastinate.App:
     from cloudoptics.connectors.jobs import blueprint as connector_jobs
+    from cloudoptics.fx.feed import blueprint as fx_jobs
     from cloudoptics.ingestion.jobs import blueprint as ingestion_jobs
 
     app = procrastinate.App(
@@ -26,4 +29,19 @@ def get_job_app() -> procrastinate.App:
     )
     app.add_tasks_from(connector_jobs, namespace="connectors")
     app.add_tasks_from(ingestion_jobs, namespace="ingestion")
+    app.add_tasks_from(fx_jobs, namespace="fx")
     return app
+
+
+async def defer_once(app: procrastinate.App, name: str, lock: str, **kwargs: str) -> None:
+    """Queue a task once; a second request while one is queued is a no-op.
+
+    Works from a worker (the app is open) and from anywhere else (opened for the call).
+    """
+    task = app.configure_task(name, queueing_lock=lock)
+    with contextlib.suppress(AlreadyEnqueued):
+        try:
+            await task.defer_async(**kwargs)
+        except AppNotOpen:
+            async with app.open_async():
+                await task.defer_async(**kwargs)

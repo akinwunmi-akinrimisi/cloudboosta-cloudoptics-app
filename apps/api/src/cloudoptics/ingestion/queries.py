@@ -4,14 +4,17 @@ inside a tenant-scoped transaction; row-level security limits every query to tha
 from __future__ import annotations
 
 import calendar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-SummaryStatus = Literal["no_connection", "waiting", "ready"]
+SummaryStatus = Literal["no_connection", "waiting", "provisional", "ready"]
+Source = Literal["cur", "cost_explorer"]
+Dimension = Literal["service", "account", "region"]
+TOP_ITEMS = 8
 
 
 @dataclass(frozen=True)
@@ -32,6 +35,7 @@ class MonthToDate:
 @dataclass(frozen=True)
 class CostSummary:
     status: SummaryStatus
+    source: Source | None
     month: str
     currency: str
     data_through: date | None
@@ -42,9 +46,90 @@ class CostSummary:
     previous_month: float | None
 
 
+@dataclass(frozen=True)
+class DailyPoint:
+    date: date
+    amount: float
+
+
+@dataclass(frozen=True)
+class DailyCosts:
+    source: Source | None
+    currency: str
+    points: list[DailyPoint]
+
+
+@dataclass(frozen=True)
+class BreakdownItem:
+    key: str
+    label: str
+    amount: float
+    share: float
+
+
+@dataclass(frozen=True)
+class Breakdown:
+    source: Source | None
+    month: str
+    dimension: Dimension
+    currency: str
+    total: float
+    items: list[BreakdownItem] = field(default_factory=list)
+
+
 def _month_bounds(day: date) -> tuple[date, date]:
     start = day.replace(day=1)
     return start, (start + timedelta(days=32)).replace(day=1)
+
+
+def _run_rate(effective: float, run_rate_base: float, start: date, last_day: date) -> Forecast:
+    days_in_month = calendar.monthrange(start.year, start.month)[1]
+    covered = (last_day - start).days + 1
+    daily = run_rate_base / covered
+    return Forecast(
+        amount=round(effective + daily * (days_in_month - covered), 2),
+        method="run_rate",
+        days_covered=covered,
+        days_in_month=days_in_month,
+    )
+
+
+async def _has_cur_month(session: AsyncSession, start: date, end: date) -> bool:
+    return bool(
+        (
+            await session.execute(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM cost_daily "
+                    "WHERE usage_date >= :start AND usage_date < :end)"
+                ),
+                {"start": start, "end": end},
+            )
+        ).scalar_one()
+    )
+
+
+async def _snapshots(session: AsyncSession, start: date) -> list[Any]:
+    """Cost Explorer snapshots for the month, used only while it has no CUR data."""
+    return list(
+        (
+            await session.execute(
+                text(
+                    "SELECT through_date, effective_cost_usd, billed_cost_usd, credits_usd, "
+                    "daily, by_service, fetched_at FROM cost_snapshot_ce "
+                    "WHERE period_start = :p ORDER BY connection_id"
+                ),
+                {"p": start},
+            )
+        ).all()
+    )
+
+
+def _sum_series(rows: list[Any], column: str, key: str) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for row in rows:
+        for item in getattr(row, column):
+            totals[item[key]] = totals.get(item[key], 0.0) + float(item["amount"])
+    return totals
 
 
 async def summary(session: AsyncSession, today: date) -> CostSummary:
@@ -70,7 +155,12 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
     data_through = (
         await session.execute(text("SELECT max(usage_date) FROM cost_daily"))
     ).scalar_one()
+    if not await _has_cur_month(session, start, end):
+        snapshots = await _snapshots(session, start)
+        if snapshots:
+            return _provisional(snapshots, start, month, data_through, last)
     base = {
+        "source": "cur" if data_through is not None else None,
         "month": month,
         "currency": "USD",
         "data_through": data_through,
@@ -110,16 +200,10 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
         )
     ).scalar_one()
 
-    days_in_month = calendar.monthrange(start.year, start.month)[1]
     forecast = None
     if totals.last_day is not None:
-        covered = (totals.last_day - start).days + 1
-        daily = float(totals.run_rate_base) / covered
-        forecast = Forecast(
-            amount=round(float(totals.effective) + daily * (days_in_month - covered), 2),
-            method="run_rate",
-            days_covered=covered,
-            days_in_month=days_in_month,
+        forecast = _run_rate(
+            float(totals.effective), float(totals.run_rate_base), start, totals.last_day
         )
     return CostSummary(
         status="ready",
@@ -132,3 +216,130 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
         previous_month=None if previous is None else round(float(previous), 2),
         **base,
     )
+
+
+def _provisional(
+    snapshots: list[Any], start: date, month: str, data_through: date | None, last: Any
+) -> CostSummary:
+    effective = sum(float(r.effective_cost_usd) for r in snapshots)
+    through = max(r.through_date for r in snapshots)
+    return CostSummary(
+        status="provisional",
+        source="cost_explorer",
+        month=month,
+        currency="USD",
+        data_through=through,
+        last_load_at=max(r.fetched_at for r in snapshots),
+        last_load_status=last.status if last else None,
+        month_to_date=MonthToDate(
+            effective=round(effective, 2),
+            billed=round(sum(float(r.billed_cost_usd) for r in snapshots), 2),
+            credits=round(sum(float(r.credits_usd) for r in snapshots), 2),
+        ),
+        # Cost Explorer's daily series has no tax split, so tax counts towards the run rate.
+        forecast=_run_rate(effective, effective, start, through),
+        previous_month=None,
+    )
+
+
+async def daily(session: AsyncSession, today: date, days: int = 30) -> DailyCosts:
+    """Daily effective cost for the ``days`` days up to the latest data (or ``today``).
+
+    Uses CUR data; while the current month has none, the month so far comes from the Cost
+    Explorer snapshot instead.
+    """
+    start, end = _month_bounds(today)
+    if not await _has_cur_month(session, start, end):
+        snapshots = await _snapshots(session, start)
+        if snapshots:
+            series = _sum_series(snapshots, "daily", "date")
+            return DailyCosts(
+                source="cost_explorer",
+                currency="USD",
+                points=[
+                    DailyPoint(date.fromisoformat(d), round(v, 2))
+                    for d, v in sorted(series.items())
+                ],
+            )
+    last = (
+        await session.execute(
+            text("SELECT max(usage_date) FROM cost_daily WHERE usage_date <= :t"), {"t": today}
+        )
+    ).scalar_one()
+    if last is None:
+        return DailyCosts(source=None, currency="USD", points=[])
+    first = last - timedelta(days=days - 1)
+    rows = await session.execute(
+        text(
+            "SELECT usage_date, sum(effective_cost_usd) AS amount FROM cost_daily "
+            "WHERE usage_date BETWEEN :first AND :last GROUP BY usage_date ORDER BY usage_date"
+        ),
+        {"first": first, "last": last},
+    )
+    by_day = {r.usage_date: float(r.amount) for r in rows}
+    return DailyCosts(
+        source="cur",
+        currency="USD",
+        points=[
+            DailyPoint(
+                first + timedelta(days=i), round(by_day.get(first + timedelta(days=i), 0), 2)
+            )
+            for i in range(days)
+        ],
+    )
+
+
+_BREAKDOWN_SQL = {
+    "service": (
+        "SELECT service_code AS key, max(service_name) AS label, "
+        "sum(effective_cost_usd) AS amount FROM cost_daily "
+        "WHERE usage_date >= :start AND usage_date < :end AND charge_category <> 'Tax' "
+        "GROUP BY service_code"
+    ),
+    "account": (
+        "SELECT c.account_id AS key, coalesce(max(a.name), c.account_id) AS label, "
+        "sum(c.effective_cost_usd) AS amount FROM cost_daily c "
+        "LEFT JOIN cloud_account a ON a.tenant_id = c.tenant_id "
+        "AND a.aws_account_id = c.account_id "
+        "WHERE c.usage_date >= :start AND c.usage_date < :end AND c.charge_category <> 'Tax' "
+        "GROUP BY c.account_id"
+    ),
+    "region": (
+        "SELECT coalesce(region_id, 'global') AS key, coalesce(region_id, 'Global') AS label, "
+        "sum(effective_cost_usd) AS amount FROM cost_daily "
+        "WHERE usage_date >= :start AND usage_date < :end AND charge_category <> 'Tax' "
+        "GROUP BY coalesce(region_id, 'global'), coalesce(region_id, 'Global')"
+    ),
+}
+
+
+def _top(rows: list[tuple[str, str, float]], limit: int) -> tuple[float, list[BreakdownItem]]:
+    rows = sorted((r for r in rows if round(r[2], 2) != 0), key=lambda r: -r[2])
+    total = sum(r[2] for r in rows)
+    head, tail = rows[:limit], rows[limit:]
+    if tail:
+        head.append(("other", f"{len(tail)} more", sum(r[2] for r in tail)))
+    share = (lambda v: round(v / total, 4)) if total else (lambda v: 0.0)
+    return round(total, 2), [BreakdownItem(k, label, round(v, 2), share(v)) for k, label, v in head]
+
+
+async def breakdown(
+    session: AsyncSession, today: date, dimension: Dimension, limit: int = TOP_ITEMS
+) -> Breakdown:
+    """The month's spend (excluding tax) by one dimension: the top ``limit`` plus the rest."""
+    start, end = _month_bounds(today)
+    month = f"{start:%Y-%m}"
+    if not await _has_cur_month(session, start, end):
+        snapshots = await _snapshots(session, start)
+        if snapshots:
+            if dimension != "service":
+                # Cost Explorer is only asked for services; the rest waits for the CUR.
+                return Breakdown("cost_explorer", month, dimension, "USD", 0.0, [])
+            services = _sum_series(snapshots, "by_service", "service")
+            services.pop("Tax", None)
+            total, items = _top([(k, k, v) for k, v in services.items()], limit)
+            return Breakdown("cost_explorer", month, dimension, "USD", total, items)
+        return Breakdown(None, month, dimension, "USD", 0.0, [])
+    rows = await session.execute(text(_BREAKDOWN_SQL[dimension]), {"start": start, "end": end})
+    total, items = _top([(r.key, r.label, float(r.amount)) for r in rows], limit)
+    return Breakdown("cur", month, dimension, "USD", total, items)

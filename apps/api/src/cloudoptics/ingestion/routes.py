@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import Field
 
 from cloudoptics.connectors.service import ConnectionNotFoundError, get_connection
@@ -32,8 +32,14 @@ class Forecast(ApiModel):
     days_in_month: int
 
 
+Source = Literal["cur", "cost_explorer"]
+
+
 class CostSummary(ApiModel):
-    status: Literal["no_connection", "waiting", "ready"]
+    """``provisional``: no CUR data for the month yet, figures come from Cost Explorer."""
+
+    status: Literal["no_connection", "waiting", "provisional", "ready"]
+    source: Source | None
     month: str
     currency: str
     data_through: date | None
@@ -42,6 +48,33 @@ class CostSummary(ApiModel):
     month_to_date: MonthToDate | None
     forecast: Forecast | None
     previous_month: float | None
+
+
+class DailyPoint(ApiModel):
+    date: date
+    amount: float
+
+
+class DailyCosts(ApiModel):
+    source: Source | None
+    currency: str
+    points: list[DailyPoint]
+
+
+class BreakdownItem(ApiModel):
+    key: str
+    label: str
+    amount: float
+    share: float
+
+
+class Breakdown(ApiModel):
+    source: Source | None
+    month: str
+    dimension: Literal["service", "account", "region"]
+    currency: str
+    total: float
+    items: list[BreakdownItem]
 
 
 class IngestOutcome(ApiModel):
@@ -58,6 +91,30 @@ async def cost_summary(
     """``today`` (UTC) defaults to now; it exists so tests and demos can pin the month."""
     result = await queries.summary(session, today or datetime.now(UTC).date())
     return CostSummary.model_validate(result)
+
+
+@router.get("/costs/daily", response_model=DailyCosts)
+async def cost_daily(
+    access: ViewerAccess,
+    session: Session,
+    today: date | None = None,
+    days: int = Query(30, ge=7, le=92),
+) -> DailyCosts:
+    """Daily amortised cost after credits, for the trend chart."""
+    result = await queries.daily(session, today or datetime.now(UTC).date(), days)
+    return DailyCosts.model_validate(result)
+
+
+@router.get("/costs/breakdown", response_model=Breakdown)
+async def cost_breakdown(
+    access: ViewerAccess,
+    session: Session,
+    dimension: Literal["service", "account", "region"] = "service",
+    today: date | None = None,
+) -> Breakdown:
+    """This month's spend excluding tax, by service, account or region (top 8 plus the rest)."""
+    result = await queries.breakdown(session, today or datetime.now(UTC).date(), dimension)
+    return Breakdown.model_validate(result)
 
 
 @router.post(
