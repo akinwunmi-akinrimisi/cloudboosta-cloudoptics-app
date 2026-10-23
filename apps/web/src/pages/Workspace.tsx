@@ -496,24 +496,29 @@ function StackUpdate({ connection: c, tenantId }: { connection: Connection; tena
           working.
         </p>
       </div>
-      <ol className="list-decimal space-y-1 pl-5 text-secondary">
-        <li>Open the stack in AWS, signed in to account {c.awsAccountId}, and choose <strong>Update</strong>.</li>
-        <li>
-          Choose <strong>Replace existing template</strong> and paste the template address below.
-        </li>
-        <li>Choose Next until the last page, tick the box that starts “I acknowledge” and choose Submit.</li>
-      </ol>
-      <CopyValue label="Template address" value={s.accessTemplateUrl} />
       <div>
         <a
-          href={s.stackConsoleUrl}
+          href={s.stackUpdateUrl}
           target="_blank"
           rel="noreferrer"
           className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
         >
-          Open the stack in AWS <ExternalLink size={16} />
+          Update Cloudoptics access <ExternalLink size={16} />
         </a>
       </div>
+      <p className="text-secondary">
+        AWS opens with the new version already chosen, signed in to account {c.awsAccountId}. Choose Next until the last
+        page, tick the box that starts “I acknowledge” and choose Submit. Cloudoptics notices when it is done.
+      </p>
+      <details className="text-secondary">
+        <summary className="cursor-pointer">AWS asks for a template?</summary>
+        <div className="mt-2 flex flex-col gap-2">
+          <p>
+            Choose <strong>Replace existing template</strong> and paste this address:
+          </p>
+          <CopyValue label="Template address" value={s.accessTemplateUrl} />
+        </div>
+      </details>
     </div>
   )
 }

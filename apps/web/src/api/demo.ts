@@ -915,6 +915,9 @@ export class DemoApi implements Api {
       stackConsoleUrl:
         'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/stackinfo?stackId=' +
         (conn.stackName ?? 'cloudoptics-billing-access'),
+      stackUpdateUrl:
+        'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/update/template?stackId=cloudoptics-access&templateURL=' +
+        encodeURIComponent(`${base}/cloudoptics-access.yaml`),
     }
   }
 }

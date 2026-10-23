@@ -206,3 +206,13 @@ async def test_a_failed_member_rollout_is_in_the_audit_log(
     log = (await client.get(f"/v1/tenants/{tenant}/audit-log", headers=headers)).json()
     [entry] = [e for e in log["entries"] if e["action"] == "connection.member_rollout_failed"]
     assert entry["after"]["reason"] == reason
+
+
+def test_stack_update_url_opens_the_update_page_with_the_template_chosen() -> None:
+    url = aws.stack_update_url("https://bucket.s3.amazonaws.com/cloudoptics-access.yaml")
+    assert url.startswith(
+        "https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1"
+        "#/stacks/update/template?"
+    )
+    assert f"stackId={aws.ACCESS_STACK_NAME}" in url
+    assert "templateURL=https%3A%2F%2Fbucket.s3.amazonaws.com%2Fcloudoptics-access.yaml" in url

@@ -96,6 +96,8 @@ class ConnectionSetup(ApiModel):
     # True when the stack is older than the latest version (or still the older stacks).
     update_available: bool
     stack_console_url: str
+    # AWS's Update stack page for this stack with the latest template already chosen.
+    stack_update_url: str
 
 
 class AccountAccess(ApiModel):
@@ -195,6 +197,7 @@ def _setup(row: Any, external_id: str) -> ConnectionSetup:
         update_available=not on_access_stack
         or aws.version_tuple(row.stack_version) < aws.version_tuple(aws.ACCESS_TEMPLATE_VERSION),
         stack_console_url=aws.stack_console_url(row.stack_name),
+        stack_update_url=aws.stack_update_url(settings.cfn_access_template_url),
     )
 
 
