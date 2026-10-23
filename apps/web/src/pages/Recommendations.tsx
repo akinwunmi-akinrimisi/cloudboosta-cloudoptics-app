@@ -15,6 +15,10 @@ const RULES: Record<string, string> = {
   R2_idle_eip: 'Idle Elastic IP',
   R2_idle_lb: 'Idle load balancer',
   R3_gp2_gp3: 'gp2 to gp3',
+  R4_idle_ec2: 'Idle server',
+  R4_idle_rds: 'Unused database',
+  R6_newer_generation: 'Older server type',
+  R6_graviton: 'Move to Graviton (Arm)',
 }
 
 const FACTORS: Record<string, string> = {
@@ -24,6 +28,10 @@ const FACTORS: Record<string, string> = {
   data_loss: 'Deleting loses the data',
   recently_created: 'Created less than 30 days ago',
   large_volume: 'Larger than 1 TiB',
+  stops_running_server: 'Stops a running server',
+  deletes_database: 'Removes a database (a final snapshot is kept)',
+  restart_needed: 'The server restarts',
+  architecture_change: 'Needs software built for Arm',
 }
 
 const NOTES: Record<string, string> = {
@@ -32,6 +40,16 @@ const NOTES: Record<string, string> = {
   savings_upper_bound_incremental:
     'Snapshots are incremental, so the saving may be smaller if other snapshots share its data.',
   hourly_charge_only_lcu_excluded: 'Counts the hourly charge only; capacity-unit charges are not included.',
+  stop_saves_compute_only:
+    'Stopping saves the server charge only. The disks are counted too, because they are removed in the last step.',
+  priced_as_linux: 'Priced as a Linux server, so the real saving is likely higher (licences are not counted).',
+  list_price_us_east_1: 'Estimated from US East prices; prices in this region may be a little higher.',
+  storage_not_included: 'Counts the database server only; its storage costs extra.',
+  check_type_in_region: 'Check that the new type is offered in this region before you change it.',
+  needs_nitro_drivers: 'Newer types need the ENA and NVMe drivers; most current images already have them.',
+  t3_unlimited_by_default:
+    't3 servers can burst without limit by default, which can cost extra; set credits to "standard" to match t2.',
+  arm64_build_needed: 'Your software needs an Arm version, so plan time to build and test it.',
 }
 
 const REVERSIBILITY: Record<Recommendation['reversibility'], string> = {
@@ -374,7 +392,14 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
         <Card className="flex flex-col gap-5 p-5 lg:col-span-2">
           <div>
             <h2 className="mb-2 text-base font-semibold">How to fix it</h2>
-            <Commands steps={r.fix.steps} />
+            {r.fix.checklist && r.fix.checklist.length > 0 && (
+              <ol className="mb-2 list-decimal space-y-1 pl-5 text-sm">
+                {r.fix.checklist.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ol>
+            )}
+            {r.fix.steps.length > 0 && <Commands steps={r.fix.steps} />}
             {r.fix.notes && <p className="mt-2 text-xs text-muted">{r.fix.notes}</p>}
           </div>
           {r.fix.rollback.length > 0 && (
@@ -386,7 +411,9 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
           {r.fix.alternative && (
             <div>
               <h3 className="text-sm font-semibold">{r.fix.alternative.title}</h3>
-              <p className="mb-2 text-xs text-muted">Costs about {money(r.fix.alternative.monthlyCostUsd)} a month.</p>
+              {r.fix.alternative.monthlyCostUsd !== undefined && (
+                <p className="mb-2 text-xs text-muted">Costs about {money(r.fix.alternative.monthlyCostUsd)} a month.</p>
+              )}
               <Commands steps={r.fix.alternative.steps} />
             </div>
           )}

@@ -264,7 +264,9 @@ export interface RecommendationFix {
   steps: string[]
   rollback: string[]
   notes?: string
-  alternative?: { title: string; monthlyCostUsd: number; steps: string[] }
+  /** Plain-language steps when the fix is not a few commands (for example a move to Arm). */
+  checklist?: string[]
+  alternative?: { title: string; monthlyCostUsd?: number; steps: string[] }
 }
 
 export interface Recommendation {

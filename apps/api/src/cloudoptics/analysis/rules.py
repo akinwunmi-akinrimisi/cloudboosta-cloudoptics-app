@@ -1,4 +1,5 @@
-"""The first recommendation rules: R1 unused storage, R2 idle network, R3 gp2 to gp3.
+"""Inventory rules: R1 unused storage, R2 idle network, R3 gp2 to gp3 (usage-based rules
+are in ``compute``).
 
 Each rule turns inventory rows into candidates with costs, risk factors, confidence and a
 fix (PRD FR-ANA-01/01b/02/02b/03, FR-REC-02/05). Rules are pure: the engine loads the
@@ -11,7 +12,7 @@ import shlex
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 from cloudoptics.analysis.pricing import HOURS_PER_MONTH, Basis, PriceBook
@@ -51,6 +52,10 @@ class Context:
     # (account, region) -> {instance id -> Resource}
     instances: dict[tuple[str, str], dict[str, Resource]] = field(default_factory=dict)
     live_volumes: set[tuple[str, str, str]] = field(default_factory=set)
+    # (account, region, volume id) -> Resource
+    volumes: dict[tuple[str, str, str], Resource] = field(default_factory=dict)
+    # resource uuid -> metric -> UTC day -> 24 hourly values (None where no data)
+    usage: dict[uuid.UUID, dict[str, dict[date, list[float | None]]]] = field(default_factory=dict)
 
 
 @dataclass

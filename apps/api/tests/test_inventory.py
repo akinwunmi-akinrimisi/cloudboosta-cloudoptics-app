@@ -139,6 +139,7 @@ class FakeRds:
                     "Engine": "postgres",
                     "MultiAZ": True,
                     "AllocatedStorage": 100,
+                    "InstanceCreateTime": LAUNCH,
                     "TagList": [{"Key": "env", "Value": "prod"}],
                 }
             ]

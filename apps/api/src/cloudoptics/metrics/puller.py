@@ -2,9 +2,9 @@
 
 Only candidates are pulled: EC2 instances that are running and RDS DB instances that are
 available, in accounts with resource access. For each one, GetMetricData returns hourly
-values for the last 14 days on the first pull, then only from the last stored day (which
+values for the last 32 days on the first pull, then only from the last stored day (which
 was partial) onwards. CloudWatch keeps hourly data for 15 months, so the first pull already
-has two weeks of history and nobody waits for data to build up.
+has a month of history and nobody waits for data to build up.
 
 GetMetricData is billed per metric requested, so each tenant has a daily budget of metric
 queries (``metrics_daily_budget``). Resources with no data yet go first; the rest wait for
@@ -35,8 +35,10 @@ from cloudoptics.platform.settings import get_settings
 
 log = logging.getLogger(__name__)
 
-WINDOW_DAYS = 14
-KEEP_DAYS = 35
+# 32 days covers month-end cycles (PRD FR-ANA-05). GetMetricData is billed per metric,
+# not per data point, so a longer window costs nothing extra.
+WINDOW_DAYS = 32
+KEEP_DAYS = 40
 PERIOD = 3600
 MAX_QUERIES = 500  # GetMetricData limit per call
 BUDGET_API = "cloudwatch.GetMetricData"
@@ -60,6 +62,8 @@ METRICS: dict[str, tuple[str, str, list[tuple[str, str, str]]]] = {
             ("cpu", "CPUUtilization", "Average"),
             ("cpu_max", "CPUUtilization", "Maximum"),
             ("connections", "DatabaseConnections", "Maximum"),
+            ("read_iops", "ReadIOPS", "Average"),
+            ("write_iops", "WriteIOPS", "Average"),
         ],
     ),
 }
@@ -362,3 +366,16 @@ async def usage(session: Any, resource_uuid: uuid.UUID) -> list[UsageSeries]:
             (day, sum(present) / len(present) if present else None, max(present, default=None))
         )
     return [UsageSeries(m, d) for m, d in series.items()]
+
+
+async def load_usage(session: Any) -> dict[uuid.UUID, dict[str, dict[date, list[float | None]]]]:
+    """Every stored hourly value of the tenant, for the analysis rules."""
+    usage: dict[uuid.UUID, dict[str, dict[date, list[float | None]]]] = defaultdict(
+        lambda: defaultdict(dict)
+    )
+    rows = await session.execute(
+        text("SELECT resource_id, metric, day, hourly FROM resource_metric")
+    )
+    for rid, metric, day, hourly in rows:
+        usage[rid][metric][day] = list(hourly)
+    return {rid: dict(metrics) for rid, metrics in usage.items()}

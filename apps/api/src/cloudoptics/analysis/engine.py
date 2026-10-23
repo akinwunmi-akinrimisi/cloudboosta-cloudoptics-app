@@ -24,8 +24,10 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cloudoptics.analysis.compute import COMPUTE_RULES
 from cloudoptics.analysis.pricing import load_price_book
 from cloudoptics.analysis.rules import RULES, Candidate, Context, Resource, parse_time
+from cloudoptics.metrics.puller import load_usage
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
 
@@ -99,6 +101,7 @@ def build_context(resources: list[Resource], ctx: Context) -> Context:
         key = (r.account_id, r.region_id)
         if r.resource_type == "ebs_volume":
             ctx.live_volumes.add((r.account_id, r.region_id, r.resource_id))
+            ctx.volumes[(r.account_id, r.region_id, r.resource_id)] = r
         elif r.resource_type == "ec2_instance":
             ctx.instances.setdefault(key, {})[r.resource_id] = r
         elif r.resource_type == "ebs_snapshot" and r.state == "completed":
@@ -113,7 +116,7 @@ def build_context(resources: list[Resource], ctx: Context) -> Context:
 
 def evaluate(ctx: Context, resources: list[Resource]) -> list[Scored]:
     build_context(resources, ctx)
-    return [score(c) for rule in RULES for c in rule(ctx, resources)]
+    return [score(c) for rule in [*RULES, *COMPUTE_RULES] for c in rule(ctx, resources)]
 
 
 def _row(s: Scored, generation: int) -> dict[str, Any]:
@@ -226,6 +229,10 @@ async def run_analysis(tenant_id: uuid.UUID, now: datetime | None = None) -> dic
     async with get_sessionmaker()() as session, session.begin():
         await scope(session, tenant_id=tenant_id)
         resources = await _load(session)
-        ctx = Context(now=now or datetime.now(UTC), prices=await load_price_book(session))
+        ctx = Context(
+            now=now or datetime.now(UTC),
+            prices=await load_price_book(session),
+            usage=await load_usage(session),
+        )
         scored = evaluate(ctx, resources)
         return await store(session, tenant_id, scored, int(time.time() * 1000))
