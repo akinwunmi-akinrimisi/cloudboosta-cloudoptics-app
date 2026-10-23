@@ -447,12 +447,9 @@ function ConnectionActions({ connection: c, tenantId }: { connection: Connection
 function ResourceAccess({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
   const api = useApi()
   const qc = useQueryClient()
-  // A queued scan runs on the worker: refresh the accounts for two minutes.
-  const [waiting, setWaiting] = useState(false)
   const list = useQuery({
     queryKey: ['accounts', tenantId],
     queryFn: () => api.listAccounts(tenantId),
-    refetchInterval: waiting ? 5000 : false,
   })
   const accounts = (list.data?.accounts ?? []).filter((a) => a.connectionId === c.id && a.orgStatus !== 'NOT_LISTED')
   const missing = accounts.filter((a) => !a.resourceAccess)
@@ -463,11 +460,7 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
   })
   const scan = useMutation({
     mutationFn: () => api.scanResources(tenantId, c.id),
-    onSuccess: (result) => {
-      if (result.status === 'queued') {
-        setWaiting(true)
-        setTimeout(() => setWaiting(false), 120_000)
-      }
+    onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
       void qc.invalidateQueries({ queryKey: ['recommendations', tenantId] })
     },
@@ -476,12 +469,15 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
   if (missing.length === 0) {
     return (
       <p className="mt-4 text-sm text-good-ink">
-        Resource access in {accounts.length === 1 ? 'this account' : `all ${accounts.length} accounts`}. Cloudoptics
-        scans resources every 12 hours for recommendations.
+        Resource access in {accounts.length === 1 ? 'this account' : `all ${accounts.length} accounts`}.{' '}
+        {scan.data?.status === 'queued'
+          ? 'Scanning resources now; recommendations appear in a few minutes.'
+          : 'Cloudoptics scans resources every 12 hours for recommendations.'}
       </p>
     )
   }
-  const checking = scan.isPending || waiting
+  const checking = scan.isPending
+  const refused = scan.data?.accounts.filter((a) => !a.access) ?? []
   const s = setup.data
   return (
     <div className="mt-4 flex flex-col gap-3 rounded-sm bg-surface-2 p-3 text-sm">
@@ -525,10 +521,12 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
         </dl>
       )}
       {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
-      {scan.isSuccess && !checking && (
-        <Alert tone="info">
-          No resource role found yet in {missing.length === 1 ? 'this account' : `${missing.length} accounts`}. If the
-          stack shows CREATE_COMPLETE, wait a minute and check again.
+      {refused.length > 0 && (
+        <Alert tone="error">
+          AWS refused the role <code className="font-mono text-xs">CloudopticsResourceReadOnly</code> in{' '}
+          {refused.map((a) => `${a.awsAccountId} (${a.error ?? 'no access'})`).join(', ')}. Check that the stack shows
+          CREATE_COMPLETE in that account, and that the role&apos;s trust relationship has the same principal and
+          External ID as <code className="font-mono text-xs">CloudopticsBillingReadOnly</code>.
         </Alert>
       )}
       <div className="flex flex-wrap gap-2">

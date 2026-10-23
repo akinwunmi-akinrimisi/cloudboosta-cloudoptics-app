@@ -12,6 +12,7 @@ from procrastinate.exceptions import AlreadyEnqueued
 from pydantic import Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
+from starlette.concurrency import run_in_threadpool
 
 from cloudoptics.audit import log as audit
 from cloudoptics.connectors import accounts, aws
@@ -20,6 +21,7 @@ from cloudoptics.connectors.service import (
     LIST_CONNECTIONS,
     ConnectionNotFoundError,
     get_connection,
+    get_session_factory,
     run_validation,
 )
 from cloudoptics.identity.deps import AdminAccess, Session, TenantAccess, ViewerAccess
@@ -80,10 +82,22 @@ class ConnectionSetup(ApiModel):
     principal_arn: str
 
 
+class AccountAccess(ApiModel):
+    aws_account_id: str
+    access: bool
+    # The AWS error code when the resource role could not be assumed (e.g. AccessDenied).
+    error: str | None
+
+
 class ScanStarted(ApiModel):
-    """``queued`` on staging and production; the result itself when jobs run inline."""
+    """``queued`` on staging and production; the result itself when jobs run inline.
+
+    ``accounts`` is the role check done in the request, so the answer is immediate even
+    when the full scan runs later on the worker.
+    """
 
     status: Literal["queued", "succeeded", "partial", "skipped"]
+    accounts: list[AccountAccess]
 
 
 class ValidationAccepted(ApiModel):
@@ -303,28 +317,59 @@ async def validate(
 async def scan_resources(
     connection_id: uuid.UUID, response: Response, access: AdminAccess, session: Session
 ) -> ScanStarted:
-    """Look for the resource role now instead of at the next 12-hourly scan."""
+    """Check the resource role now, then scan, instead of waiting for the 12-hourly scan."""
+    from cloudoptics.inventory.scanner import check_access, scan_connection
+
     row = await _load(session, connection_id)
     if row.status not in accounts.USABLE:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Check the billing connection first: resources are scanned for working connections.",
         )
+    account_ids = [
+        r.aws_account_id.strip()
+        for r in await session.execute(
+            text(
+                "SELECT aws_account_id FROM cloud_account WHERE connection_id = :c AND "
+                "coalesce(org_status, 'ACTIVE') = 'ACTIVE' ORDER BY aws_account_id"
+            ),
+            {"c": connection_id},
+        )
+    ]
+    external_id = get_encryptor().decrypt(bytes(row.external_id_enc), access.tenant_id)
+    factory = get_session_factory()
+    checked: list[AccountAccess] = []
+    for account_id in account_ids:
+        error = await run_in_threadpool(
+            check_access, factory, account_id, external_id, access.tenant_id
+        )
+        checked.append(AccountAccess(aws_account_id=account_id, access=error is None, error=error))
+    if not any(a.access for a in checked):
+        return ScanStarted(status="skipped", accounts=checked)
+
     if get_settings().jobs_mode == "inline":
         from cloudoptics.analysis.engine import run_analysis
-        from cloudoptics.inventory.scanner import scan_connection
 
         result = await scan_connection(access.tenant_id, connection_id)
         if result in ("succeeded", "partial"):
             await run_analysis(access.tenant_id)
-        return ScanStarted(status=result)
+        return ScanStarted(status=result, accounts=checked)
 
     from cloudoptics.inventory.jobs import defer_scan
     from cloudoptics.platform.jobs import get_job_app
 
+    # Show the access straight away; the scan on the worker confirms it and adds resources.
+    for a in checked:
+        await session.execute(
+            text(
+                "UPDATE cloud_account SET resource_access = :access WHERE connection_id = :c "
+                "AND aws_account_id = :a"
+            ),
+            {"access": a.access, "c": connection_id, "a": a.aws_account_id},
+        )
     await defer_scan(get_job_app(), str(access.tenant_id), str(connection_id))
     response.status_code = status.HTTP_202_ACCEPTED
-    return ScanStarted(status="queued")
+    return ScanStarted(status="queued", accounts=checked)
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)

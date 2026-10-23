@@ -321,10 +321,22 @@ async def test_admins_scan_now_and_get_a_resource_quick_create_link(
     base = f"/v1/tenants/{tenant}/connections/{connection}"
     world.no_access = {account, "555555555555"}
     r = await client.post(f"{base}/scan", headers=headers)
-    assert r.status_code == 200 and r.json() == {"status": "skipped"}
+    assert r.status_code == 200
+    assert r.json() == {
+        "status": "skipped",
+        "accounts": [
+            {"awsAccountId": a, "access": False, "error": "AccessDenied"}
+            for a in sorted([account, "555555555555"])
+        ],
+    }
 
     world.no_access = {"555555555555"}  # the resource stack is now in the account
-    assert (await client.post(f"{base}/scan", headers=headers)).json() == {"status": "succeeded"}
+    body = (await client.post(f"{base}/scan", headers=headers)).json()
+    assert body["status"] == "succeeded"
+    assert {a["awsAccountId"]: a["error"] for a in body["accounts"]} == {
+        account: None,
+        "555555555555": "AccessDenied",
+    }
     accounts = (await client.get(f"/v1/tenants/{tenant}/accounts", headers=headers)).json()
     assert accounts["coverage"]["withResourceAccess"] == 1
     assert owner_sql("SELECT count(*) FROM recommendation WHERE tenant_id = %s", tenant)[0][0] > 0
@@ -339,3 +351,30 @@ async def test_admins_scan_now_and_get_a_resource_quick_create_link(
 
     owner_sql("UPDATE cloud_connection SET status = 'failed' WHERE id = %s", connection)
     assert (await client.post(f"{base}/scan", headers=headers)).status_code == 409
+
+
+async def test_queued_scan_shows_access_at_once(
+    client: AsyncClient, login, owner_sql, monkeypatch, world
+) -> None:
+    import cloudoptics.platform.jobs as platform_jobs
+    from cloudoptics.inventory import jobs
+    from cloudoptics.platform.settings import get_settings
+
+    tenant, connection, account, headers = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    queued: list[str] = []
+
+    async def fake_defer(app, tenant_id, connection_id):  # type: ignore[no-untyped-def]
+        queued.append(connection_id)
+
+    monkeypatch.setattr(jobs, "defer_scan", fake_defer)
+    monkeypatch.setattr(platform_jobs, "get_job_app", lambda: None)
+    monkeypatch.setattr(get_settings(), "jobs_mode", "queue")
+    r = await client.post(f"/v1/tenants/{tenant}/connections/{connection}/scan", headers=headers)
+    assert r.status_code == 202 and r.json()["status"] == "queued"
+    assert queued == [connection]
+    accounts = (await client.get(f"/v1/tenants/{tenant}/accounts", headers=headers)).json()
+    assert {a["awsAccountId"]: a["resourceAccess"] for a in accounts["accounts"]} == {
+        account: True,
+        "555555555555": False,
+    }

@@ -72,6 +72,19 @@ def _code(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def check_access(
+    factory: Any, account_id: str, external_id: str, tenant_id: uuid.UUID
+) -> str | None:
+    """Assume the resource role once: None when it works, else the AWS error code."""
+    try:
+        factory.assume(
+            resource_role_arn(account_id), external_id, session_name(tenant_id, "inventory")
+        )
+    except (ClientError, BotoCoreError) as exc:
+        return _code(exc)
+    return None
+
+
 def _paged(
     call: Callable[..., dict[str, Any]], key: str, token_in: str, token_out: str, **kwargs: Any
 ) -> Iterator[dict[str, Any]]:
