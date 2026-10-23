@@ -15,12 +15,26 @@ from cloudoptics.platform.api import ApiModel
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/recommendations", tags=["recommendations"])
 
 OPEN = ["new", "assigned", "in_progress"]
-COLUMNS = (
-    "id, type, rule_id, account_id, region_id, resource_id, title, current_config, "
+# Literal statements only; request values are always bound parameters.
+LIST_RECOMMENDATIONS = text(
+    "SELECT id, type, rule_id, account_id, region_id, resource_id, title, current_config, "
     "recommended_config, cost_now_usd_month, cost_after_usd_month, savings_usd_month, "
     "savings_basis, effort, reversibility, restart_required, risk_score, risk_level, "
     "risk_factors, confidence, confidence_notes, priority_score, evidence, fix, primary_of, "
-    "status, first_detected_at, last_evaluated_at"
+    "status, first_detected_at, last_evaluated_at FROM recommendation "
+    "WHERE (NOT :open_only OR status = ANY(:open)) "
+    "AND (CAST(:rule AS text) IS NULL OR rule_id = :rule) "
+    "AND (CAST(:account AS text) IS NULL OR account_id = :account) "
+    "AND (:alternatives OR primary_of IS NULL) "
+    "ORDER BY priority_score DESC, savings_usd_month DESC, id LIMIT 500"
+)
+GET_RECOMMENDATION = text(
+    "SELECT id, type, rule_id, account_id, region_id, resource_id, title, current_config, "
+    "recommended_config, cost_now_usd_month, cost_after_usd_month, savings_usd_month, "
+    "savings_basis, effort, reversibility, restart_required, risk_score, risk_level, "
+    "risk_factors, confidence, confidence_notes, priority_score, evidence, fix, primary_of, "
+    "status, first_detected_at, last_evaluated_at FROM recommendation "
+    "WHERE id = :id"
 )
 
 
@@ -86,14 +100,7 @@ async def list_recommendations(
     alternatives: bool = False,
 ) -> list[Recommendation]:
     rows = await session.execute(
-        text(
-            f"SELECT {COLUMNS} FROM recommendation WHERE "  # noqa: S608 - constant columns
-            "(NOT :open_only OR status = ANY(:open)) "
-            "AND (CAST(:rule AS text) IS NULL OR rule_id = :rule) "
-            "AND (CAST(:account AS text) IS NULL OR account_id = :account) "
-            "AND (:alternatives OR primary_of IS NULL) "
-            "ORDER BY priority_score DESC, savings_usd_month DESC, id LIMIT 500"
-        ),
+        LIST_RECOMMENDATIONS,
         {
             "open_only": state == "open",
             "open": OPEN,
@@ -133,12 +140,7 @@ async def recommendation_summary(access: ViewerAccess, session: Session) -> Reco
 async def get_recommendation(
     recommendation_id: uuid.UUID, access: ViewerAccess, session: Session
 ) -> Recommendation:
-    row = (
-        await session.execute(
-            text(f"SELECT {COLUMNS} FROM recommendation WHERE id = :id"),  # noqa: S608
-            {"id": recommendation_id},
-        )
-    ).first()
+    row = (await session.execute(GET_RECOMMENDATION, {"id": recommendation_id})).first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "recommendation_not_found")
     return _model(row)
