@@ -279,6 +279,19 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByRole('cell', { name: /af-south-1/ })).toBeTruthy()
   })
 
+  it('lets admins invite people and cancel invites in settings', async () => {
+    const { user } = await connectedWorkspace('chidi@example.com')
+    await user.click(screen.getByRole('link', { name: 'Settings' }))
+    expect(await screen.findByRole('heading', { name: 'Members' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'Role for chidi@example.com' })).toBeTruthy()
+    await user.type(screen.getByLabelText('Invite by email'), 'Claude-Review@Example.com')
+    await user.click(screen.getByRole('button', { name: 'Invite' }))
+    expect(await screen.findByText(/Invited claude-review@example.com/)).toBeTruthy()
+    expect(await screen.findByText(/claude-review@example.com · viewer/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Cancel invite' }))
+    await waitFor(() => expect(screen.queryByText(/claude-review@example.com · viewer/)).toBeNull())
+  })
+
   it('shows the audit log to admins in settings', async () => {
     const { user } = await connectedWorkspace('amina@example.com')
     await user.click(screen.getByRole('link', { name: 'Settings' }))

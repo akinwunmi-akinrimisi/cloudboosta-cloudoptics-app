@@ -36,7 +36,13 @@ def verifier(handler: Any = None) -> WorkOSVerifier:
         calls.append(request.url.path)
         assert request.headers["authorization"] == "Bearer sk_test_key"
         return httpx.Response(
-            200, json={"id": "user_01ABC", "email": "ada@example.com", "first_name": "Ada"}
+            200,
+            json={
+                "id": "user_01ABC",
+                "email": "ada@example.com",
+                "first_name": "Ada",
+                "email_verified": True,
+            },
         )
 
     v = WorkOSVerifier(
@@ -62,6 +68,21 @@ async def test_valid_token_reads_the_email_from_workos_once() -> None:
     )
     await v.verify(token())
     assert v.calls == ["/user_management/users/user_01ABC"]  # type: ignore[attr-defined]
+
+
+async def test_an_unconfirmed_email_is_read_again_until_confirmed() -> None:
+    answers = iter([False, True])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        verified = next(answers, True)
+        return httpx.Response(
+            200, json={"id": "user_01ABC", "email": "ada@example.com", "email_verified": verified}
+        )
+
+    v = verifier(handler)
+    assert (await v.verify(token())).email_verified is False
+    assert (await v.verify(token())).email_verified is True
+    assert (await v.verify(token())).email_verified is True  # cached once confirmed
 
 
 async def test_email_in_the_token_skips_the_lookup() -> None:

@@ -13,6 +13,7 @@ from cloudoptics.connectors import access as connector_access
 from cloudoptics.connectors import routes as connector_routes
 from cloudoptics.fx import routes as fx_routes
 from cloudoptics.identity import dev as dev_routes
+from cloudoptics.identity import invites as invite_routes
 from cloudoptics.identity import routes as identity_routes
 from cloudoptics.ingestion import routes as ingestion_routes
 from cloudoptics.inventory import routes as inventory_routes
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
         return JSONResponse({"status": "ready", "environment": settings.environment})
 
     app.include_router(identity_routes.router)
+    app.include_router(invite_routes.router)
     app.include_router(connector_access.intents_router)
     app.include_router(connector_access.callback_router)
     app.include_router(connector_routes.router)

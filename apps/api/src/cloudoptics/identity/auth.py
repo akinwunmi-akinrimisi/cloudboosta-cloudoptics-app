@@ -46,17 +46,24 @@ class Claims:
     subject: str
     email: str
     name: str | None
+    # Whether the provider confirmed the person owns the email; invitations need it.
+    email_verified: bool = False
 
 
 class TokenVerifier(Protocol):
     async def verify(self, token: str) -> Claims: ...
 
 
-def _claims(payload: dict[str, Any]) -> Claims:
+def _claims(payload: dict[str, Any], *, verified: bool | None = None) -> Claims:
     email = payload.get("email")
     if not payload.get("sub") or not email:
         raise jwt.InvalidTokenError("token must carry sub and email")
-    return Claims(subject=str(payload["sub"]), email=str(email), name=payload.get("name"))
+    return Claims(
+        subject=str(payload["sub"]),
+        email=str(email),
+        name=payload.get("name"),
+        email_verified=payload.get("email_verified") is True if verified is None else verified,
+    )
 
 
 class DevVerifier:
@@ -72,7 +79,7 @@ class DevVerifier:
             audience="cloudoptics-api",
             options={"require": ["exp", "sub", "iss", "aud"]},
         )
-        return _claims(payload)
+        return _claims(payload, verified=True)  # dev only: there is no mailbox to confirm
 
     def mint(self, email: str, name: str | None = None, ttl_seconds: int = 8 * 3600) -> str:
         now = int(time.time())
@@ -116,7 +123,7 @@ class WorkOSVerifier:
     api_key: str
     api_base: str = "https://api.workos.com"
     http: httpx.AsyncClient | None = None
-    _profiles: dict[str, tuple[str, str | None]] = field(default_factory=dict)
+    _profiles: dict[str, tuple[str, str | None, bool]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._jwks = jwt.PyJWKClient(
@@ -145,7 +152,7 @@ class WorkOSVerifier:
             raise jwt.InvalidTokenError("token was issued to another client")
         return payload
 
-    async def _profile(self, user_id: str) -> tuple[str, str | None]:
+    async def _profile(self, user_id: str) -> tuple[str, str | None, bool]:
         if user_id not in self._profiles:
             if not self.api_key:
                 raise jwt.InvalidTokenError("token has no email and no WorkOS API key is set")
@@ -165,15 +172,21 @@ class WorkOSVerifier:
                 raise ProviderError(f"WorkOS user lookup returned {res.status_code}")
             user = res.json()
             name = " ".join(p for p in (user.get("first_name"), user.get("last_name")) if p)
-            self._profiles[user_id] = (str(user["email"]), name or None)
+            profile = (str(user["email"]), name or None, user.get("email_verified") is True)
+            if not profile[2]:
+                return profile  # read again next time: the person may confirm it meanwhile
+            self._profiles[user_id] = profile
         return self._profiles[user_id]
 
     async def verify(self, token: str) -> Claims:
         payload = await run_in_threadpool(self._decode, token)
         email, name = payload.get("email"), payload.get("name")
+        verified = payload.get("email_verified") is True
         if not email:
-            email, name = await self._profile(str(payload["sub"]))
-        return Claims(subject=f"workos|{payload['sub']}", email=str(email), name=name)
+            email, name, verified = await self._profile(str(payload["sub"]))
+        return Claims(
+            subject=f"workos|{payload['sub']}", email=str(email), name=name, email_verified=verified
+        )
 
 
 def build_verifier(settings: Settings) -> TokenVerifier:

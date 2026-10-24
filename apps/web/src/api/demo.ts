@@ -18,6 +18,7 @@ import type {
   DailyCosts,
   IntentSetup,
   Me,
+  Invite,
   Member,
   PermissionCheck,
   Recommendation,
@@ -27,6 +28,7 @@ import type {
   RecommendationStatus,
   RecommendationSummary,
   ResourceScan,
+  Role,
   RuleSettings,
   RuleSettingsView,
   Tenant,
@@ -75,6 +77,8 @@ interface State {
   recommendationAssignee?: Record<string, string | null>
   recommendationEvents?: Record<string, RecommendationEvent[]>
   ruleSettings?: Record<string, RuleSettings>
+  /** Open invites per tenant. Nobody else signs in to the demo, so they stay pending. */
+  invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
   resourceAccess?: Record<string, boolean>
   /** One-click links waiting for the (simulated) stack to report back. */
@@ -426,6 +430,64 @@ export class DemoApi implements Api {
     const tenant = this.tenant(tenantId)
     const me = this.requireMe()
     return [{ userId: me.id, email: me.email, displayName: me.displayName, role: 'admin', joinedAt: tenant.createdAt }]
+  }
+
+  async inviteMember(tenantId: string, email: string, role: Role): Promise<Invite> {
+    await this.tick()
+    this.tenant(tenantId)
+    const me = this.requireMe()
+    const address = email.trim().toLowerCase()
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
+      throw new ApiError(422, 'Request validation failed', [{ field: 'email', message: 'Enter an email address' }])
+    }
+    if (address === me.email) throw new ApiError(409, `${address} is already in this workspace`)
+    const now = new Date()
+    const invite: Invite = {
+      id: randomId(),
+      email: address,
+      role,
+      invitedByEmail: me.email,
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+      status: 'pending',
+      emailSent: false,
+    }
+    const invites = ((this.state.invites ??= {})[tenantId] ??= [])
+    this.state.invites[tenantId] = [invite, ...invites.filter((i) => i.email !== address)]
+    this.save()
+    return structuredClone(invite)
+  }
+
+  async listInvites(tenantId: string): Promise<Invite[]> {
+    await this.tick()
+    this.tenant(tenantId)
+    return structuredClone(this.state.invites?.[tenantId] ?? []).map((i) => ({ ...i, emailSent: null }))
+  }
+
+  async revokeInvite(tenantId: string, inviteId: string): Promise<void> {
+    await this.tick()
+    const invites = this.state.invites?.[tenantId] ?? []
+    if (!invites.some((i) => i.id === inviteId)) throw new ApiError(404, 'Invite not found')
+    ;(this.state.invites ??= {})[tenantId] = invites.filter((i) => i.id !== inviteId)
+    this.save()
+  }
+
+  // The demo workspace has one member, its only admin.
+  async changeRole(tenantId: string, userId: string, role: Role): Promise<void> {
+    await this.tick()
+    this.tenant(tenantId)
+    if (userId === this.requireMe().id && role !== 'admin') {
+      throw new ApiError(409, 'A workspace needs at least one admin. Make someone else admin first.')
+    }
+  }
+
+  async removeMember(tenantId: string, userId: string): Promise<void> {
+    await this.tick()
+    this.tenant(tenantId)
+    if (userId === this.requireMe().id) {
+      throw new ApiError(409, 'A workspace needs at least one admin. Make someone else admin first.')
+    }
+    throw new ApiError(404, 'Member not found')
   }
 
   async listConnections(tenantId: string): Promise<Connection[]> {

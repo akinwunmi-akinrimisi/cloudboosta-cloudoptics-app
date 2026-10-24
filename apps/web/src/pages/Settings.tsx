@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useState } from 'react'
 
 import { useApi } from '../app/context'
-import type { AuditEntry, RuleSettings, RuleSettingsView, Tenant } from '../api/types'
+import type { AuditEntry, Invite, Member, Role, RuleSettings, RuleSettingsView, Tenant } from '../api/types'
 import { ApiError } from '../api/types'
 import { Alert, Button, Card } from '../components/ui'
 import { RULES } from '../lib/rules'
@@ -207,6 +207,166 @@ function RuleSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canEd
   )
 }
 
+const ROLE_NAMES: Record<Role, string> = { admin: 'Admin', member: 'Member', viewer: 'Viewer' }
+
+const ROLES: Record<Role, string> = {
+  admin: 'Admin: everything, including connections and people',
+  member: 'Member: works on recommendations',
+  viewer: 'Viewer: reads everything, changes nothing',
+}
+
+function errorText(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? error.message : fallback
+}
+
+/** Who is in the workspace, and inviting people (PRD US-8.1). Everyone sees it; admins change it. */
+function MembersCard({ tenantId, meId, isAdmin }: { tenantId: string; meId: string; isAdmin: boolean }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const [email, setEmail] = useState('')
+  const [role, setRole] = useState<Role>('viewer')
+  const [notice, setNotice] = useState<string | null>(null)
+  const members = useQuery({ queryKey: ['members', tenantId], queryFn: () => api.listMembers(tenantId) })
+  const invites = useQuery({
+    queryKey: ['invites', tenantId],
+    queryFn: () => api.listInvites(tenantId),
+    enabled: isAdmin,
+  })
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['members', tenantId] })
+    void qc.invalidateQueries({ queryKey: ['invites', tenantId] })
+    void qc.invalidateQueries({ queryKey: ['audit-log', tenantId] })
+  }
+  const invite = useMutation({
+    mutationFn: () => api.inviteMember(tenantId, email, role),
+    onSuccess: (made: Invite) => {
+      setEmail('')
+      setNotice(
+        made.emailSent
+          ? `Invited ${made.email}. They join when they sign in with that email.`
+          : `Invited ${made.email}. The invite email could not be sent, so tell them to sign in with that email.`,
+      )
+      refresh()
+    },
+  })
+  const revoke = useMutation({ mutationFn: (id: string) => api.revokeInvite(tenantId, id), onSuccess: refresh })
+  const change = useMutation({
+    mutationFn: ({ userId, to }: { userId: string; to: Role }) => api.changeRole(tenantId, userId, to),
+    onSuccess: refresh,
+  })
+  const remove = useMutation({ mutationFn: (userId: string) => api.removeMember(tenantId, userId), onSuccess: refresh })
+  const failed = invite.error ?? revoke.error ?? change.error ?? remove.error
+  const name = (m: Member) => (m.displayName ? `${m.displayName} (${m.email})` : m.email)
+  return (
+    <Card className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-base font-semibold">Members</h2>
+        <p className="mt-1 text-sm text-secondary">
+          People who can open this workspace. Invited people join the first time they sign in with the invited email.
+        </p>
+      </div>
+      <ul className="flex flex-col divide-y divide-border rounded-sm border border-border">
+        {(members.data ?? []).map((m) => (
+          <li key={m.userId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+            <span className="min-w-0 break-words">
+              {name(m)}
+              {m.userId === meId && <span className="text-muted"> (you)</span>}
+            </span>
+            {isAdmin ? (
+              <span className="flex items-center gap-2">
+                <select
+                  aria-label={`Role for ${m.email}`}
+                  className={selectClass}
+                  value={m.role}
+                  disabled={change.isPending}
+                  onChange={(e) => change.mutate({ userId: m.userId, to: e.target.value as Role })}
+                >
+                  {(Object.keys(ROLES) as Role[]).map((r) => (
+                    <option key={r} value={r}>
+                      {ROLE_NAMES[r]}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  variant="ghost"
+                  disabled={remove.isPending}
+                  onClick={() => {
+                    if (window.confirm(`Remove ${m.email} from this workspace?`)) remove.mutate(m.userId)
+                  }}
+                >
+                  Remove
+                </Button>
+              </span>
+            ) : (
+              <span className="text-secondary">{ROLE_NAMES[m.role]}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {isAdmin && (
+        <>
+          <form
+            className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end"
+            onSubmit={(e) => {
+              e.preventDefault()
+              setNotice(null)
+              invite.mutate()
+            }}
+          >
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium">Invite by email</span>
+              <input
+                type="email"
+                required
+                className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 text-sm"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="font-medium">Role</span>
+              <select className={selectClass} value={role} onChange={(e) => setRole(e.target.value as Role)}>
+                {(Object.keys(ROLES) as Role[]).map((r) => (
+                  <option key={r} value={r}>
+                    {ROLES[r]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button type="submit" disabled={!email.trim() || invite.isPending}>
+              {invite.isPending ? 'Inviting…' : 'Invite'}
+            </Button>
+          </form>
+          {notice && <Alert tone="info">{notice}</Alert>}
+          {(invites.data ?? []).length > 0 && (
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">Invited</h3>
+              <ul className="flex flex-col divide-y divide-border rounded-sm border border-border">
+                {(invites.data ?? []).map((i) => (
+                  <li key={i.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+                    <span className="min-w-0 break-words">
+                      {i.email} · {i.role}{' '}
+                      <span className="text-muted">
+                        {i.status === 'expired'
+                          ? '(expired: invite again)'
+                          : `(until ${new Date(i.expiresAt).toLocaleDateString()})`}
+                      </span>
+                    </span>
+                    <Button variant="ghost" disabled={revoke.isPending} onClick={() => revoke.mutate(i.id)}>
+                      Cancel invite
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+      {failed && <Alert tone="error">{errorText(failed, 'Could not save. Try again.')}</Alert>}
+    </Card>
+  )
+}
+
 const ACTIONS: Record<string, string> = {
   'tenant.created': 'Created the workspace',
   'tenant.updated': 'Changed workspace settings',
@@ -217,6 +377,11 @@ const ACTIONS: Record<string, string> = {
   'recommendation.assigned': 'Recommendation assigned',
   'rule_settings.updated': 'Changed recommendation rules',
   'fx_rate.set': 'Exchange rate set',
+  'invite.created': 'Invited someone',
+  'invite.revoked': 'Cancelled an invite',
+  'member.joined': 'Joined from an invite',
+  'member.role_changed': 'Changed a member\'s role',
+  'member.removed': 'Removed a member',
 }
 
 function who(entry: AuditEntry): string {
@@ -300,6 +465,9 @@ export function Settings() {
         <p className="text-sm text-secondary">Your workspace, what Cloudoptics looks for, and who changed what.</p>
       </div>
       {role === 'admin' && tenant.data && <WorkspaceSettings tenant={tenant.data} />}
+      {tenantId !== null && me && role !== undefined && (
+        <MembersCard tenantId={tenantId} meId={me.id} isAdmin={role === 'admin'} />
+      )}
       {tenantId !== null && role !== undefined && <RuleSettingsCard tenantId={tenantId} canEdit={role === 'admin'} />}
       <Card>
         <h2 className="text-base font-semibold">Email alerts</h2>
