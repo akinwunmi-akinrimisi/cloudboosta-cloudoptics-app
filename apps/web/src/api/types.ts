@@ -352,6 +352,18 @@ export interface Member {
   joinedAt: string
 }
 
+export interface Invite {
+  id: string
+  email: string
+  role: Role
+  invitedByEmail: string | null
+  createdAt: string
+  expiresAt: string
+  status: 'pending' | 'expired'
+  /** Whether the invite email went out; null when listed later. */
+  emailSent: boolean | null
+}
+
 export interface RuleSettings {
   disabledRules: string[]
   /** Resources with this tag key are left out of every rule. */
@@ -402,6 +414,12 @@ export interface Api {
   getTenant(tenantId: string): Promise<Tenant>
   updateTenant(tenantId: string, change: TenantChange): Promise<Tenant>
   listMembers(tenantId: string): Promise<Member[]>
+  /** Admins only. The invitee joins the first time they sign in with that email. */
+  inviteMember(tenantId: string, email: string, role: Role): Promise<Invite>
+  listInvites(tenantId: string): Promise<Invite[]>
+  revokeInvite(tenantId: string, inviteId: string): Promise<void>
+  changeRole(tenantId: string, userId: string, role: Role): Promise<void>
+  removeMember(tenantId: string, userId: string): Promise<void>
   listConnections(tenantId: string): Promise<Connection[]>
   createConnection(tenantId: string, body: ConnectionCreate): Promise<ConnectionSetup>
   createIntent(tenantId: string): Promise<IntentSetup>

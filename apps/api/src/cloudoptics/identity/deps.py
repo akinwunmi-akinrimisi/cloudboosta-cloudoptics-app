@@ -25,6 +25,7 @@ class CurrentUser:
     id: uuid.UUID
     email: str
     display_name: str | None
+    email_verified: bool = False
 
 
 async def current_user(
@@ -44,7 +45,12 @@ async def current_user(
         )
     ).one()
     await scope(session, user_id=row.id)
-    return CurrentUser(id=row.id, email=row.email, display_name=row.display_name)
+    return CurrentUser(
+        id=row.id,
+        email=row.email,
+        display_name=row.display_name,
+        email_verified=claims.email_verified,
+    )
 
 
 User = Annotated[CurrentUser, Depends(current_user)]

@@ -17,6 +17,7 @@ import type {
   CurrentRate,
   DailyCosts,
   Me,
+  Invite,
   Member,
   Recommendation,
   RecommendationChange,
@@ -28,6 +29,7 @@ import type {
   TenantChange,
   UsageSeries,
   ResourceScan,
+  Role,
   Tenant,
 } from './types'
 import { ApiError } from './types'
@@ -91,6 +93,26 @@ export class HttpApi implements Api {
 
   listMembers(tenantId: string): Promise<Member[]> {
     return this.request('GET', `/v1/tenants/${tenantId}/members`)
+  }
+
+  inviteMember(tenantId: string, email: string, role: Role): Promise<Invite> {
+    return this.request('POST', `/v1/tenants/${tenantId}/invites`, { email, role })
+  }
+
+  listInvites(tenantId: string): Promise<Invite[]> {
+    return this.request('GET', `/v1/tenants/${tenantId}/invites`)
+  }
+
+  revokeInvite(tenantId: string, inviteId: string): Promise<void> {
+    return this.request('DELETE', `/v1/tenants/${tenantId}/invites/${inviteId}`)
+  }
+
+  changeRole(tenantId: string, userId: string, role: Role): Promise<void> {
+    return this.request('PATCH', `/v1/tenants/${tenantId}/members/${userId}`, { role })
+  }
+
+  removeMember(tenantId: string, userId: string): Promise<void> {
+    return this.request('DELETE', `/v1/tenants/${tenantId}/members/${userId}`)
   }
 
   listConnections(tenantId: string): Promise<Connection[]> {

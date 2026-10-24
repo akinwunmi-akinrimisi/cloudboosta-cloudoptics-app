@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from cloudoptics.audit import log as audit
 from cloudoptics.identity.deps import AdminAccess, Role, Session, User, ViewerAccess
+from cloudoptics.identity.invites import accept_invites
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.db import scope
 from cloudoptics.platform.ids import uuid7
@@ -152,7 +153,12 @@ async def auth_config() -> AuthConfig:
 
 
 @router.get("/me", response_model=Me, response_model_by_alias=True)
-async def get_me(user: User, session: Session) -> Me:
+async def get_me(request: Request, user: User, session: Session) -> Me:
+    await accept_invites(request, user, session)
+    return await _me(user, session)
+
+
+async def _me(user: User, session: Session) -> Me:
     pref = (
         await session.execute(
             text("SELECT preferred_currency_view FROM app_user WHERE id = :u"), {"u": user.id}
@@ -180,7 +186,7 @@ async def patch_me(body: MePatch, user: User, session: Session) -> Me:
         text("UPDATE app_user SET preferred_currency_view = :v WHERE id = :u"),
         {"v": body.preferred_currency_view, "u": user.id},
     )
-    return await get_me(user, session)
+    return await _me(user, session)
 
 
 @router.post(
