@@ -425,16 +425,12 @@ async def scan_resources(
         for a in checked:
             if a.access or a.aws_account_id == row.aws_account_id.strip():
                 continue
-            if rollout is None:
-                a.rollout = (
-                    "Update the CloudOptics stack: AWS tries this account again, "
-                    "and CloudOptics can then show how it is going."
-                )
+            if isinstance(rollout, str):
+                a.rollout = await _rollout_problem(session, access.tenant_id, row.id, rollout)
             else:
                 a.rollout = rollout.get(
                     a.aws_account_id,
-                    "AWS has not started adding the role to this account. "
-                    "Update the CloudOptics stack to start it.",
+                    "AWS has not started adding the role to this account yet.",
                 )
     if not any(a.access for a in checked):
         return ScanStarted(status="skipped", accounts=checked)
@@ -468,12 +464,34 @@ async def scan_resources(
 
 def _member_rollout(
     factory: Any, role_arn: str, external_id: str, tenant_id: uuid.UUID
-) -> dict[str, str] | None:
+) -> dict[str, str] | str:
     try:
         payer = factory.assume(role_arn, external_id, aws.session_name(tenant_id, "rollout"))
-    except Exception:  # the billing check reports role problems; this is only a hint
-        return None
+    except Exception as exc:  # the billing check reports role problems; this is only a hint
+        return type(exc).__name__
     return aws.member_rollout(payer)
+
+
+async def _rollout_problem(
+    session: Any, tenant_id: uuid.UUID, connection_id: uuid.UUID, code: str
+) -> str:
+    """Why the rollout cannot be read, with the stack's own last failure when it sent one."""
+    last = (
+        await session.execute(
+            text(
+                "SELECT after->>'reason' FROM audit_log WHERE tenant_id = :t AND action = "
+                "'connection.member_rollout_failed' AND target_id = :c ORDER BY id DESC LIMIT 1"
+            ),
+            {"t": tenant_id, "c": str(connection_id)},
+        )
+    ).scalar_one_or_none()
+    if code == "StackSetNotFoundException":
+        words = "AWS has not set up the rollout to member accounts."
+    else:
+        words = f"Cloudoptics could not read the rollout to member accounts ({code})."
+    if last:
+        words += f" The stack's last try said: {last}"
+    return words
 
 
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)

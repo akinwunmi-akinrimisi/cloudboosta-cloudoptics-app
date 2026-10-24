@@ -216,3 +216,25 @@ def test_stack_update_url_opens_the_update_page_with_the_template_chosen() -> No
     )
     assert f"stackId={aws.ACCESS_STACK_NAME}" in url
     assert "templateURL=https%3A%2F%2Fbucket.s3.amazonaws.com%2Fcloudoptics-access.yaml" in url
+
+
+async def test_an_unreadable_rollout_says_why_with_the_stacks_last_failure() -> None:
+    import uuid
+    from types import SimpleNamespace
+
+    from cloudoptics.connectors.routes import _rollout_problem
+
+    class _Db:
+        def __init__(self, reason: str | None) -> None:
+            self.reason = reason
+
+        async def execute(self, *_: object) -> SimpleNamespace:
+            return SimpleNamespace(scalar_one_or_none=lambda: self.reason)
+
+    t, c = uuid.uuid4(), uuid.uuid4()
+    words = await _rollout_problem(_Db("failed: X: boom"), t, c, "StackSetNotFoundException")
+    assert words == (
+        "AWS has not set up the rollout to member accounts. "
+        "The stack's last try said: failed: X: boom"
+    )
+    assert "(AccessDenied)" in await _rollout_problem(_Db(None), t, c, "AccessDenied")

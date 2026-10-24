@@ -43,11 +43,11 @@ def billing_role_arn(aws_account_id: str, stack_name: str | None = None) -> str:
 MEMBER_STACKSET_NAME = "cloudoptics-resource-access"
 
 
-def member_rollout(session: AssumedSession) -> dict[str, str] | None:
+def member_rollout(session: AssumedSession) -> dict[str, str] | str:
     """Each member account's rollout of the resource role, in plain words, by account ID.
 
-    Read with the payer's billing role (2.0.1 may read its own StackSet). None when the
-    role cannot read it, as before 2.0.1.
+    Read with the payer's billing role (2.0.1 may read its own StackSet). When it cannot
+    be read, the AWS error code instead, e.g. StackSetNotFoundException or AccessDenied.
     """
     from botocore.exceptions import BotoCoreError, ClientError
 
@@ -59,8 +59,10 @@ def member_rollout(session: AssumedSession) -> dict[str, str] | None:
         ):
             for item in page.get("Summaries", []):
                 found[item["Account"]] = _rollout_words(item)
-    except (ClientError, BotoCoreError):
-        return None
+    except ClientError as exc:
+        return str(exc.response.get("Error", {}).get("Code") or "Error")
+    except BotoCoreError as exc:
+        return type(exc).__name__
     return found
 
 
@@ -75,7 +77,7 @@ def _rollout_words(item: dict[str, Any]) -> str:
         return "AWS skipped this account because it is suspended."
     words = "AWS could not add the read-only role to this account"
     words += f": {reason}" if reason else "."
-    return words + " Update the CloudOptics stack to try again."
+    return words
 
 
 def resource_role_arn(aws_account_id: str, stack_name: str | None = None) -> str:
