@@ -94,7 +94,8 @@ def test_setup_role_writes_only_to_cloudoptics_resources() -> None:
         # No resource-level scope exists for these.
         "cloudformation:ActivateOrganizationsAccess",
         "organizations:EnableAWSServiceAccess",
-        "iam:CreateServiceLinkedRole",  # limited by a condition to the StackSets role
+        "iam:CreateServiceLinkedRole",  # limited by path to the StackSets role
+        "cloudformation:CreateStackSet",  # supports no resource-level permissions
         "bcm-data-exports:DeleteExport",
     }
     [policy] = props["Policies"]
@@ -106,7 +107,8 @@ def test_setup_role_writes_only_to_cloudoptics_resources() -> None:
                 continue
             for resource in resources:
                 text = json.dumps(resource).lower()
-                assert "cloudoptics" in text or "type/resource" in text, (action, resource)
+                scoped = ("cloudoptics", "type/resource", "stackset-target")
+                assert any(s in text for s in scoped), (action, resource)
 
 
 def test_setup_runs_after_the_roles_and_export() -> None:
@@ -128,6 +130,12 @@ class Fake:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def __getattr__(self, name: str) -> Any:
+        if name == "get_paginator":
+            # One page: the answer for the paginated method.
+            return lambda method: types.SimpleNamespace(
+                paginate=lambda **kw: [getattr(self, method)(**kw)]
+            )
+
         def call(*args: Any, **kwargs: Any) -> Any:
             self.calls.append((name, kwargs))
             answer = self.answers.get(name, {})
@@ -524,6 +532,54 @@ def test_trusted_access_may_read_the_stacksets_service_linked_roles() -> None:
     ][0]["PolicyDocument"]["Statement"]
     [read] = [s for s in statements if s["Sid"] == "StackSetsServiceLinkedRoleRead"]
     assert read["Action"] == "iam:GetRole"
+
+
+def test_trusted_access_may_create_the_stacksets_service_linked_role() -> None:
+    # ActivateOrganizationsAccess was refused iam:CreateServiceLinkedRole under an
+    # iam:AWSServiceName condition: CloudFormation's request does not carry that key.
+    statements = load("cloudoptics-access.yaml")["Resources"]["SetupRole"]["Properties"][
+        "Policies"
+    ][0]["PolicyDocument"]["Statement"]
+    [slr] = [s for s in statements if s["Sid"] == "StackSetsServiceLinkedRole"]
+    assert slr["Action"] == "iam:CreateServiceLinkedRole"
+    assert "Condition" not in slr
+    assert "role/aws-service-role/stacksets.cloudformation.amazonaws.com*" in slr["Resource"]["Sub"]
+
+
+def test_create_stack_set_is_allowed_on_every_resource() -> None:
+    # CreateStackSet has no resource-level permissions, so a stack set ARN never matches.
+    statements = load("cloudoptics-access.yaml")["Resources"]["SetupRole"]["Properties"][
+        "Policies"
+    ][0]["PolicyDocument"]["Statement"]
+    [create] = [s for s in statements if "cloudformation:CreateStackSet" in _actions(s)]
+    assert create["Resource"] == "*"
+
+
+def test_a_long_rollout_failure_is_kept_whole(setup_step: Any) -> None:
+    message = "User: arn:aws:sts::1:assumed-role/x is not authorized to perform: " + "x" * 600
+    denied = ClientError({"Error": {"Code": "AccessDenied", "Message": message}}, "CreateStackSet")
+    _management(setup_step, create_stack_set=denied)
+    setup_step.module.DENIED = ()  # no IAM catch-up retries in this test
+    rollout = run(setup_step, "setup")["data"]["MemberRollout"]
+    assert len(rollout) > 600 and rollout.endswith("x")
+
+
+def test_a_failed_member_removal_does_not_delete_the_stack_set(setup_step: Any) -> None:
+    setup_step.clients["organizations"] = Fake(
+        describe_organization={
+            "Organization": {"MasterAccountId": PROPS["AccountId"], "FeatureSet": "ALL"}
+        },
+        list_roots={"Roots": [{"Id": "r-ab12"}]},
+    )
+    cfn = Fake(
+        list_stack_set_operations={"Summaries": []},
+        list_stack_instances={"Summaries": [{"Account": "172630973115"}]},
+        delete_stack_instances={"OperationId": "op2"},
+        describe_stack_set_operation={"StackSetOperation": {"Status": "FAILED"}},
+    )
+    setup_step.clients["cloudformation"] = cfn
+    assert run(setup_step, "setup", kind="Delete")["status"] == "SUCCESS"
+    assert "delete_stack_set" not in cfn.names()
 
 
 def test_custom_resources_time_out_soon_after_the_function() -> None:

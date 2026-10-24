@@ -21,7 +21,7 @@ RESOURCE_STACK_NAME = "cloudoptics-resource-access"
 STACKSET_STACK_NAME = "cloudoptics-resource-stackset"
 # The single stack (infra/cloudformation/cloudoptics-access.yaml) that replaces the three above.
 ACCESS_STACK_NAME = "cloudoptics-access"
-ACCESS_TEMPLATE_VERSION = "2.0.1"
+ACCESS_TEMPLATE_VERSION = "2.0.2"
 LEGACY_STACK_NAMES = (STACK_NAME, RESOURCE_STACK_NAME, STACKSET_STACK_NAME)
 # The single stack's roles have their own names: CloudFormation refuses to create a stack whose
 # named roles already exist, and the older stacks' roles are only removed once it is running.

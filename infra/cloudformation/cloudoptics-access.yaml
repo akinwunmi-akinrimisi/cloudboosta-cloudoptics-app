@@ -8,7 +8,7 @@ Description: >-
 
 Metadata:
   cloudoptics:
-    templateVersion: "2.0.1"
+    templateVersion: "2.0.2"
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: Connection (pre-filled by Cloudoptics) }
@@ -47,6 +47,13 @@ Parameters:
     Type: String
     Default: cloudoptics
     AllowedPattern: "[a-zA-Z0-9!_.*'()/-]+"
+
+Rules:
+  # Data Exports delivers to us-east-1, and the bucket is made where this stack runs.
+  InUsEast1:
+    Assertions:
+      - Assert: !Equals [!Ref AWS::Region, us-east-1]
+        AssertDescription: Create this stack in US East (N. Virginia), us-east-1.
 
 Resources:
   # The setup step's own role. It runs only while this stack is created, updated or deleted;
@@ -88,6 +95,8 @@ Resources:
                   - iam:ListAttachedRolePolicies
                   - iam:DetachRolePolicy
                   - iam:ListInstanceProfilesForRole
+                  - iam:TagRole
+                  - iam:UntagRole
                 Resource:
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/CloudopticsBillingReadOnly"
                   - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/CloudopticsResourceReadOnly"
@@ -100,6 +109,11 @@ Resources:
                   - lambda:DeleteFunction
                   - lambda:InvokeFunction
                 Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:cloudoptics-resource-stackset-*"
+              # Deleting a Lambda function also reads its network interfaces (no resource scope).
+              - Sid: OldSetupFunctionNetwork
+                Effect: Allow
+                Action: ec2:DescribeNetworkInterfaces
+                Resource: "*"
               - Sid: BillExport
                 Effect: Allow
                 Action:
@@ -137,22 +151,26 @@ Resources:
                   - organizations:ListOrganizationalUnitsForParent
                   - organizations:ListDelegatedAdministrators
                 Resource: "*"
+              # ActivateOrganizationsAccess creates AWSServiceRoleForCloudFormationStackSetsOrgAdmin.
+              # Scoped by the role's path, not iam:AWSServiceName: CloudFormation's request does
+              # not carry that key, so a condition on it refuses the call.
               - Sid: StackSetsServiceLinkedRole
                 Effect: Allow
                 Action: iam:CreateServiceLinkedRole
-                Resource: "*"
-                Condition:
-                  StringLike:
-                    iam:AWSServiceName: "*stacksets.cloudformation.amazonaws.com"
+                Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/stacksets.cloudformation.amazonaws.com*"
               # ActivateOrganizationsAccess also reads the StackSets service-linked roles.
               - Sid: StackSetsServiceLinkedRoleRead
                 Effect: Allow
                 Action: iam:GetRole
                 Resource: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/*"
+              # CreateStackSet has no resource-level permissions: it must be "*".
+              - Sid: CreateMemberRollout
+                Effect: Allow
+                Action: cloudformation:CreateStackSet
+                Resource: "*"
               - Sid: MemberRollout
                 Effect: Allow
                 Action:
-                  - cloudformation:CreateStackSet
                   - cloudformation:UpdateStackSet
                   - cloudformation:DeleteStackSet
                   - cloudformation:DescribeStackSet
@@ -162,10 +180,13 @@ Resources:
                   - cloudformation:ListStackSetOperations
                   - cloudformation:ListStackSetOperationResults
                   - cloudformation:DescribeStackSetOperation
+                  - cloudformation:UntagResource
+                # The stack set is pinned by name; targets (OUs, accounts) and resource types
+                # are checked too, in ARN forms that carry an account field.
                 Resource:
                   - !Sub "arn:${AWS::Partition}:cloudformation:*:${AWS::AccountId}:stackset/cloudoptics-resource-access:*"
-                  - !Sub "arn:${AWS::Partition}:cloudformation:*:${AWS::AccountId}:stackset-target/cloudoptics-resource-access:*"
-                  - !Sub "arn:${AWS::Partition}:cloudformation:*::type/resource/*"
+                  - !Sub "arn:${AWS::Partition}:cloudformation:*:*:stackset-target/*"
+                  - !Sub "arn:${AWS::Partition}:cloudformation:*:*:type/resource/*"
 
   SetupFunction:
     Type: AWS::Lambda::Function
@@ -228,7 +249,7 @@ Resources:
 
               def __getattr__(self, name):
                   attr = getattr(self._client, name)
-                  if not callable(attr) or name == "get_waiter":
+                  if not callable(attr) or name in ("get_waiter", "get_paginator"):
                       return attr
 
                   def call(*args, **kwargs):
@@ -285,9 +306,11 @@ Resources:
                   if stack["StackStatus"] == "DELETE_COMPLETE":
                       continue
                   cfn.delete_stack(StackName=name)
+                  # Bounded by the time left, so CloudFormation always gets a reply.
+                  attempts = int(max(1, min(80, (time_left() - 30) // 10)))
                   try:
                       cfn.get_waiter("stack_delete_complete").wait(
-                          StackName=name, WaiterConfig={"Delay": 10, "MaxAttempts": 80}
+                          StackName=name, WaiterConfig={"Delay": 10, "MaxAttempts": attempts}
                       )
                   except Exception as exc:
                       raise RuntimeError(
@@ -336,7 +359,7 @@ Resources:
           def bucket(kind, props):
               name = props["BucketName"]
               if kind == "Delete":
-                  return {"BucketName": name}  # kept on purpose, like the bills in it
+                  return None  # kept on purpose, like the bills in it (Delete replies carry no data)
               s3 = client("s3")
               try:
                   s3.head_bucket(Bucket=name, ExpectedBucketOwner=props["AccountId"])
@@ -431,19 +454,23 @@ Resources:
 
 
           def wait_operation(cfn, operation_id):
+              """The operation's final status: SUCCEEDED, FAILED or STOPPED."""
               for _ in range(80):
                   op = cfn.describe_stack_set_operation(StackSetName=STACKSET, OperationId=operation_id)
-                  if op["StackSetOperation"]["Status"] not in ("RUNNING", "QUEUED", "STOPPING"):
-                      return
+                  status = op["StackSetOperation"]["Status"]
+                  if status not in ("RUNNING", "QUEUED", "STOPPING"):
+                      return status
                   if time_left() < 60:
                       raise TimeoutError(f"StackSet operation {operation_id} is still running")
                   time.sleep(10)
 
 
           def wait_idle(cfn):
-              for op in cfn.list_stack_set_operations(StackSetName=STACKSET)["Summaries"]:
-                  if op["Status"] in ("RUNNING", "QUEUED", "STOPPING"):
-                      wait_operation(cfn, op["OperationId"])
+              pages = cfn.get_paginator("list_stack_set_operations").paginate(StackSetName=STACKSET)
+              for page in pages:
+                  for op in page["Summaries"]:
+                      if op["Status"] in ("RUNNING", "QUEUED", "STOPPING"):
+                          wait_operation(cfn, op["OperationId"])
 
 
           def ensure_stackset(props, root):
@@ -519,7 +546,9 @@ Resources:
                       RetainStacks=False,
                       OperationPreferences=PREFS,
                   )
-                  wait_operation(cfn, op["OperationId"])
+                  status = wait_operation(cfn, op["OperationId"])
+                  if status != "SUCCEEDED":
+                      raise RuntimeError(f"removing the member accounts' roles ended {status}")
               cfn.delete_stack_set(StackSetName=STACKSET)
 
 
@@ -592,7 +621,8 @@ Resources:
                       ensure_stackset(props, root_id())
                       rollout = "started"
                   except Exception as exc:
-                      rollout = f"failed: {type(exc).__name__}: {exc}"[:400]
+                      # Long enough for AWS's whole AccessDenied message, which names the missing action.
+                      rollout = f"failed: {type(exc).__name__}: {exc}"[:900]
                       print(f"member rollout {rollout}")
               callback(kind, props, management, rollout)
               return {"Management": str(management).lower(), "MemberRollout": rollout}
@@ -734,6 +764,9 @@ Resources:
                   - compute-optimizer:Describe*
                   - cost-optimization-hub:Get*
                   - cost-optimization-hub:List*
+                  # Compute Optimizer's ECS service findings need these.
+                  - ecs:ListClusters
+                  - ecs:ListServices
                 Resource: "*"
 
   CurExport:
@@ -767,7 +800,7 @@ Resources:
           S3Destination:
             S3Bucket: !GetAtt CurBucket.BucketName
             S3Prefix: !Ref CurPrefix
-            S3Region: us-east-1
+            S3Region: !Ref AWS::Region
             S3OutputConfigurations:
               OutputType: CUSTOM
               Format: PARQUET
@@ -786,7 +819,7 @@ Resources:
       ServiceTimeout: "960"
       Action: setup
       # A new version number makes every update run the setup step (and the callback) again.
-      TemplateVersion: "2.0.1"
+      TemplateVersion: "2.0.2"
       StackName: !Ref AWS::StackName
       AccountId: !Ref AWS::AccountId
       ExternalId: !Ref ExternalId
@@ -800,7 +833,7 @@ Resources:
 
 Outputs:
   TemplateVersion:
-    Value: "2.0.1"
+    Value: "2.0.2"
   BillingRoleArn:
     Value: !GetAtt BillingRole.Arn
   ResourceRoleArn:

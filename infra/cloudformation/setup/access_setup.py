@@ -49,7 +49,7 @@ class _Retrying:
 
     def __getattr__(self, name):
         attr = getattr(self._client, name)
-        if not callable(attr) or name == "get_waiter":
+        if not callable(attr) or name in ("get_waiter", "get_paginator"):
             return attr
 
         def call(*args, **kwargs):
@@ -106,9 +106,11 @@ def cleanup(kind, props):
         if stack["StackStatus"] == "DELETE_COMPLETE":
             continue
         cfn.delete_stack(StackName=name)
+        # Bounded by the time left, so CloudFormation always gets a reply.
+        attempts = int(max(1, min(80, (time_left() - 30) // 10)))
         try:
             cfn.get_waiter("stack_delete_complete").wait(
-                StackName=name, WaiterConfig={"Delay": 10, "MaxAttempts": 80}
+                StackName=name, WaiterConfig={"Delay": 10, "MaxAttempts": attempts}
             )
         except Exception as exc:
             raise RuntimeError(
@@ -157,7 +159,7 @@ def bucket_policy(bucket, account):
 def bucket(kind, props):
     name = props["BucketName"]
     if kind == "Delete":
-        return {"BucketName": name}  # kept on purpose, like the bills in it
+        return None  # kept on purpose, like the bills in it (Delete replies carry no data)
     s3 = client("s3")
     try:
         s3.head_bucket(Bucket=name, ExpectedBucketOwner=props["AccountId"])
@@ -252,19 +254,23 @@ def root_id():
 
 
 def wait_operation(cfn, operation_id):
+    """The operation's final status: SUCCEEDED, FAILED or STOPPED."""
     for _ in range(80):
         op = cfn.describe_stack_set_operation(StackSetName=STACKSET, OperationId=operation_id)
-        if op["StackSetOperation"]["Status"] not in ("RUNNING", "QUEUED", "STOPPING"):
-            return
+        status = op["StackSetOperation"]["Status"]
+        if status not in ("RUNNING", "QUEUED", "STOPPING"):
+            return status
         if time_left() < 60:
             raise TimeoutError(f"StackSet operation {operation_id} is still running")
         time.sleep(10)
 
 
 def wait_idle(cfn):
-    for op in cfn.list_stack_set_operations(StackSetName=STACKSET)["Summaries"]:
-        if op["Status"] in ("RUNNING", "QUEUED", "STOPPING"):
-            wait_operation(cfn, op["OperationId"])
+    pages = cfn.get_paginator("list_stack_set_operations").paginate(StackSetName=STACKSET)
+    for page in pages:
+        for op in page["Summaries"]:
+            if op["Status"] in ("RUNNING", "QUEUED", "STOPPING"):
+                wait_operation(cfn, op["OperationId"])
 
 
 def ensure_stackset(props, root):
@@ -340,7 +346,9 @@ def remove_stackset():
             RetainStacks=False,
             OperationPreferences=PREFS,
         )
-        wait_operation(cfn, op["OperationId"])
+        status = wait_operation(cfn, op["OperationId"])
+        if status != "SUCCEEDED":
+            raise RuntimeError(f"removing the member accounts' roles ended {status}")
     cfn.delete_stack_set(StackSetName=STACKSET)
 
 
@@ -413,7 +421,8 @@ def setup(kind, props):
             ensure_stackset(props, root_id())
             rollout = "started"
         except Exception as exc:
-            rollout = f"failed: {type(exc).__name__}: {exc}"[:400]
+            # Long enough for AWS's whole AccessDenied message, which names the missing action.
+            rollout = f"failed: {type(exc).__name__}: {exc}"[:900]
             print(f"member rollout {rollout}")
     callback(kind, props, management, rollout)
     return {"Management": str(management).lower(), "MemberRollout": rollout}
