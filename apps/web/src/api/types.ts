@@ -224,6 +224,27 @@ export interface ResourceScan {
   accounts: { awsAccountId: string; access: boolean; error: string | null; rollout?: string | null }[]
 }
 
+/** A connection's latest resource scan. */
+export interface LastScan {
+  connectionId: string
+  /** `partial`: some accounts or regions could not be read (see `errors`). */
+  status: 'succeeded' | 'partial' | 'failed'
+  startedAt: string
+  finishedAt: string | null
+  resources: number
+  accounts: number
+  accountsWithAccess: number
+  regions: number
+  /** "<account> <region>: <AWS error code>" for each part that could not be read. */
+  errors: string[]
+}
+
+export interface InventorySummary {
+  lastScanAt: string | null
+  counts: { resourceType: string; count: number }[]
+  scans: LastScan[]
+}
+
 export interface CloudAccount {
   connectionId: string
   awsAccountId: string
@@ -429,6 +450,8 @@ export interface Api {
   disconnectConnection(tenantId: string, connectionId: string): Promise<void>
   /** Look for the resource role now. `queued` means the worker scans within a minute or two. */
   scanResources(tenantId: string, connectionId: string): Promise<ResourceScan>
+  /** What the scans found, and each connection's latest scan. */
+  resourceSummary(tenantId: string): Promise<InventorySummary>
   costSummary(tenantId: string): Promise<CostSummary>
   costDaily(tenantId: string, days?: number): Promise<DailyCosts>
   costBreakdown(tenantId: string, dimension: CostDimension, limit?: number): Promise<CostBreakdown>

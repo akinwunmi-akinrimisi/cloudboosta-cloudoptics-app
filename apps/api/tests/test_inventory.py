@@ -341,7 +341,7 @@ async def test_scan_stores_resources_and_access(
 async def test_rescan_marks_missing_resources_but_not_in_failed_regions(
     client: AsyncClient, login, owner_sql, world
 ) -> None:
-    tenant, connection, _, _ = await setup(client, login, owner_sql)
+    tenant, connection, _, headers = await setup(client, login, owner_sql)
     world.no_access = {"555555555555"}
     tid, cid = uuid.UUID(tenant), uuid.UUID(connection)
     await scanner.scan_connection(tid, cid)
@@ -362,6 +362,11 @@ async def test_rescan_marks_missing_resources_but_not_in_failed_regions(
     )[0]
     assert run[0] == "partial"
     assert "af-south-1: RequestLimitExceeded" in run[2]
+    body = (await client.get(f"/v1/tenants/{tenant}/resources/summary", headers=headers)).json()
+    [last] = body["scans"]
+    assert (last["connectionId"], last["status"]) == (connection, "partial")
+    assert last["accountsWithAccess"] == 1 and last["accounts"] == 2
+    assert any(e.endswith("af-south-1: RequestLimitExceeded") for e in last["errors"])
 
     # Seen again: no longer deleted.
     world.volumes, world.broken_regions = 2, set()
@@ -370,6 +375,22 @@ async def test_rescan_marks_missing_resources_but_not_in_failed_regions(
         "SELECT count(*) FROM resource WHERE connection_id = %s AND deleted_at IS NOT NULL",
         connection,
     ) == [(0,)]
+
+
+async def test_a_crashed_scan_is_recorded_as_failed(
+    client: AsyncClient, login, owner_sql, world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tenant, connection, _, headers = await setup(client, login, owner_sql)
+
+    def crash(aws: Any, account_id: str) -> Any:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scanner, "scan_account", crash)
+    with pytest.raises(RuntimeError):
+        await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection))
+    body = (await client.get(f"/v1/tenants/{tenant}/resources/summary", headers=headers)).json()
+    [last] = body["scans"]
+    assert last["status"] == "failed" and last["errors"] == ["RuntimeError"]
 
 
 async def test_no_access_anywhere_is_skipped(client: AsyncClient, login, owner_sql, world) -> None:
