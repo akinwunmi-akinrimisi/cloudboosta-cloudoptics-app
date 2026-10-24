@@ -349,15 +349,13 @@ export function Connections() {
           {isAdmin && tenantId !== null && c.status !== 'disconnected' && c.stackName !== ACCESS_STACK_NAME && (
             <MoveToSingleStack connection={c} />
           )}
+          {isAdmin && tenantId !== null && c.stackName === ACCESS_STACK_NAME && c.status !== 'disconnected' && (
+            <StackUpdate connection={c} tenantId={tenantId} />
+          )}
           {isAdmin &&
             tenantId !== null &&
             c.stackName === ACCESS_STACK_NAME &&
-            (c.status === 'healthy' || c.status === 'degraded') && (
-              <>
-                <StackUpdate connection={c} tenantId={tenantId} />
-                <ResourceAccess connection={c} tenantId={tenantId} />
-              </>
-            )}
+            (c.status === 'healthy' || c.status === 'degraded') && <ResourceAccess connection={c} tenantId={tenantId} />}
         </Card>
       ))}
       {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}
@@ -486,7 +484,17 @@ function StackUpdate({ connection: c, tenantId }: { connection: Connection; tena
   const api = useApi()
   const setup = useQuery({ queryKey: ['setup', tenantId, c.id], queryFn: () => api.getSetup(tenantId, c.id) })
   const s = setup.data
-  if (!s?.updateAvailable) return null
+  if (setup.error) {
+    return <Alert tone="error">Could not check for a newer Cloudoptics stack: {setup.error.message}</Alert>
+  }
+  if (!s) return null
+  if (!s.updateAvailable) {
+    return (
+      <p className="mt-4 text-sm text-secondary">
+        Cloudoptics access is up to date (version {c.stackVersion ?? s.latestStackVersion}). Nothing to update in AWS.
+      </p>
+    )
+  }
   return (
     <div className="mt-4 flex flex-col gap-3 rounded-sm bg-accent-soft p-3 text-sm">
       <div>
@@ -560,7 +568,7 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
         </p>
         <p className="text-secondary">
           {c.accountType === 'management'
-            ? 'Member accounts get access on their own as AWS reaches them, usually within 10 minutes, and new accounts get it when they join.'
+            ? 'Member accounts get access on their own as AWS reaches them, usually within 10 minutes, and new accounts get it when they join. Choose Check now to see where each one is.'
             : 'Access is added by the CloudOptics stack. Check now to look again.'}
         </p>
       </div>
