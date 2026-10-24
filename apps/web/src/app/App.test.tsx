@@ -369,5 +369,9 @@ describe('Cloudoptics web app', () => {
     await user.click(await screen.findByRole('link', { name: 'Connections' }))
     expect(await screen.findByText(/Resource access in this account/)).toBeTruthy()
     expect(screen.queryByText('Move to the single CloudOptics stack')).toBeNull()
+
+    // With access everywhere, admins can still scan straight away and see what it found.
+    await user.click(screen.getByRole('button', { name: 'Scan now' }))
+    expect(await screen.findByText(/Last scan .*: 12 resources in 17 regions across 1 of 1 accounts/)).toBeTruthy()
   })
 })

@@ -378,7 +378,12 @@ async def scan_connection(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> Sca
             return AccountScan(account_id, access=True, errors=[f"regions: {_code(exc)}"])
 
     started = datetime.now(UTC)
-    scans = [await run_in_threadpool(_scan, account) for account in accounts]
+    try:
+        scans = [await run_in_threadpool(_scan, account) for account in accounts]
+    except Exception as exc:
+        # Recorded so the Connections page can say the scan failed, not just stay silent.
+        await _record_failure(tenant_id, connection_id, started, exc)
+        raise
     async with maker() as session, session.begin():
         await scope(session, tenant_id=tenant_id)
         for scan in scans:
@@ -417,6 +422,27 @@ async def scan_connection(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> Sca
             },
         )
     return status
+
+
+async def _record_failure(
+    tenant_id: uuid.UUID, connection_id: uuid.UUID, started: datetime, exc: Exception
+) -> None:
+    async with get_sessionmaker()() as session, session.begin():
+        await scope(session, tenant_id=tenant_id)
+        await session.execute(
+            text(
+                "INSERT INTO sync_run (id, tenant_id, connection_id, job_type, status, "
+                "started_at, finished_at, records, error_code, error_detail) VALUES (:id, :t, "
+                ":c, 'inventory.scan', 'failed', :started, now(), 0, 'scan_failed', :detail)"
+            ),
+            {
+                "id": uuid7(),
+                "t": tenant_id,
+                "c": connection_id,
+                "started": started,
+                "detail": _code(exc)[:2000],
+            },
+        )
 
 
 async def _store(
@@ -473,6 +499,45 @@ async def _store(
             ),
             {"t": tenant_id, "a": scan.account_id, "r": region, "started": started},
         )
+
+
+@dataclass(frozen=True)
+class LastScan:
+    connection_id: uuid.UUID
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    resources: int
+    accounts: int
+    accounts_with_access: int
+    regions: int
+    # "<account> <region>: <AWS error code>" for each part that could not be read.
+    errors: list[str]
+
+
+async def last_scans(session: AsyncSession) -> list[LastScan]:
+    """The latest inventory scan of each connection, with what could not be read."""
+    rows = await session.execute(
+        text(
+            "SELECT DISTINCT ON (connection_id) connection_id, status, started_at, finished_at, "
+            "records, scope, error_detail FROM sync_run WHERE job_type = 'inventory.scan' "
+            "ORDER BY connection_id, started_at DESC"
+        )
+    )
+    return [
+        LastScan(
+            connection_id=r.connection_id,
+            status=r.status,
+            started_at=r.started_at,
+            finished_at=r.finished_at,
+            resources=r.records or 0,
+            accounts=(r.scope or {}).get("accounts", 0),
+            accounts_with_access=(r.scope or {}).get("with_access", 0),
+            regions=(r.scope or {}).get("regions", 0),
+            errors=[e for e in (r.error_detail or "").split("; ") if e],
+        )
+        for r in rows
+    ]
 
 
 @dataclass(frozen=True)

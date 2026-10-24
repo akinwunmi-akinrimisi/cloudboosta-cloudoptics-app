@@ -4,7 +4,14 @@ import { ExternalLink, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
-import type { Connection, CostDimension, CostSummary, CurrentRate, RecommendationSummary } from '../api/types'
+import type {
+  Connection,
+  CostDimension,
+  CostSummary,
+  CurrentRate,
+  LastScan,
+  RecommendationSummary,
+} from '../api/types'
 import { DailySpendChart, ShareList } from '../components/charts'
 import { Alert, Button, Card, StatusPill, cx } from '../components/ui'
 import { ACCESS_STACK_NAME } from '../api/types'
@@ -531,7 +538,7 @@ function StackUpdate({ connection: c, tenantId }: { connection: Connection; tena
   )
 }
 
-/** Resource access on the single stack: member accounts get it on their own; Check now. */
+/** Resource access on the single stack, the last resource scan and Scan now (admins). */
 function ResourceAccess({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
   const api = useApi()
   const qc = useQueryClient()
@@ -539,39 +546,52 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
     queryKey: ['accounts', tenantId],
     queryFn: () => api.listAccounts(tenantId),
   })
+  const [requestedAt, setRequestedAt] = useState<string | null>(null)
+  const summary = useQuery({
+    queryKey: ['resource-summary', tenantId],
+    queryFn: () => api.resourceSummary(tenantId),
+    // While a queued scan runs on the worker, look again until its result is in.
+    refetchInterval: (q) => {
+      const last = q.state.data?.scans.find((s) => s.connectionId === c.id)
+      return requestedAt && (!last?.finishedAt || last.finishedAt < requestedAt) ? 10_000 : false
+    },
+  })
   const accounts = (list.data?.accounts ?? []).filter((a) => a.connectionId === c.id && a.orgStatus !== 'NOT_LISTED')
   const missing = accounts.filter((a) => !a.resourceAccess)
   const scan = useMutation({
+    onMutate: () => setRequestedAt(new Date().toISOString()),
     mutationFn: () => api.scanResources(tenantId, c.id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
       void qc.invalidateQueries({ queryKey: ['recommendations', tenantId] })
+      void qc.invalidateQueries({ queryKey: ['resource-summary', tenantId] })
     },
   })
   if (accounts.length === 0) return null
-  if (missing.length === 0) {
-    return (
-      <p className="mt-4 text-sm text-good-ink">
-        Resource access in {accounts.length === 1 ? 'this account' : `all ${accounts.length} accounts`}.{' '}
-        {scan.data?.status === 'queued'
-          ? 'Scanning resources now; recommendations appear in a few minutes.'
-          : 'Cloudoptics scans resources every 12 hours for recommendations.'}
-      </p>
-    )
-  }
+  const last = summary.data?.scans.find((s) => s.connectionId === c.id)
+  const running = requestedAt !== null && (!last?.finishedAt || last.finishedAt < requestedAt) && scan.data?.status === 'queued'
   const refused = scan.data?.accounts.filter((a) => !a.access) ?? []
   return (
     <div className="mt-4 flex flex-col gap-3 rounded-sm bg-surface-2 p-3 text-sm">
       <div>
         <p className="font-medium">
-          Resource access in {accounts.length - missing.length} of {accounts.length} accounts
+          {missing.length === 0
+            ? `Resource access in ${accounts.length === 1 ? 'this account' : `all ${accounts.length} accounts`}`
+            : `Resource access in ${accounts.length - missing.length} of ${accounts.length} accounts`}
         </p>
         <p className="text-secondary">
-          {c.accountType === 'management'
-            ? 'Member accounts get access on their own as AWS reaches them, usually within 10 minutes, and new accounts get it when they join. Choose Check now to see where each one is.'
-            : 'Access is added by the CloudOptics stack. Check now to look again.'}
+          {missing.length === 0
+            ? 'Cloudoptics scans resources every 12 hours for recommendations. Scan now to look straight away.'
+            : c.accountType === 'management'
+              ? 'Member accounts get access on their own as AWS reaches them, usually within 10 minutes, and new accounts get it when they join. Choose Check now to see where each one is.'
+              : 'Access is added by the CloudOptics stack. Check now to look again.'}
         </p>
       </div>
+      {running ? (
+        <p>Scanning resources now. Recommendations follow a few minutes after the scan.</p>
+      ) : (
+        last && <LastScanResult scan={last} />
+      )}
       {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
       {refused.length > 0 && (
         <Alert tone="warning">
@@ -586,10 +606,41 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
         </Alert>
       )}
       <div>
-        <Button variant="secondary" disabled={scan.isPending} onClick={() => scan.mutate()}>
-          {scan.isPending ? 'Checking…' : 'Check now'}
+        <Button variant="secondary" disabled={scan.isPending || running} onClick={() => scan.mutate()}>
+          {scan.isPending ? 'Checking…' : missing.length === 0 ? 'Scan now' : 'Check now'}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** What the latest scan found, and what it could not read, in plain words. */
+function LastScanResult({ scan }: { scan: LastScan }) {
+  const when = new Date(scan.finishedAt ?? scan.startedAt).toLocaleString()
+  if (scan.status === 'failed') {
+    return (
+      <Alert tone="error">
+        The last scan ({when}) did not finish{scan.errors.length ? `: ${scan.errors.join(', ')}` : ''}. Scan now to try
+        again.
+      </Alert>
+    )
+  }
+  const found = `${scan.resources} ${scan.resources === 1 ? 'resource' : 'resources'} in ${scan.regions} regions across ${scan.accountsWithAccess} of ${scan.accounts} accounts`
+  return (
+    <div className="flex flex-col gap-2">
+      <p>
+        Last scan {when}: {found}.
+      </p>
+      {scan.errors.length > 0 && (
+        <Alert tone="warning">
+          <p>Some parts could not be read, so they were left as they were:</p>
+          <ul className="mt-1 flex flex-col gap-1 font-mono text-xs">
+            {scan.errors.map((e) => (
+              <li key={e}>{e}</li>
+            ))}
+          </ul>
+        </Alert>
+      )}
     </div>
   )
 }
