@@ -127,7 +127,7 @@ class StackCallback(ApiModel):
     stack_name: str = Field(max_length=128)
     template_version: str = Field(pattern=r"^\d+(\.\d+){0,3}$")
     # How rolling the resource role out to member accounts went ("started", "failed: ...").
-    member_rollout: str | None = Field(default=None, max_length=500)
+    member_rollout: str | None = Field(default=None, max_length=1000)
 
 
 class CallbackResult(ApiModel):

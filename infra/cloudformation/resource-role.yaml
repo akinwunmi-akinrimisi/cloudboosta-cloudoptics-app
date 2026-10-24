@@ -6,7 +6,7 @@ Description: >-
 
 Metadata:
   cloudoptics:
-    templateVersion: "1.0.0"
+    templateVersion: "1.0.1"
 
 Parameters:
   ExternalId:
@@ -80,6 +80,9 @@ Resources:
                   - compute-optimizer:Describe*
                   - cost-optimization-hub:Get*
                   - cost-optimization-hub:List*
+                  # Compute Optimizer's ECS service findings need these.
+                  - ecs:ListClusters
+                  - ecs:ListServices
                 Resource: "*"
 
 Outputs:
