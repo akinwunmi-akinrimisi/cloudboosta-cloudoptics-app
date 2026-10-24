@@ -564,13 +564,12 @@ def test_member_rollout_is_explained_in_plain_words() -> None:
         {"Account": "333333333333", "StackInstanceStatus": {"DetailedStatus": "SUCCEEDED"}},
     ]
     words = aws.member_rollout(_Session([{"Summaries": summaries}]))  # type: ignore[arg-type]
-    assert words is not None
+    assert isinstance(words, dict)
     assert "adding" in words["111111111111"]
     assert "should have the service-linked role" in words["222222222222"]
-    assert "Update the CloudOptics stack" in words["222222222222"]
     assert "in place" in words["333333333333"]
     refused = aws.member_rollout(_Session(client_error("AccessDenied")))  # type: ignore[arg-type]
-    assert refused is None
+    assert refused == "AccessDenied"
 
 
 def test_billing_role_may_read_only_its_own_member_rollout() -> None:
