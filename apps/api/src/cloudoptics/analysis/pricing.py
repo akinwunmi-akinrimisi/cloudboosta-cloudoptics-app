@@ -69,13 +69,18 @@ class PriceBook:
         if own is not None:
             return Price(own, "effective_rate")
         if item.startswith("ebs_"):
-            discounts = [
-                rate / self.list_price(region, other)[0]
+            refs = [
+                (rate, *self.list_price(region, other))
                 for (a, r, other), rate in self.effective.items()
                 if a == account and r == region and other.startswith("ebs_")
             ]
-            if discounts:
-                factor = min(1.0, sum(discounts) / len(discounts))
+            if refs:
+                factor = sum(rate / ref for rate, ref, _ in refs) / len(refs)
+                # Against us-east-1 fallback prices the ratio also carries the region's price
+                # level (London is about 16% dearer), so it is only a discount, capped at 1,
+                # when the region's own list prices are known.
+                if not (fallback and all(ref_fallback for _, _, ref_fallback in refs)):
+                    factor = min(1.0, factor)
                 return Price(listed * factor, "effective_rate")
         return Price(listed, "list_price", fallback)
 

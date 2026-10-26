@@ -86,6 +86,23 @@ def test_prices_prefer_the_tenants_own_rate() -> None:
     assert book.price("999999999999", "ap-south-1", "public_ipv4_hour").fallback_region
 
 
+def test_rates_against_fallback_prices_keep_the_region_price_level() -> None:
+    # Staging, 26 Oct 2026: London gp3 at its list price of 0.0928 against the us-east-1
+    # fallback (0.08) was capped as a "discount" of 1, so gp2 came out at 0.10, not 0.116.
+    own = {("111122223333", "ap-south-2", "ebs_gp3_gb_month"): 0.0928}
+    gp2 = PriceBook(list_prices=LIST, effective=own).price(
+        "111122223333", "ap-south-2", "ebs_gp2_gb_month"
+    )
+    assert gp2.usd == pytest.approx(0.116) and gp2.basis == "effective_rate"
+    # With the region's own list prices the ratio is a discount again, never above 1.
+    regional = {**LIST, ("ap-south-2", "ebs_gp2_gb_month"): 0.11,
+                ("ap-south-2", "ebs_gp3_gb_month"): 0.09}  # fmt: skip
+    gp2 = PriceBook(list_prices=regional, effective=own).price(
+        "111122223333", "ap-south-2", "ebs_gp2_gb_month"
+    )
+    assert gp2.usd == pytest.approx(0.11)
+
+
 def test_unattached_volume_confidence_risk_and_fix() -> None:
     volume = {"volumeType": "gp3", "sizeGiB": 200, "iops": 4000, "throughput": 125,
               "createTime": (NOW - timedelta(days=90)).isoformat(),
