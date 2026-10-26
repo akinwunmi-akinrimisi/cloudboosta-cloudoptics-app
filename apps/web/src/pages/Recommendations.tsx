@@ -23,6 +23,7 @@ const FACTORS: Record<string, string> = {
   no_recent_snapshot: 'No snapshot in the last 30 days',
   data_loss: 'Deleting loses the data',
   recently_created: 'Created less than 30 days ago',
+  recently_detached: 'Detached less than 7 days ago',
   large_volume: 'Larger than 1 TiB',
   stops_running_server: 'Stops a running server',
   deletes_database: 'Removes a database (a final snapshot is kept)',

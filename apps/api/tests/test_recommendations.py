@@ -133,11 +133,18 @@ def test_unattached_volume_confidence_risk_and_fix() -> None:
         "recently_created",
     ]
 
-    # Unattached when first seen: detach time unknown, low confidence; too new: nothing.
+    # Flagged from the first scan: unattached when first seen, the detach time is unknown.
     [s] = run([res("ebs_volume", "vol-1", "available", volume, since_days=0, seen_days=0)])
     assert s.candidate.confidence == "low"
     assert s.candidate.confidence_notes == ["detach_time_unknown"]
-    assert run([res("ebs_volume", "vol-1", "available", volume, since_days=2)]) == []
+    # Detached two days ago: low confidence, and the recent detach adds risk.
+    [s] = run([res("ebs_volume", "vol-1", "available", volume, since_days=2)])
+    assert s.candidate.confidence == "low" and s.candidate.confidence_notes == []
+    assert "recently_detached" in [f["factor"] for f in s.candidate.risk_factors]
+    # A brand-new volume never attached is flagged too.
+    fresh = {**volume, "createTime": NOW.isoformat()}
+    [s] = run([res("ebs_volume", "vol-1", "available", fresh, since_days=0, seen_days=0)])
+    assert s.candidate.confidence == "low"
     assert run([res("ebs_volume", "vol-1", "in-use", volume)]) == []
 
 
@@ -178,13 +185,24 @@ def test_idle_addresses_and_load_balancers() -> None:
             res("elb", "app-idle", "idle", {"type": "application"}, since_days=9),
             res("elb", "classic-idle", "idle", {"type": "classic"}, since_days=1),
             res("elb", "new-idle", "idle",
-                {"type": "application", "createdTime": (NOW - timedelta(days=2)).isoformat()}),
+                {"type": "application", "createdTime": (NOW - timedelta(days=2)).isoformat()},
+                since_days=2, seen_days=2),
             res("elb", "busy", "active", {"type": "application"}),
         ]
     )  # fmt: skip
     by_id = {s.candidate.resource.resource_id: s.candidate for s in found}
-    assert set(by_id) == {"eipalloc-1", "eipalloc-2", "eipalloc-4", "app-idle", "classic-idle"}
-    assert (by_id["eipalloc-1"].confidence, by_id["eipalloc-2"].confidence) == ("high", "medium")
+    # Everything unattached or idle is flagged from the first scan; confidence grows with time.
+    assert set(by_id) == {
+        "eipalloc-1", "eipalloc-2", "eipalloc-3", "eipalloc-4",
+        "app-idle", "classic-idle", "new-idle",
+    }  # fmt: skip
+    assert [by_id[f"eipalloc-{i}"].confidence for i in (1, 2, 3)] == ["high", "medium", "low"]
+    assert by_id["eipalloc-3"].confidence_notes == []
+    assert by_id["new-idle"].confidence == "low"
+    assert [f["factor"] for f in by_id["new-idle"].risk_factors] == [
+        "environment_unknown",
+        "recently_created",
+    ]
     assert by_id["eipalloc-1"].cost_now == pytest.approx(730 * 0.005)
     assert by_id["eipalloc-4"].fix["steps"][0].startswith("aws ec2 disassociate-address")
     assert by_id["app-idle"].cost_now == pytest.approx(730 * 0.0225)
@@ -235,7 +253,8 @@ async def test_engine_stores_dedupes_and_resolves(
     assert recs == sorted(recs, key=lambda r: -r["priorityScore"])
     volume = next(r for r in eu if r["resourceId"] == "vol-loose")
     assert volume["ruleId"] == "R1_unattached_ebs" and volume["confidence"] == "high"
-    assert volume["savingsUsdMonth"] == pytest.approx(10.0)
+    # 100 GiB gp2 at the Ireland list price (0.11), not us-east-1 (0.10).
+    assert volume["savingsUsdMonth"] == pytest.approx(11.0)
     assert volume["savingsBasis"] == "list_price"
 
     alternatives = (await client.get(f"{base}?alternatives=true", headers=headers)).json()
