@@ -373,5 +373,30 @@ describe('Cloudoptics web app', () => {
     // With access everywhere, admins can still scan straight away and see what it found.
     await user.click(screen.getByRole('button', { name: 'Scan now' }))
     expect(await screen.findByText(/Last scan .*: 12 resources in 17 regions across 1 of 1 accounts/)).toBeTruthy()
+
+    // A scan still running shows its progress, also after leaving the page and coming back.
+    const real = api.resourceSummary.bind(api)
+    const running = vi.spyOn(api, 'resourceSummary').mockImplementation(async (t) => {
+      const summary = await real(t)
+      return {
+        ...summary,
+        scans: summary.scans.map((s) => ({ ...s, status: 'running' as const, progress: { regionsDone: 10, regionsTotal: 34 } })),
+      }
+    })
+    await user.click(screen.getByRole('link', { name: 'Overview' }))
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText('Scanning resources: 10 of 34 regions')).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: 'Resource scan' }).getAttribute('aria-valuenow')).toBe('29')
+    expect((screen.getByRole('button', { name: 'Scanning…' }) as HTMLButtonElement).disabled).toBe(true)
+    await user.click(screen.getByRole('link', { name: 'Overview' }))
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText('Scanning resources: 10 of 34 regions')).toBeTruthy()
+
+    // When it finishes, the page shows the result without a reload.
+    running.mockRestore()
+    expect(
+      await screen.findByText(/Last scan .*: 12 resources/, undefined, { timeout: 5_000 }),
+    ).toBeTruthy()
+    expect(screen.queryByRole('progressbar')).toBeNull()
   })
 })

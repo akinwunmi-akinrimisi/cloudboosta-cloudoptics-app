@@ -382,7 +382,7 @@ async def test_a_crashed_scan_is_recorded_as_failed(
 ) -> None:
     tenant, connection, _, headers = await setup(client, login, owner_sql)
 
-    def crash(aws: Any, account_id: str) -> Any:
+    def crash(aws: Any, account_id: str, progress: Any = None) -> Any:
         raise RuntimeError("boom")
 
     monkeypatch.setattr(scanner, "scan_account", crash)
@@ -503,3 +503,102 @@ async def test_queued_scan_shows_access_at_once(
         account: True,
         "555555555555": False,
     }
+
+
+def test_progress_estimates_accounts_not_reached_yet() -> None:
+    progress = scanner.ScanProgress(accounts=3, regions_per_account=17)
+    assert progress.snapshot() == {"regionsDone": 0, "regionsTotal": 51}
+    progress.account_regions(20)
+    for _ in range(5):
+        progress.region_done()
+    # Two accounts to go, counted at the 20 regions seen so far.
+    assert progress.snapshot() == {"regionsDone": 5, "regionsTotal": 60}
+    progress.account_regions(0)  # no access: nothing to scan there
+    assert progress.snapshot() == {"regionsDone": 5, "regionsTotal": 40}
+
+
+async def test_a_running_scan_shows_its_progress_until_it_finishes(
+    client: AsyncClient, login, owner_sql, monkeypatch, world
+) -> None:
+    import time
+
+    import cloudoptics.platform.jobs as platform_jobs
+    from cloudoptics.inventory import jobs
+    from cloudoptics.platform.settings import get_settings
+
+    tenant, connection, _, headers = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    summary = f"/v1/tenants/{tenant}/resources/summary"
+
+    async def fake_defer(app, tenant_id, connection_id):  # type: ignore[no-untyped-def]
+        pass
+
+    monkeypatch.setattr(jobs, "defer_scan", fake_defer)
+    monkeypatch.setattr(platform_jobs, "get_job_app", lambda: None)
+    monkeypatch.setattr(get_settings(), "jobs_mode", "queue")
+    # Scan now: running at once, waiting for the worker.
+    r = await client.post(f"/v1/tenants/{tenant}/connections/{connection}/scan", headers=headers)
+    assert r.status_code == 202
+    [last] = (await client.get(summary, headers=headers)).json()["scans"]
+    assert (last["status"], last["progress"], last["finishedAt"]) == ("running", None, None)
+    # A second press while it runs adds nothing.
+    await client.post(f"/v1/tenants/{tenant}/connections/{connection}/scan", headers=headers)
+
+    # The worker takes the queued scan over and records its progress as it goes.
+    monkeypatch.setattr(scanner, "PROGRESS_SECONDS", 0.05)
+    seen: list[Any] = []
+    real = scanner.scan_account
+
+    def slow(aws: Any, account_id: str, progress: Any = None) -> Any:
+        result = real(aws, account_id, progress)
+        # Still inside the scan: wait for the progress writer to catch up with the regions.
+        deadline = time.monotonic() + 5
+        while True:
+            row = owner_sql(
+                "SELECT status, scope->'progress' FROM sync_run WHERE connection_id = %s",
+                connection,
+            )
+            done = row[0][1] and row[0][1]["regionsDone"] == progress.snapshot()["regionsDone"]
+            if done or time.monotonic() > deadline:
+                seen.append(row)
+                return result
+            time.sleep(0.05)
+
+    monkeypatch.setattr(scanner, "scan_account", slow)
+    assert await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection)) == "succeeded"
+    # The total also counts an account not scanned yet at the average seen so far.
+    [[(status, progress)]] = seen
+    assert status == "running" and 0 < progress["regionsDone"] <= progress["regionsTotal"]
+    runs = owner_sql(
+        "SELECT status FROM sync_run WHERE connection_id = %s AND job_type = 'inventory.scan'",
+        connection,
+    )
+    assert runs == [("succeeded",)]
+    [last] = (await client.get(summary, headers=headers)).json()["scans"]
+    assert last["status"] == "succeeded" and last["progress"] is None
+    assert last["regions"] == progress["regionsDone"]  # every region of the account
+
+
+async def test_a_scan_that_never_finished_stops_showing_as_running(
+    client: AsyncClient, login, owner_sql, world
+) -> None:
+    tenant, connection, _, headers = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    summary = f"/v1/tenants/{tenant}/resources/summary"
+    owner_sql(
+        "INSERT INTO sync_run (id, tenant_id, connection_id, job_type, status, started_at) "
+        "VALUES (gen_random_uuid(), %s, %s, 'inventory.scan', 'running', "
+        "now() - interval '1 hour')",
+        tenant,
+        connection,
+    )
+    [last] = (await client.get(summary, headers=headers)).json()["scans"]
+    assert (last["status"], last["errors"], last["progress"]) == ("failed", ["interrupted"], None)
+
+    # The next scan records it as failed for good.
+    await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection))
+    assert owner_sql(
+        "SELECT status, error_detail FROM sync_run WHERE connection_id = %s "
+        "AND job_type = 'inventory.scan' ORDER BY started_at",
+        connection,
+    ) == [("failed", "interrupted"), ("succeeded", None)]
