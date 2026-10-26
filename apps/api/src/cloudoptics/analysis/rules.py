@@ -188,16 +188,16 @@ def unattached_volumes(ctx: Context, resources: list[Resource]) -> Iterator[Cand
         age = _age_days(ctx, created)
         notes: list[str] = []
         first_sight = abs((r.state_since - r.first_seen_at) / timedelta(minutes=1)) < 5
+        # Flagged from the first scan that finds it unattached; confidence grows with time.
         if unattached >= 32:
             confidence: Confidence = "high"
         elif unattached >= 7:
             confidence = "medium"
-        elif first_sight and age is not None and age >= 7:
-            # Unattached when first scanned: the detach time is unknown.
-            confidence = "low"
-            notes.append("detach_time_unknown")
         else:
-            continue
+            confidence = "low"
+            if first_sight:
+                # Unattached when first scanned: the detach time is unknown.
+                notes.append("detach_time_unknown")
         cost, basis = volume_month_cost(ctx.prices, r, volume_type)
         if cost <= 0:
             continue
@@ -207,6 +207,8 @@ def unattached_volumes(ctx: Context, resources: list[Resource]) -> Iterator[Cand
             factors.append({"factor": "no_recent_snapshot", "points": 30})
         if age is not None and age < 30:
             factors.append({"factor": "recently_created", "points": 10})
+        if unattached < 7 and not first_sight:
+            factors.append({"factor": "recently_detached", "points": 10})
         region = _region_args(r)
         zone = str(r.config.get("availabilityZone") or f"{r.region_id}a")
         yield Candidate(
@@ -359,11 +361,10 @@ def idle_addresses(ctx: Context, resources: list[Resource]) -> Iterator[Candidat
                 confidence: Confidence = "high"
             elif since >= 3:
                 confidence = "medium"
-            elif first_sight:
-                confidence = "low"
-                notes.append("idle_since_unknown")
             else:
-                continue
+                confidence = "low"
+                if first_sight:
+                    notes.append("idle_since_unknown")
             reason = "not attached to anything"
         else:
             instance_id = r.config.get("instanceId")
@@ -428,8 +429,6 @@ def idle_load_balancers(ctx: Context, resources: list[Resource]) -> Iterator[Can
         kind = str(r.config.get("type") or "application")
         created = parse_time(r.config.get("createdTime"))
         age = _age_days(ctx, created)
-        if age is not None and age < 7:
-            continue
         idle = _age_days(ctx, r.state_since) or 0
         confidence: Confidence = "high" if idle >= 7 else ("medium" if idle >= 3 else "low")
         item = LB_ITEMS.get(kind, "clb_hour")
@@ -473,12 +472,17 @@ def idle_load_balancers(ctx: Context, resources: list[Resource]) -> Iterator[Can
             reversibility="irreversible",
             confidence=confidence,
             confidence_notes=["hourly_charge_only_lcu_excluded"],
-            risk_factors=env_factor(r.tags),
+            risk_factors=[
+                *env_factor(r.tags),
+                # A new load balancer may simply not have its targets yet.
+                *([{"factor": "recently_created", "points": 10}] if age is not None and age < 7
+                  else []),
+            ],
             evidence=[
                 {"kind": "healthyTargets", "value": r.config.get("healthyTargets")},
                 {"kind": "idleDays", "value": round(idle, 1)},
             ],
-            rule_config={"minAgeDays": 7, "highDays": 7},
+            rule_config={"mediumDays": 3, "highDays": 7},
             fix={
                 "steps": [delete],
                 "rollback": [],
