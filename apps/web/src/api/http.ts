@@ -17,6 +17,7 @@ import type {
   CurrentRate,
   DailyCosts,
   Me,
+  InventorySummary,
   Invite,
   Member,
   Recommendation,
@@ -208,6 +209,10 @@ export class HttpApi implements Api {
 
   scanResources(tenantId: string, connectionId: string): Promise<ResourceScan> {
     return this.request('POST', `/v1/tenants/${tenantId}/connections/${connectionId}/scan`)
+  }
+
+  resourceSummary(tenantId: string): Promise<InventorySummary> {
+    return this.request('GET', `/v1/tenants/${tenantId}/resources/summary`)
   }
 
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {

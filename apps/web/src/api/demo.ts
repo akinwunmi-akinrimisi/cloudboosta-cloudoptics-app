@@ -18,6 +18,7 @@ import type {
   DailyCosts,
   IntentSetup,
   Me,
+  InventorySummary,
   Invite,
   Member,
   PermissionCheck,
@@ -77,6 +78,8 @@ interface State {
   recommendationAssignee?: Record<string, string | null>
   recommendationEvents?: Record<string, RecommendationEvent[]>
   ruleSettings?: Record<string, RuleSettings>
+  /** connectionId -> when the demo last "scanned" it. */
+  scannedAt?: Record<string, string>
   /** Open invites per tenant. Nobody else signs in to the demo, so they stay pending. */
   invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
@@ -633,12 +636,35 @@ export class DemoApi implements Api {
     }
     // In the demo the stack is always found: the demo cannot see a real AWS account.
     ;(this.state.resourceAccess ??= {})[conn.id] = true
+    ;(this.state.scannedAt ??= {})[conn.id] = new Date().toISOString()
     this.save()
     const accounts = (await this.listAccounts(tenantId)).accounts.filter((a) => a.connectionId === conn.id)
     return {
       status: 'succeeded',
       accounts: accounts.map((a) => ({ awsAccountId: a.awsAccountId, access: true, error: null })),
     }
+  }
+
+  async resourceSummary(tenantId: string): Promise<InventorySummary> {
+    await this.tick()
+    const scans = []
+    for (const conn of this.state.connections[tenantId] ?? []) {
+      const at = this.state.scannedAt?.[conn.id]
+      if (!at) continue
+      const accounts = (await this.listAccounts(tenantId)).accounts.filter((a) => a.connectionId === conn.id)
+      scans.push({
+        connectionId: conn.id,
+        status: 'succeeded' as const,
+        startedAt: at,
+        finishedAt: at,
+        resources: 12,
+        accounts: accounts.length,
+        accountsWithAccess: accounts.length,
+        regions: 17 * accounts.length,
+        errors: [],
+      })
+    }
+    return { lastScanAt: scans[0]?.finishedAt ?? null, counts: [], scans }
   }
 
   async getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup> {
