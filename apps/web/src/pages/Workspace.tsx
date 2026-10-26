@@ -1,7 +1,7 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ExternalLink, Plus } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
 import type {
@@ -546,20 +546,17 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
     queryKey: ['accounts', tenantId],
     queryFn: () => api.listAccounts(tenantId),
   })
-  const [requestedAt, setRequestedAt] = useState<string | null>(null)
   const summary = useQuery({
     queryKey: ['resource-summary', tenantId],
     queryFn: () => api.resourceSummary(tenantId),
-    // While a queued scan runs on the worker, look again until its result is in.
-    refetchInterval: (q) => {
-      const last = q.state.data?.scans.find((s) => s.connectionId === c.id)
-      return requestedAt && (!last?.finishedAt || last.finishedAt < requestedAt) ? 10_000 : false
-    },
+    // The server says whether a scan is running, so leaving the page or reloading it does not
+    // lose track of one: follow its progress until it finishes.
+    refetchInterval: (q) =>
+      q.state.data?.scans.some((s) => s.connectionId === c.id && s.status === 'running') ? 2_000 : false,
   })
   const accounts = (list.data?.accounts ?? []).filter((a) => a.connectionId === c.id && a.orgStatus !== 'NOT_LISTED')
   const missing = accounts.filter((a) => !a.resourceAccess)
   const scan = useMutation({
-    onMutate: () => setRequestedAt(new Date().toISOString()),
     mutationFn: () => api.scanResources(tenantId, c.id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
@@ -567,9 +564,18 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
       void qc.invalidateQueries({ queryKey: ['resource-summary', tenantId] })
     },
   })
-  if (accounts.length === 0) return null
   const last = summary.data?.scans.find((s) => s.connectionId === c.id)
-  const running = requestedAt !== null && (!last?.finishedAt || last.finishedAt < requestedAt) && scan.data?.status === 'queued'
+  const running = last?.status === 'running'
+  // When a running scan finishes, show what it changed.
+  const wasRunning = useRef(running)
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
+      void qc.invalidateQueries({ queryKey: ['recommendations', tenantId] })
+    }
+    wasRunning.current = running
+  }, [running, qc, tenantId])
+  if (accounts.length === 0) return null
   const refused = scan.data?.accounts.filter((a) => !a.access) ?? []
   return (
     <div className="mt-4 flex flex-col gap-3 rounded-sm bg-surface-2 p-3 text-sm">
@@ -587,11 +593,7 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
               : 'Access is added by the CloudOptics stack. Check now to look again.'}
         </p>
       </div>
-      {running ? (
-        <p>Scanning resources now. Recommendations follow a few minutes after the scan.</p>
-      ) : (
-        last && <LastScanResult scan={last} />
-      )}
+      {running ? <ScanRunning scan={last} /> : last && <LastScanResult scan={last} />}
       {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
       {refused.length > 0 && (
         <Alert tone="warning">
@@ -607,9 +609,42 @@ function ResourceAccess({ connection: c, tenantId }: { connection: Connection; t
       )}
       <div>
         <Button variant="secondary" disabled={scan.isPending || running} onClick={() => scan.mutate()}>
-          {scan.isPending ? 'Checking…' : missing.length === 0 ? 'Scan now' : 'Check now'}
+          {scan.isPending ? 'Checking…' : running ? 'Scanning…' : missing.length === 0 ? 'Scan now' : 'Check now'}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** A scan in progress: regions scanned so far, from the server, so it survives leaving the page. */
+function ScanRunning({ scan }: { scan: LastScan }) {
+  const p = scan.progress
+  const percent = p && p.regionsTotal > 0 ? Math.min(100, Math.round((100 * p.regionsDone) / p.regionsTotal)) : null
+  return (
+    <div className="flex flex-col gap-2">
+      <p aria-live="polite">
+        {p ? `Scanning resources: ${p.regionsDone} of ${p.regionsTotal} regions` : 'Starting the scan…'}
+      </p>
+      <div
+        role="progressbar"
+        aria-label="Resource scan"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent ?? undefined}
+        className="h-2 w-full overflow-hidden rounded-full bg-border"
+      >
+        <div
+          className={cx(
+            'h-full rounded-full bg-accent transition-[width] duration-700 ease-out motion-reduce:transition-none',
+            percent === null && 'w-1/4 animate-pulse',
+          )}
+          style={percent === null ? undefined : { width: `${Math.max(percent, 2)}%` }}
+        />
+      </div>
+      <p className="text-secondary">
+        Started {new Date(scan.startedAt).toLocaleTimeString()}. You can leave this page: the scan carries on, and
+        recommendations follow a few minutes after it finishes.
+      </p>
     </div>
   )
 }

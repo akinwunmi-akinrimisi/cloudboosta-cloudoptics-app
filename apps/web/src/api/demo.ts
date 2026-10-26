@@ -20,6 +20,7 @@ import type {
   Me,
   InventorySummary,
   Invite,
+  LastScan,
   Member,
   PermissionCheck,
   Recommendation,
@@ -80,6 +81,8 @@ interface State {
   ruleSettings?: Record<string, RuleSettings>
   /** connectionId -> when the demo last "scanned" it. */
   scannedAt?: Record<string, string>
+  /** connectionId -> when the demo's running scan started (it takes `scanMs`). */
+  scanStartedAt?: Record<string, string>
   /** Open invites per tenant. Nobody else signs in to the demo, so they stay pending. */
   invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
@@ -317,8 +320,12 @@ export class DemoApi implements Api {
   private state: State = load()
   private readonly latencyMs: number
 
+  /** How long a demo resource scan runs, so the progress bar can be seen. */
+  private readonly scanMs: number
+
   constructor(latencyMs = 250) {
     this.latencyMs = latencyMs
+    this.scanMs = latencyMs * 32
   }
 
   private save(): void {
@@ -636,22 +643,46 @@ export class DemoApi implements Api {
     }
     // In the demo the stack is always found: the demo cannot see a real AWS account.
     ;(this.state.resourceAccess ??= {})[conn.id] = true
-    ;(this.state.scannedAt ??= {})[conn.id] = new Date().toISOString()
+    // Like the real worker, the scan runs on after this returns; resourceSummary shows it.
+    ;(this.state.scanStartedAt ??= {})[conn.id] = new Date().toISOString()
     this.save()
     const accounts = (await this.listAccounts(tenantId)).accounts.filter((a) => a.connectionId === conn.id)
     return {
-      status: 'succeeded',
+      status: this.scanMs ? 'queued' : 'succeeded',
       accounts: accounts.map((a) => ({ awsAccountId: a.awsAccountId, access: true, error: null })),
     }
   }
 
   async resourceSummary(tenantId: string): Promise<InventorySummary> {
     await this.tick()
-    const scans = []
+    const scans: LastScan[] = []
     for (const conn of this.state.connections[tenantId] ?? []) {
+      const accounts = (await this.listAccounts(tenantId)).accounts.filter((a) => a.connectionId === conn.id)
+      const started = this.state.scanStartedAt?.[conn.id]
+      if (started) {
+        const elapsed = Date.now() - Date.parse(started)
+        if (elapsed < this.scanMs) {
+          const total = 17 * accounts.length
+          scans.push({
+            connectionId: conn.id,
+            status: 'running',
+            startedAt: started,
+            finishedAt: null,
+            resources: 0,
+            accounts: accounts.length,
+            accountsWithAccess: 0,
+            regions: 0,
+            errors: [],
+            progress: { regionsDone: Math.floor((total * elapsed) / this.scanMs), regionsTotal: total },
+          })
+          continue
+        }
+        ;(this.state.scannedAt ??= {})[conn.id] = new Date(Date.parse(started) + this.scanMs).toISOString()
+        delete this.state.scanStartedAt?.[conn.id]
+        this.save()
+      }
       const at = this.state.scannedAt?.[conn.id]
       if (!at) continue
-      const accounts = (await this.listAccounts(tenantId)).accounts.filter((a) => a.connectionId === conn.id)
       scans.push({
         connectionId: conn.id,
         status: 'succeeded' as const,

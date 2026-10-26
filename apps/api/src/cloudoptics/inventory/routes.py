@@ -19,9 +19,18 @@ class InventoryCount(ApiModel):
     count: int
 
 
+class ScanProgress(ApiModel):
+    """How far a running scan has got. The total is an estimate until every account's
+    regions are known."""
+
+    regions_done: int
+    regions_total: int
+
+
 class LastScan(ApiModel):
-    """A connection's latest scan. ``status`` is succeeded, partial (some accounts or
-    regions could not be read: see ``errors``) or failed."""
+    """A connection's latest scan. ``status`` is running (``progress`` says how far it has
+    got; null while it waits for the worker), succeeded, partial (some accounts or regions
+    could not be read: see ``errors``) or failed."""
 
     connection_id: uuid.UUID
     status: str
@@ -32,6 +41,7 @@ class LastScan(ApiModel):
     accounts_with_access: int
     regions: int
     errors: list[str]
+    progress: ScanProgress | None = None
 
 
 class InventorySummary(ApiModel):

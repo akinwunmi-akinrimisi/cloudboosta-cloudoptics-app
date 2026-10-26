@@ -446,6 +446,7 @@ async def scan_resources(
         return ScanStarted(status=result, accounts=checked)
 
     from cloudoptics.inventory.jobs import defer_scan
+    from cloudoptics.inventory.scanner import queue_run
     from cloudoptics.platform.jobs import get_job_app
 
     # Show the access straight away; the scan on the worker confirms it and adds resources.
@@ -457,6 +458,8 @@ async def scan_resources(
             ),
             {"access": a.access, "c": connection_id, "a": a.aws_account_id},
         )
+    # The Connections page shows it as running from now until the worker finishes it.
+    await queue_run(session, access.tenant_id, connection_id, len(account_ids))
     await defer_scan(get_job_app(), str(access.tenant_id), str(connection_id))
     response.status_code = status.HTTP_202_ACCEPTED
     return ScanStarted(status="queued", accounts=checked)

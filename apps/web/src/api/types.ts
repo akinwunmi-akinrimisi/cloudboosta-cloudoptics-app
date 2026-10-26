@@ -224,11 +224,20 @@ export interface ResourceScan {
   accounts: { awsAccountId: string; access: boolean; error: string | null; rollout?: string | null }[]
 }
 
+/** How far a running scan has got. The total is an estimate until every account's regions are known. */
+export interface ScanProgress {
+  regionsDone: number
+  regionsTotal: number
+}
+
 /** A connection's latest resource scan. */
 export interface LastScan {
   connectionId: string
-  /** `partial`: some accounts or regions could not be read (see `errors`). */
-  status: 'succeeded' | 'partial' | 'failed'
+  /**
+   * `running`: still scanning, or queued for the scanner (`progress` is null until it starts).
+   * `partial`: some accounts or regions could not be read (see `errors`).
+   */
+  status: 'running' | 'succeeded' | 'partial' | 'failed'
   startedAt: string
   finishedAt: string | null
   resources: number
@@ -237,6 +246,7 @@ export interface LastScan {
   regions: number
   /** "<account> <region>: <AWS error code>" for each part that could not be read. */
   errors: string[]
+  progress?: ScanProgress | null
 }
 
 export interface InventorySummary {
