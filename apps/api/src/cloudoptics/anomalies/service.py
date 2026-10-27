@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.fx import service as fx
 from cloudoptics.ingestion.queries import data_range, scope_daily, scope_usage_types
+from cloudoptics.notifications import preferences
 from cloudoptics.notifications.email import Email, EmailError, get_mailer
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
@@ -332,15 +333,10 @@ def anomaly_email(rows: Sequence[Any], app_url: str) -> tuple[str, str, str]:
 async def recipients(
     session: AsyncSession, tenant_id: uuid.UUID, settings: AlertSettings
 ) -> list[str]:
-    """Workspace admins and members (viewers read the page), plus the extra addresses."""
-    rows = await session.execute(
-        text(
-            "SELECT u.email FROM membership m JOIN app_user u ON u.id = m.user_id "
-            "WHERE m.tenant_id = :t AND m.role IN ('admin', 'member')"
-        ),
-        {"t": tenant_id},
-    )
-    return sorted({r.email.lower() for r in rows} | set(settings.emails))
+    """Workspace admins and members (viewers read the page) who have not turned anomaly
+    emails off, plus the extra addresses."""
+    people = await preferences.recipients(session, tenant_id, "anomaly_alert", ("admin", "member"))
+    return sorted({p.email for p in people} | set(settings.emails))
 
 
 SELECT_UNSENT = text(
@@ -438,3 +434,26 @@ async def series(session: AsyncSession, row: Any, settings: AlertSettings) -> li
             )
         points.append(Point(d, round(costs.get(d, 0.0), 2), expected, upper))
     return points
+
+
+@dataclass(frozen=True)
+class AnomalyWeek:
+    count: int
+    impact_usd: float
+    open_count: int  # open now, of any day
+
+
+async def week(session: AsyncSession, first: date, last: date) -> AnomalyWeek:
+    """Anomalies on days ``first`` to ``last`` (suppressed ones left out), for the digest."""
+    row = (
+        await session.execute(
+            text(
+                "SELECT count(*) FILTER (WHERE usage_date BETWEEN :first AND :last "
+                "AND suppressed_by IS NULL) AS n, coalesce(sum(impact_usd) FILTER "
+                "(WHERE usage_date BETWEEN :first AND :last AND suppressed_by IS NULL), 0) "
+                "AS impact, count(*) FILTER (WHERE status = 'open') AS open FROM anomaly"
+            ),
+            {"first": first, "last": last},
+        )
+    ).one()
+    return AnomalyWeek(row.n, round(float(row.impact), 2), row.open)

@@ -7,6 +7,9 @@ import type {
   Anomaly,
   AnomalyDetail,
   AnomalyStatus,
+  DigestPreview,
+  NotificationChoices,
+  NotificationPreferences,
   Api,
   AuditPage,
   AuthConfig,
@@ -130,6 +133,22 @@ export class HttpApi implements Api {
 
   updateAnomaly(tenantId: string, id: string, change: { status: AnomalyStatus; note?: string | null }): Promise<AnomalyDetail> {
     return this.request('PATCH', `/v1/tenants/${tenantId}/anomalies/${id}`, change)
+  }
+
+  getNotificationPreferences(tenantId: string): Promise<NotificationPreferences> {
+    return this.request('GET', `/v1/tenants/${tenantId}/notification-preferences`)
+  }
+
+  saveMyNotifications(tenantId: string, change: Partial<NotificationChoices>): Promise<NotificationPreferences> {
+    return this.request('PUT', `/v1/tenants/${tenantId}/notification-preferences/me`, change)
+  }
+
+  saveNotificationDefaults(tenantId: string, change: Partial<NotificationChoices>): Promise<NotificationPreferences> {
+    return this.request('PUT', `/v1/tenants/${tenantId}/notification-preferences/defaults`, change)
+  }
+
+  digestPreview(tenantId: string): Promise<DigestPreview> {
+    return this.request('GET', `/v1/tenants/${tenantId}/digest/preview`)
   }
 
   getAlertSettings(tenantId: string): Promise<AlertSettingsView> {

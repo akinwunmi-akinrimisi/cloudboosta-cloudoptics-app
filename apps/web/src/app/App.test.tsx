@@ -166,6 +166,33 @@ describe('Cloudoptics web app', () => {
     )
   })
 
+  it('lets members choose their emails and preview the weekly digest', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('ada@example.com')
+    const tenant = await api.createTenant({ name: 'Lagos Labs', countryCode: 'NG' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '210987654324',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'ada@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: /Settings/ }))
+    const digest = await screen.findByRole('checkbox', { name: /Monday from 07:00/ })
+    expect(digest).toHaveProperty('checked', true)
+    await user.click(digest)
+    await waitFor(async () => expect((await api.getNotificationPreferences(tenant.id)).mine.weeklyDigest).toBe(false))
+    await user.click(screen.getByLabelText('Anomaly alerts by default'))
+    await waitFor(async () =>
+      expect((await api.getNotificationPreferences(tenant.id)).defaults).toEqual({ weeklyDigest: true, anomalyAlert: false }),
+    )
+    await user.click(screen.getByRole('button', { name: 'Preview last week’s digest' }))
+    expect(await screen.findByText(/^Your AWS week: USD/)).toBeTruthy()
+    expect(screen.getByTitle('Weekly digest preview')).toBeTruthy()
+  })
+
   it('lists connections with their checks', async () => {
     const { api } = renderApp('/sign-in')
     await api.signIn('amina@example.com')

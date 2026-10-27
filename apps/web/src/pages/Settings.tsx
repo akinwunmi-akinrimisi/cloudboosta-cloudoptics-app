@@ -2,7 +2,16 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useState } from 'react'
 
 import { useApi } from '../app/context'
-import type { AuditEntry, Invite, Member, Role, RuleSettings, RuleSettingsView, Tenant } from '../api/types'
+import type {
+  AuditEntry,
+  Invite,
+  Member,
+  NotificationChoices,
+  Role,
+  RuleSettings,
+  RuleSettingsView,
+  Tenant,
+} from '../api/types'
 import { ApiError } from '../api/types'
 import { Alert, Button, Card } from '../components/ui'
 import { RULES } from '../lib/rules'
@@ -469,14 +478,130 @@ export function Settings() {
         <MembersCard tenantId={tenantId} meId={me.id} isAdmin={role === 'admin'} />
       )}
       {tenantId !== null && role !== undefined && <RuleSettingsCard tenantId={tenantId} canEdit={role === 'admin'} />}
-      <Card>
-        <h2 className="text-base font-semibold">Email alerts</h2>
-        <p className="mt-1 text-sm text-secondary">
-          Workspace admins get an email when a connected AWS account stops working. Connections are checked every 6
-          hours.
-        </p>
-      </Card>
+      {tenantId !== null && role !== undefined && <NotificationsCard tenantId={tenantId} role={role} />}
       {tenantId !== null && role === 'admin' && <AuditLog tenantId={tenantId} />}
     </div>
+  )
+}
+
+const NOTIFICATION_KINDS: { key: keyof NotificationChoices; label: string; detail: string; roles: Role[] }[] = [
+  {
+    key: 'weeklyDigest',
+    label: 'Weekly digest',
+    detail: 'Monday from 07:00 workspace time: last week’s spend, top recommendations, budgets and anomalies.',
+    roles: ['admin', 'member', 'viewer'],
+  },
+  {
+    key: 'anomalyAlert',
+    label: 'Anomaly alerts',
+    detail: 'When a day’s spend on a service is well above normal.',
+    roles: ['admin', 'member'],
+  },
+]
+
+function NotificationsCard({ tenantId, role }: { tenantId: string; role: Role }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const prefs = useQuery({
+    queryKey: ['notification-preferences', tenantId],
+    queryFn: () => api.getNotificationPreferences(tenantId),
+  })
+  const onSaved = (updated: Awaited<ReturnType<typeof api.getNotificationPreferences>>) =>
+    qc.setQueryData(['notification-preferences', tenantId], updated)
+  const mine = useMutation({
+    mutationFn: (change: Partial<NotificationChoices>) => api.saveMyNotifications(tenantId, change),
+    onSuccess: onSaved,
+  })
+  const defaults = useMutation({
+    mutationFn: (change: Partial<NotificationChoices>) => api.saveNotificationDefaults(tenantId, change),
+    onSuccess: onSaved,
+  })
+  const [showPreview, setShowPreview] = useState(false)
+  const preview = useQuery({
+    queryKey: ['digest-preview', tenantId],
+    queryFn: () => api.digestPreview(tenantId),
+    enabled: showPreview,
+    retry: false,
+  })
+  const kinds = NOTIFICATION_KINDS.filter((k) => k.roles.includes(role))
+  const error = mine.error ?? defaults.error
+  return (
+    <Card className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-base font-semibold">Email notifications</h2>
+        <p className="mt-1 text-sm text-secondary">
+          Choose the optional emails you get from this workspace.
+          {role === 'admin' && ' Admins always get an email when a connected AWS account stops working.'} Budget
+          alerts go to the people each budget names.
+        </p>
+      </div>
+      {prefs.data && (
+        <fieldset className="flex flex-col gap-3">
+          <legend className="mb-1 text-sm font-medium">Send me</legend>
+          {kinds.map((k) => (
+            <label key={k.key} className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={prefs.data.mine[k.key]}
+                disabled={mine.isPending}
+                onChange={(e) => mine.mutate({ [k.key]: e.target.checked })}
+              />
+              <span>
+                <span className="font-medium">{k.label}</span>
+                <span className="block text-xs text-muted">{k.detail}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      )}
+      {prefs.data && role === 'admin' && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-sm font-medium">Workspace default (for members who have not chosen)</legend>
+          {NOTIFICATION_KINDS.map((k) => (
+            <label key={k.key} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                aria-label={`${k.label} by default`}
+                checked={prefs.data.defaults[k.key]}
+                disabled={defaults.isPending}
+                onChange={(e) => defaults.mutate({ [k.key]: e.target.checked })}
+              />
+              {k.label} on by default
+            </label>
+          ))}
+        </fieldset>
+      )}
+      {error && <Alert tone="error">{error instanceof ApiError ? error.message : 'Could not save. Try again.'}</Alert>}
+      <div className="flex flex-col gap-3">
+        <div>
+          <Button variant="secondary" onClick={() => setShowPreview(!showPreview)}>
+            {showPreview ? 'Hide the digest' : 'Preview last week’s digest'}
+          </Button>
+        </div>
+        {showPreview && preview.isLoading && <p className="text-sm text-secondary">Loading…</p>}
+        {showPreview && preview.error && (
+          <Alert tone="info">
+            {preview.error instanceof ApiError && preview.error.status === 404
+              ? 'No bills for last week yet, so there is no digest to show.'
+              : preview.error.message}
+          </Alert>
+        )}
+        {showPreview && preview.data && (
+          <div className="flex flex-col gap-2 rounded-sm border border-border p-3">
+            <p className="text-sm">
+              <span className="text-muted">Subject: </span>
+              <span className="font-medium">{preview.data.subject}</span>
+            </p>
+            <iframe
+              title="Weekly digest preview"
+              sandbox=""
+              srcDoc={`<!doctype html><meta charset="utf-8"><body style="font:14px system-ui,sans-serif;background:#fff;color:#0b0b0b;margin:8px">${preview.data.html}</body>`}
+              className="h-96 w-full rounded-sm border border-border bg-white"
+            />
+          </div>
+        )}
+      </div>
+    </Card>
   )
 }

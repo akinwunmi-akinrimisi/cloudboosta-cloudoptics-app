@@ -501,3 +501,24 @@ async def scope_usage_types(
         {"account": account_id, "service": service_code, "days": days},
     )
     return [UsageCost(r.usage_type, r.region_id, r.usage_date, float(r.amount)) for r in rows]
+
+
+@dataclass(frozen=True)
+class ServiceTotal:
+    service_code: str
+    service_name: str
+    amount: float
+
+
+async def service_totals(session: AsyncSession, first: date, last: date) -> list[ServiceTotal]:
+    """Spend (excluding tax) per service from ``first`` to ``last``, from the bills."""
+    rows = await session.execute(
+        text(
+            "SELECT service_code, max(service_name) AS service_name, "
+            "sum(effective_cost_usd) AS amount FROM cost_daily "
+            "WHERE usage_date BETWEEN :first AND :last AND charge_category <> 'Tax' "
+            "GROUP BY service_code"
+        ),
+        {"first": first, "last": last},
+    )
+    return [ServiceTotal(r.service_code, r.service_name, float(r.amount)) for r in rows]

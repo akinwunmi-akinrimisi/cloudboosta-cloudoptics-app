@@ -237,3 +237,25 @@ async def alert_budgets(session: AsyncSession, tenant_id: uuid.UUID, today: date
                 },
             )
     return sent
+
+
+@dataclass(frozen=True)
+class BudgetLine:
+    name: str
+    currency: str
+    amount: float
+    evaluation: Evaluation
+
+
+async def active_budgets(session: AsyncSession, today: date) -> list[BudgetLine]:
+    """Every active budget and how its month is going (for the weekly digest)."""
+    rows = await session.execute(
+        text(
+            "SELECT id, name, scope, amount, currency, thresholds, recipients FROM budget "
+            "WHERE is_active ORDER BY created_at"
+        )
+    )
+    return [
+        BudgetLine(r.name, r.currency.strip(), float(r.amount), await evaluate(session, r, today))
+        for r in rows.all()
+    ]
