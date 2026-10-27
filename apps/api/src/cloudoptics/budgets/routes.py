@@ -170,9 +170,7 @@ async def _out(session: AsyncSession, row: Any) -> Budget:
 
 
 async def _load(session: AsyncSession, budget_id: uuid.UUID) -> Any:
-    row = (
-        await session.execute(SELECT_BUDGET, {"id": budget_id})
-    ).one_or_none()
+    row = (await session.execute(SELECT_BUDGET, {"id": budget_id})).one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Budget not found")
     return row
