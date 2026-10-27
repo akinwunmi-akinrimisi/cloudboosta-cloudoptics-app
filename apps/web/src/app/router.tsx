@@ -15,6 +15,7 @@ import { SignIn } from '../pages/SignIn'
 import { Costs } from '../pages/Costs'
 import { RecommendationDetail, Recommendations } from '../pages/Recommendations'
 import { Settings } from '../pages/Settings'
+import { Anomalies } from '../pages/Anomalies'
 import { Budgets } from '../pages/Budgets'
 import { ComingSoon, Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
@@ -111,9 +112,7 @@ const recommendation = createRoute({
 const anomalies = createRoute({
   getParentRoute: () => app,
   path: '/anomalies',
-  component: () => (
-    <ComingSoon title="Anomalies" sprint="Sprint 5" what="Unexpected spend, with the cause and FX effect separated." />
-  ),
+  component: Anomalies,
 })
 const budgets = createRoute({ getParentRoute: () => app, path: '/budgets', component: Budgets })
 const reports = createRoute({

@@ -131,10 +131,12 @@ async def test_ingest_job_queues_reconciliation(
     async def fake_defer(app, name, lock, **kwargs):  # type: ignore[no-untyped-def]
         queued.append({"name": name, "lock": lock, **kwargs})
 
+    from cloudoptics.anomalies import jobs as anomaly_jobs
     from cloudoptics.budgets import jobs as budget_jobs
 
     monkeypatch.setattr(jobs, "defer_once", fake_defer)
     monkeypatch.setattr(budget_jobs, "defer_once", fake_defer)
+    monkeypatch.setattr(anomaly_jobs, "defer_once", fake_defer)
     monkeypatch.setattr(platform_jobs, "get_job_app", lambda: None)
     assert await jobs.ingest(tenant, connection) == "succeeded"
     assert queued == [
@@ -145,6 +147,7 @@ async def test_ingest_job_queues_reconciliation(
             "connection_id": connection,
             "billing_period": "2026-09-01",
         },
-        # New bills: the workspace's budgets are checked straight away.
+        # New bills: the workspace's budgets and anomalies are checked straight away.
         {"name": budget_jobs.EVALUATE_TASK, "lock": f"budgets:{tenant}", "tenant_id": tenant},
+        {"name": anomaly_jobs.DETECT_TASK, "lock": f"anomalies:{tenant}", "tenant_id": tenant},
     ]

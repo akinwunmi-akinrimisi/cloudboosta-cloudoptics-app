@@ -426,3 +426,78 @@ async def breakdown(
     rows = await session.execute(text(_BREAKDOWN_SQL[dimension]), {"start": start, "end": end})
     total, items = _top([(r.key, r.label, float(r.amount)) for r in rows], limit)
     return Breakdown("cur", month, dimension, "USD", total, items)
+
+
+@dataclass(frozen=True)
+class ScopeCost:
+    account_id: str
+    service_code: str
+    service_name: str
+    usage_date: date
+    amount: float
+
+
+async def data_range(session: AsyncSession, today: date) -> tuple[date, date] | None:
+    """The first and latest days with bills (CUR), up to ``today``."""
+    row = (
+        await session.execute(
+            text("SELECT min(usage_date), max(usage_date) FROM cost_daily WHERE usage_date <= :t"),
+            {"t": today},
+        )
+    ).one()
+    return None if row[0] is None else (row[0], row[1])
+
+
+async def scope_daily(
+    session: AsyncSession,
+    first: date,
+    last: date,
+    account_id: str | None = None,
+    service_code: str | None = None,
+) -> list[ScopeCost]:
+    """Daily spend per (account, service) from ``first`` to ``last``, for anomaly detection;
+    optionally for one account and service. Usage and purchases, amortised: credits,
+    refunds and tax would make a day look unusual for reasons that are not spend."""
+    rows = await session.execute(
+        text(
+            "SELECT account_id, service_code, max(service_name) AS service_name, usage_date, "
+            "sum(effective_cost_usd) AS amount FROM cost_daily "
+            "WHERE usage_date BETWEEN :first AND :last "
+            "AND charge_category IN ('Usage', 'Purchase') "
+            "AND (CAST(:account AS text) IS NULL OR account_id = CAST(:account AS text)) "
+            "AND (CAST(:service AS text) IS NULL OR service_code = CAST(:service AS text)) "
+            "GROUP BY account_id, service_code, usage_date"
+        ),
+        {"first": first, "last": last, "account": account_id, "service": service_code},
+    )
+    return [
+        ScopeCost(
+            r.account_id.strip(), r.service_code, r.service_name, r.usage_date, float(r.amount)
+        )
+        for r in rows
+    ]
+
+
+@dataclass(frozen=True)
+class UsageCost:
+    usage_type: str
+    region: str | None
+    usage_date: date
+    amount: float
+
+
+async def scope_usage_types(
+    session: AsyncSession, account_id: str, service_code: str, days: list[date]
+) -> list[UsageCost]:
+    """Spend by usage type and region for one account and service on the given days."""
+    rows = await session.execute(
+        text(
+            "SELECT coalesce(usage_type, 'Other') AS usage_type, region_id, usage_date, "
+            "sum(effective_cost_usd) AS amount FROM cost_daily "
+            "WHERE account_id = :account AND service_code = :service "
+            "AND usage_date = ANY(:days) AND charge_category IN ('Usage', 'Purchase') "
+            "GROUP BY coalesce(usage_type, 'Other'), region_id, usage_date"
+        ),
+        {"account": account_id, "service": service_code, "days": days},
+    )
+    return [UsageCost(r.usage_type, r.region_id, r.usage_date, float(r.amount)) for r in rows]
