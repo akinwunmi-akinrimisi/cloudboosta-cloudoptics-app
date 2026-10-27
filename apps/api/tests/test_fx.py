@@ -4,14 +4,17 @@
 or date range.
 """
 
+import dataclasses
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import httpx
 import pytest
 from httpx import AsyncClient
 
 from cloudoptics.fx import feed, service
+from cloudoptics.identity.auth import DevVerifier
 from cloudoptics.platform.settings import get_settings
 
 STAFF = "rates-desk@cloudoptics.example"
@@ -54,6 +57,16 @@ async def test_only_staff_can_set_rates(client: AsyncClient, login, staff_list) 
     staff = await login(STAFF)
     r = await client.post("/v1/admin/fx/rates", json={**body, "currency": "USD"}, headers=staff)
     assert r.status_code == 422
+    # A staff address whose owner has not confirmed it is not staff: anyone can sign up with it.
+    verify = DevVerifier.verify
+
+    async def unconfirmed(self: DevVerifier, token: str) -> Any:
+        return dataclasses.replace(await verify(self, token), email_verified=False)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(DevVerifier, "verify", unconfirmed)
+        r = await client.post("/v1/admin/fx/rates", json=body, headers=staff)
+        assert r.status_code == 403
     r = await client.post("/v1/admin/fx/rates", json={**body, "reason": None}, headers=staff)
     assert r.status_code == 422, "a back-dated rate needs a reason"
 

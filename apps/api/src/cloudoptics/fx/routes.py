@@ -70,8 +70,9 @@ class RateCreate(ApiModel):
 
 
 async def staff_user(user: User, request: Request) -> Actor:
-    """Cloudoptics staff only (``CLOUDOPTICS_PLATFORM_ADMIN_EMAILS``)."""
-    if user.email.lower() not in get_settings().platform_admins:
+    """Cloudoptics staff only (``CLOUDOPTICS_PLATFORM_ADMIN_EMAILS``), with the email confirmed:
+    anyone can sign up with an address they do not own."""
+    if not user.email_verified or user.email.lower() not in get_settings().platform_admins:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Cloudoptics staff only")
     return Actor(
         type="staff",

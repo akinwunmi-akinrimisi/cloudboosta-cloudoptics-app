@@ -148,7 +148,8 @@ class WorkOSVerifier:
             or AUTHKIT_ISSUER.fullmatch(iss)
         ):
             raise jwt.InvalidIssuerError(f"unexpected issuer {iss!r}")
-        if payload.get("client_id", self.client_id) != self.client_id:
+        # Required: without the claim, any token from the same WorkOS environment would pass.
+        if payload.get("client_id") != self.client_id:
             raise jwt.InvalidTokenError("token was issued to another client")
         return payload
 

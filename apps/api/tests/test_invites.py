@@ -188,3 +188,10 @@ async def test_invites_stay_inside_their_workspace(
     assert r.status_code == 404
     me = (await client.get("/v1/me", headers=await login("shared@example.com"))).json()
     assert [m["tenantName"] for m in me["memberships"]] == ["A"]
+
+    # An invite to an admin's own email from another workspace is not listed in theirs.
+    carol_email = "carol@example.com"
+    carol = await login(carol_email)
+    c = await create_tenant(client, carol, name="C")
+    await invite(client, a, alice, carol_email, "viewer")
+    assert (await client.get(f"/v1/tenants/{c['id']}/invites", headers=carol)).json() == []

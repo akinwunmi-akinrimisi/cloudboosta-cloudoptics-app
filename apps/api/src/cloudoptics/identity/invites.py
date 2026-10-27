@@ -59,7 +59,8 @@ SELECT_INVITES = text(
     "SELECT i.id, i.email, i.role, u.email AS invited_by_email, i.created_at, i.expires_at, "
     "CASE WHEN i.expires_at > now() THEN 'pending' ELSE 'expired' END AS status "
     "FROM invite i LEFT JOIN app_user u ON u.id = i.invited_by "
-    "WHERE i.accepted_at IS NULL AND i.revoked_at IS NULL "
+    # The tenant filter matters: RLS also lets a user see invites addressed to their own email.
+    "WHERE i.tenant_id = :t AND i.accepted_at IS NULL AND i.revoked_at IS NULL "
     "AND (CAST(:id AS uuid) IS NULL OR i.id = :id) ORDER BY i.created_at DESC"
 )
 
@@ -151,13 +152,13 @@ async def create_invite(
     except EmailError as exc:
         sent = False
         log.warning("invite email to tenant %s not sent: %s", access.tenant_id, exc)
-    row = (await session.execute(SELECT_INVITES, {"id": invite_id})).one()
+    row = (await session.execute(SELECT_INVITES, {"id": invite_id, "t": access.tenant_id})).one()
     return Invite(**row._mapping, email_sent=sent)
 
 
 @router.get("/invites", response_model=list[Invite], response_model_by_alias=True)
 async def list_invites(access: AdminAccess, session: Session) -> list[Invite]:
-    rows = await session.execute(SELECT_INVITES, {"id": None})
+    rows = await session.execute(SELECT_INVITES, {"id": None, "t": access.tenant_id})
     return [Invite.model_validate(r._mapping) for r in rows]
 
 
