@@ -7,6 +7,7 @@
 #            management account, then tell Cloudoptics the stack is ready (or gone).
 import contextlib
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -34,6 +35,10 @@ ORG_ACCESS_TRIES = 12  # about 6 minutes, inside the function's 15
 # without a reply the stack waits an hour and then fails with no reason.
 RESERVE_SECONDS = 120
 _deadline = None
+# Taken from this stack's own parameters (the function's environment), never from the event:
+# anyone allowed to invoke the function could otherwise choose the template and the trusted
+# principal rolled out to every member account, or where the callback is sent.
+FIXED = ("ExternalId", "CloudopticsPrincipalArn", "ResourceTemplateUrl", "CallbackUrl")
 
 
 def time_left():
@@ -77,7 +82,7 @@ def handler(event, context):
     global _deadline
     if context is not None:
         _deadline = time.time() + context.get_remaining_time_in_millis() / 1000 - RESERVE_SECONDS
-    props = event["ResourceProperties"]
+    props = {**event["ResourceProperties"], **{k: os.environ[k] for k in FIXED}}
     physical = event.get("PhysicalResourceId") or "cloudoptics-" + props["Action"]
     try:
         data = ACTIONS[props["Action"]](event["RequestType"], props) or {}
@@ -398,13 +403,17 @@ def setup(kind, props):
     org = organization()
     management = org is not None and org["MasterAccountId"] == props["AccountId"]
     if kind == "Delete":
+        left = None
         if management:
-            # A rollout left behind is taken over by the next stack, so it never blocks a delete.
+            # A rollout left behind is taken over by the next stack, so it never blocks a
+            # delete; Cloudoptics is told, so the workspace's audit log says the member
+            # accounts still have the role.
             try:
                 remove_stackset()
             except Exception as exc:
-                print(f"member rollout not removed: {type(exc).__name__}: {exc}")
-        callback(kind, props, management)
+                left = f"failed: member roles not removed: {type(exc).__name__}: {exc}"[:900]
+                print(left)
+        callback(kind, props, management, left)
         return None
     if not management:
         rollout = "not an Organization's management account"
