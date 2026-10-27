@@ -1,6 +1,6 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ExternalLink, Plus } from 'lucide-react'
+import { ExternalLink, Plus, RefreshCw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
@@ -32,6 +32,9 @@ export function useWorkspace() {
     queryKey: ['connections', tenantId],
     queryFn: () => api.listConnections(tenantId as string),
     enabled: tenantId !== null,
+    // A check runs on the server after a stack is created or updated: follow it to its result.
+    refetchInterval: (q) =>
+      q.state.data?.some((c) => c.status === 'pending' || c.status === 'validating') ? 3_000 : false,
   })
   return { me, tenantId, tenant, connections }
 }
@@ -317,13 +320,16 @@ export function Connections() {
           <h1 className="text-2xl font-semibold">Connections</h1>
           <p className="text-sm text-secondary">AWS accounts Cloudoptics can read. Read-only, always.</p>
         </div>
-        <Link
+        <div className="flex flex-wrap items-center gap-3">
+          {tenantId !== null && <RefreshConnections tenantId={tenantId} updatedAt={connections.dataUpdatedAt} />}
+          <Link
           to="/onboarding"
           search={{ step: 1 }}
           className="inline-flex h-9 items-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
         >
-          <Plus size={16} /> Connect an account
-        </Link>
+            <Plus size={16} /> Connect an account
+          </Link>
+        </div>
       </div>
       {connections.isLoading && <p className="text-sm text-secondary">Loading…</p>}
       {connections.data?.length === 0 && <Alert tone="info">No accounts connected yet.</Alert>}
@@ -367,6 +373,35 @@ export function Connections() {
       ))}
       {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}
     </div>
+  )
+}
+
+/** Everything on the Connections page, fetched again now (the page also follows changes itself). */
+function RefreshConnections({ tenantId, updatedAt }: { tenantId: string; updatedAt: number }) {
+  const qc = useQueryClient()
+  const [busy, setBusy] = useState(false)
+  const refresh = async () => {
+    setBusy(true)
+    try {
+      await Promise.all(
+        ['connections', 'setup', 'accounts', 'resource-summary'].map((key) =>
+          qc.refetchQueries({ queryKey: [key, tenantId] }),
+        ),
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      {updatedAt > 0 && (
+        <span className="text-xs text-muted">Updated {new Date(updatedAt).toLocaleTimeString()}</span>
+      )}
+      <Button variant="secondary" disabled={busy} onClick={() => void refresh()}>
+        <RefreshCw size={16} className={cx(busy && 'animate-spin motion-reduce:animate-none')} />
+        {busy ? 'Refreshing…' : 'Refresh'}
+      </Button>
+    </>
   )
 }
 
@@ -489,8 +524,26 @@ function MoveToSingleStack({ connection: c }: { connection: Connection }) {
 /** A newer version of the single stack: update it in place in AWS. */
 function StackUpdate({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
   const api = useApi()
-  const setup = useQuery({ queryKey: ['setup', tenantId, c.id], queryFn: () => api.getSetup(tenantId, c.id) })
+  const qc = useQueryClient()
+  // Set once the admin has opened AWS: the update takes a few minutes, so look more often.
+  const [opened, setOpened] = useState(false)
+  const setup = useQuery({
+    queryKey: ['setup', tenantId, c.id],
+    queryFn: () => api.getSetup(tenantId, c.id),
+    // While an update is offered, notice by itself when the stack has been updated in AWS.
+    refetchInterval: (q) => (q.state.data?.updateAvailable ? (opened ? 5_000 : 30_000) : false),
+  })
   const s = setup.data
+  // When the update lands, the connection (its version and checks) has changed too.
+  const updateAvailable = s?.updateAvailable
+  const offered = useRef(updateAvailable)
+  useEffect(() => {
+    if (offered.current && updateAvailable === false) {
+      void qc.invalidateQueries({ queryKey: ['connections', tenantId] })
+      void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
+    }
+    offered.current = updateAvailable
+  }, [updateAvailable, qc, tenantId])
   if (setup.error) {
     return <Alert tone="error">Could not check for a newer Cloudoptics stack: {setup.error.message}</Alert>
   }
@@ -516,6 +569,7 @@ function StackUpdate({ connection: c, tenantId }: { connection: Connection; tena
           href={s.stackUpdateUrl}
           target="_blank"
           rel="noreferrer"
+          onClick={() => setOpened(true)}
           className="inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
         >
           Update Cloudoptics access <ExternalLink size={16} />
@@ -525,6 +579,11 @@ function StackUpdate({ connection: c, tenantId }: { connection: Connection; tena
         AWS opens with the new version already chosen, signed in to account {c.awsAccountId}. Choose Next until the last
         page, tick the box that starts “I acknowledge” and choose Submit. Cloudoptics notices when it is done.
       </p>
+      {opened && (
+        <p aria-live="polite" className="font-medium">
+          Waiting for the update in AWS. This page changes by itself when it finishes, usually within a few minutes.
+        </p>
+      )}
       <details className="text-secondary">
         <summary className="cursor-pointer">AWS asks for a template?</summary>
         <div className="mt-2 flex flex-col gap-2">
