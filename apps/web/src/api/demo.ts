@@ -7,6 +7,8 @@ import type {
   Anomaly,
   AnomalyDetail,
   AnomalyStatus,
+  CreditBalanceInput,
+  CreditsRunway,
   DigestPreview,
   MonthlyReport,
   ReportList,
@@ -107,6 +109,8 @@ interface State {
   /** tenantId -> months whose report was "made" in the demo, and extra report addresses. */
   reportsMade?: Record<string, Record<string, string>>
   reportEmails?: Record<string, string[]>
+  /** tenantId -> credit balances entered in the demo, newest last. */
+  creditBalances?: Record<string, (CreditBalanceInput & { enteredAt: string; asOf: string })[]>
   /** Open invites per tenant. Nobody else signs in to the demo, so they stay pending. */
   invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
@@ -1451,6 +1455,71 @@ export class DemoApi implements Api {
           (rate === null ? '' : ` Converted at each day's official rate; month average ${tenant.displayCurrency} ${rate.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per USD.`),
       },
     }
+  }
+
+  /** The demo estate burns about USD 18 a day of Activate credits. */
+  async getCredits(tenantId: string): Promise<CreditsRunway> {
+    await this.tick()
+    this.tenant(tenantId)
+    const empty: CreditsRunway = {
+      status: 'no_credits', dataThrough: null, appliedMonthUsd: 0, burnUsdDay: 0, burnDays: 0,
+      spendBeforeCreditsUsdMonth: 0, balance: null, usedSinceBalanceUsd: null, remainingUsd: null,
+      daysLeft: null, depletionDate: null, expiresFirst: false, daily: [],
+    }
+    if (!this.hasData(tenantId)) return empty
+    const last = isoDaysAgo(1)
+    const daily = Array.from({ length: 30 }, (_, i) => ({ date: isoDaysAgo(30 - i), amount: Math.round((16 + ((i * 7) % 5)) * 100) / 100 }))
+    const burn = Math.round((daily.reduce((t, d) => t + d.amount, 0) / 30) * 100) / 100
+    const monthStart = `${last.slice(0, 8)}01`
+    const applied = Math.round(daily.filter((d) => d.date >= monthStart).reduce((t, d) => t + d.amount, 0) * 100) / 100
+    const entries = this.state.creditBalances?.[tenantId] ?? []
+    const latest = entries[entries.length - 1]
+    const base = { ...empty, dataThrough: last, appliedMonthUsd: applied, burnUsdDay: burn, burnDays: 30, spendBeforeCreditsUsdMonth: 1720.4, daily }
+    if (!latest) return { ...base, status: 'no_balance' }
+    const used = Math.round(daily.filter((d) => d.date > latest.asOf).reduce((t, d) => t + d.amount, 0) * 100) / 100
+    const remaining = Math.max(Math.round((latest.amountUsd - used) * 100) / 100, 0)
+    let daysLeft = Math.floor(remaining / burn)
+    let depletion = new Date(Date.parse(`${last}T00:00:00Z`) + daysLeft * 86_400_000).toISOString().slice(0, 10)
+    let expiresFirst = false
+    if (latest.expiresOn && remaining > 0 && latest.expiresOn < depletion) {
+      expiresFirst = true
+      depletion = latest.expiresOn
+      daysLeft = Math.max(Math.round((Date.parse(`${latest.expiresOn}T00:00:00Z`) - Date.parse(`${last}T00:00:00Z`)) / 86_400_000), 0)
+    }
+    return {
+      ...base,
+      status: remaining <= 0 ? 'used_up' : daysLeft < 90 ? 'ending_soon' : 'ok',
+      balance: {
+        amountUsd: latest.amountUsd,
+        asOf: latest.asOf,
+        expiresOn: latest.expiresOn ?? null,
+        note: latest.note ?? null,
+        enteredBy: this.state.me?.displayName ?? this.state.me?.email ?? null,
+        enteredAt: latest.enteredAt,
+      },
+      usedSinceBalanceUsd: used,
+      remainingUsd: remaining,
+      daysLeft,
+      depletionDate: depletion,
+      expiresFirst,
+    }
+  }
+
+  async setCreditBalance(tenantId: string, body: CreditBalanceInput): Promise<CreditsRunway> {
+    this.tenant(tenantId)
+    const today = isoDaysAgo(0)
+    const asOf = body.asOf || today
+    if (!(body.amountUsd >= 0)) throw new ApiError(422, 'The balance cannot be negative.')
+    if (asOf > today) throw new ApiError(422, 'The balance date cannot be in the future.')
+    if (body.expiresOn && body.expiresOn < asOf) throw new ApiError(422, 'Credits cannot expire before the balance date.')
+    ;((this.state.creditBalances ??= {})[tenantId] ??= []).push({
+      ...body,
+      asOf,
+      note: body.note?.trim() || null,
+      enteredAt: new Date().toISOString(),
+    })
+    this.save()
+    return this.getCredits(tenantId)
   }
 
   async listReports(tenantId: string): Promise<ReportList> {

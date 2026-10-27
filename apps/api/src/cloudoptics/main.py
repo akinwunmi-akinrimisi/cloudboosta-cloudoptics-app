@@ -13,6 +13,7 @@ from cloudoptics.audit import routes as audit_routes
 from cloudoptics.budgets import routes as budget_routes
 from cloudoptics.connectors import access as connector_access
 from cloudoptics.connectors import routes as connector_routes
+from cloudoptics.credits import routes as credit_routes
 from cloudoptics.fx import routes as fx_routes
 from cloudoptics.identity import dev as dev_routes
 from cloudoptics.identity import invites as invite_routes
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(recommendation_routes.settings_router)
     app.include_router(audit_routes.router)
     app.include_router(budget_routes.router)
+    app.include_router(credit_routes.router)
     app.include_router(anomaly_routes.router)
     app.include_router(anomaly_routes.settings_router)
     app.include_router(notification_routes.router)
