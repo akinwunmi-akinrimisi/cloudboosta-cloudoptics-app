@@ -170,6 +170,50 @@ def _sum_series(rows: list[Any], column: str, key: str) -> dict[str, float]:
     return totals
 
 
+@dataclass(frozen=True)
+class MonthSpend:
+    """A month's spend from the bills (CUR), for budgets: amortised, after credits."""
+
+    effective: float
+    forecast: float | None
+    data_through: date | None
+
+
+async def month_spend(
+    session: AsyncSession, today: date, accounts: list[str] | None = None
+) -> MonthSpend:
+    """This month's spend for the workspace or some of its accounts, with the same run-rate
+    forecast as the Overview. The forecast counts days up to the workspace's latest data,
+    so an account with no spend on a day is not treated as missing data."""
+    start, end = _month_bounds(today)
+    last_day = (
+        await session.execute(
+            text(
+                "SELECT max(usage_date) FROM cost_daily "
+                "WHERE usage_date >= :start AND usage_date < :end"
+            ),
+            {"start": start, "end": end},
+        )
+    ).scalar_one()
+    if last_day is None:
+        return MonthSpend(0.0, None, None)
+    totals = (
+        await session.execute(
+            text(
+                "SELECT coalesce(sum(effective_cost_usd), 0) AS effective, "
+                "coalesce(sum(effective_cost_usd) FILTER (WHERE charge_category <> 'Tax'), 0) "
+                "AS run_rate_base FROM cost_daily WHERE usage_date >= :start "
+                "AND usage_date < :end AND (CAST(:accounts AS text[]) IS NULL "
+                "OR account_id = ANY(CAST(:accounts AS text[])))"
+            ),
+            {"start": start, "end": end, "accounts": accounts},
+        )
+    ).one()
+    effective = float(totals.effective)
+    forecast = _run_rate(effective, float(totals.run_rate_base), start, last_day)
+    return MonthSpend(round(effective, 2), forecast.amount, last_day)
+
+
 async def summary(session: AsyncSession, today: date) -> CostSummary:
     """Month-to-date spend (amortised, after credits) and a run-rate month-end forecast.
 

@@ -383,6 +383,48 @@ export interface Member {
   joinedAt: string
 }
 
+/** `no_rate`: a local-currency budget with no usable exchange rate yet; `no_data`: no bills this month. */
+export type BudgetStatus = 'on_track' | 'at_risk' | 'over' | 'no_data' | 'no_rate'
+
+export interface BudgetScope {
+  type: 'tenant' | 'accounts'
+  accounts: string[]
+}
+
+export interface BudgetThresholdInput {
+  kind: 'actual' | 'forecast'
+  percent: number
+}
+
+export interface BudgetInput {
+  name: string
+  scope: BudgetScope
+  amount: number
+  currency: string
+  thresholds: BudgetThresholdInput[]
+  recipients: { users: string[]; emails: string[] }
+}
+
+/** A monthly budget and how this month is going: amounts in its currency, with the USD they come from. */
+export interface Budget extends BudgetInput {
+  id: string
+  isActive: boolean
+  createdAt: string
+  status: BudgetStatus
+  period: string
+  dataThrough: string | null
+  /** Budget currency per USD; null when there is no usable rate. */
+  rate: number | null
+  amountUsd: number | null
+  actual: number | null
+  actualUsd: number
+  forecast: number | null
+  forecastUsd: number | null
+  actualPercent: number | null
+  forecastPercent: number | null
+  thresholds: (BudgetThresholdInput & { crossed: boolean; alerted: boolean })[]
+}
+
 export interface Invite {
   id: string
   email: string
@@ -445,6 +487,11 @@ export interface Api {
   getTenant(tenantId: string): Promise<Tenant>
   updateTenant(tenantId: string, change: TenantChange): Promise<Tenant>
   listMembers(tenantId: string): Promise<Member[]>
+  listBudgets(tenantId: string): Promise<Budget[]>
+  /** Members and admins. */
+  createBudget(tenantId: string, body: BudgetInput): Promise<Budget>
+  updateBudget(tenantId: string, id: string, change: Partial<BudgetInput> & { isActive?: boolean }): Promise<Budget>
+  deleteBudget(tenantId: string, id: string): Promise<void>
   /** Admins only. The invitee joins the first time they sign in with that email. */
   inviteMember(tenantId: string, email: string, role: Role): Promise<Invite>
   listInvites(tenantId: string): Promise<Invite[]>

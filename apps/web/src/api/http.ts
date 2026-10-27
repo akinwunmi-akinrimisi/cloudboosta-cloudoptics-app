@@ -19,6 +19,8 @@ import type {
   Me,
   InventorySummary,
   Invite,
+  Budget,
+  BudgetInput,
   Member,
   Recommendation,
   RecommendationChange,
@@ -94,6 +96,22 @@ export class HttpApi implements Api {
 
   listMembers(tenantId: string): Promise<Member[]> {
     return this.request('GET', `/v1/tenants/${tenantId}/members`)
+  }
+
+  listBudgets(tenantId: string): Promise<Budget[]> {
+    return this.request('GET', `/v1/tenants/${tenantId}/budgets`)
+  }
+
+  createBudget(tenantId: string, body: BudgetInput): Promise<Budget> {
+    return this.request('POST', `/v1/tenants/${tenantId}/budgets`, body)
+  }
+
+  updateBudget(tenantId: string, id: string, change: Partial<BudgetInput> & { isActive?: boolean }): Promise<Budget> {
+    return this.request('PATCH', `/v1/tenants/${tenantId}/budgets/${id}`, change)
+  }
+
+  deleteBudget(tenantId: string, id: string): Promise<void> {
+    return this.request('DELETE', `/v1/tenants/${tenantId}/budgets/${id}`)
   }
 
   inviteMember(tenantId: string, email: string, role: Role): Promise<Invite> {

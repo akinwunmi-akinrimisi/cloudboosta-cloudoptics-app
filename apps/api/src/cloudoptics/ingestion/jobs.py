@@ -59,6 +59,10 @@ async def ingest(tenant_id: str, connection_id: str) -> str:
                 connection_id=connection_id,
                 billing_period=period.isoformat(),
             )
+        # New bills: budgets are checked now, not at the next hourly run (PRD US-6.2).
+        from cloudoptics.budgets.jobs import defer_evaluate
+
+        await defer_evaluate(app, tenant_id)
     return result.status
 
 
