@@ -19,6 +19,7 @@ def _conninfo(sqlalchemy_url: str) -> str:
 @lru_cache
 def get_job_app() -> procrastinate.App:
     from cloudoptics.analysis.jobs import blueprint as analysis_jobs
+    from cloudoptics.budgets.jobs import blueprint as budget_jobs
     from cloudoptics.connectors.jobs import blueprint as connector_jobs
     from cloudoptics.fx.feed import blueprint as fx_jobs
     from cloudoptics.ingestion.jobs import blueprint as ingestion_jobs
@@ -38,6 +39,7 @@ def get_job_app() -> procrastinate.App:
     app.add_tasks_from(metrics_jobs, namespace="metrics")
     app.add_tasks_from(analysis_jobs, namespace="analysis")
     app.add_tasks_from(notification_jobs, namespace="notifications")
+    app.add_tasks_from(budget_jobs, namespace="budgets")
     return app
 
 

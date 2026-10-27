@@ -4,6 +4,9 @@ import type {
   AccountList,
   Api,
   AuditEntry,
+  Budget,
+  BudgetInput,
+  BudgetStatus,
   AuditPage,
   CloudAccount,
   AuthConfig,
@@ -83,6 +86,8 @@ interface State {
   scannedAt?: Record<string, string>
   /** connectionId -> when the demo's running scan started (it takes `scanMs`). */
   scanStartedAt?: Record<string, string>
+  /** Budgets per tenant, as entered; how the month is going is worked out on each read. */
+  budgets?: Record<string, (BudgetInput & { id: string; isActive: boolean; createdAt: string })[]>
   /** Open invites per tenant. Nobody else signs in to the demo, so they stay pending. */
   invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
@@ -440,6 +445,90 @@ export class DemoApi implements Api {
     const tenant = this.tenant(tenantId)
     const me = this.requireMe()
     return [{ userId: me.id, email: me.email, displayName: me.displayName, role: 'admin', joinedAt: tenant.createdAt }]
+  }
+
+  /** A budget with this month's spend from the demo bills (same figures as the Overview). */
+  private async budgetView(tenantId: string, b: BudgetInput & { id: string; isActive: boolean; createdAt: string }): Promise<Budget> {
+    const summary = await this.costSummary(tenantId)
+    const total = summary.monthToDate?.effective ?? 0
+    let actualUsd = total
+    if (b.scope.type === 'accounts') {
+      const byAccount = await this.costBreakdown(tenantId, 'account', 50)
+      const part = byAccount.items.filter((i) => b.scope.accounts.includes(i.key)).reduce((s, i) => s + i.amount, 0)
+      actualUsd = byAccount.total ? (total * part) / byAccount.total : 0
+    }
+    const forecastUsd = summary.forecast && total ? (summary.forecast.amount * actualUsd) / total : null
+    const rate = b.currency === 'USD' ? 1 : ((await this.fxCurrent(tenantId)).quote?.rate ?? null)
+    const round = (n: number) => Math.round(n * 100) / 100
+    const amountUsd = rate ? round(b.amount / rate) : null
+    const hasData = summary.status === 'ready' || summary.status === 'provisional'
+    const status: BudgetStatus =
+      amountUsd === null ? 'no_rate' : !hasData ? 'no_data' : actualUsd >= amountUsd ? 'over' : (forecastUsd ?? 0) >= amountUsd ? 'at_risk' : 'on_track'
+    const pct = (usd: number | null) => (usd === null || !amountUsd ? null : Math.round((1000 * usd) / amountUsd) / 10)
+    return {
+      ...structuredClone(b),
+      status,
+      period: `${new Date().toISOString().slice(0, 7)}-01`,
+      dataThrough: summary.dataThrough,
+      rate,
+      amountUsd,
+      actual: rate ? round(actualUsd * rate) : null,
+      actualUsd: round(actualUsd),
+      forecast: rate && forecastUsd !== null ? round(forecastUsd * rate) : null,
+      forecastUsd: forecastUsd === null ? null : round(forecastUsd),
+      actualPercent: pct(actualUsd),
+      forecastPercent: pct(forecastUsd),
+      thresholds: b.thresholds.map((t) => {
+        const value = t.kind === 'actual' ? actualUsd : forecastUsd
+        const crossed = amountUsd !== null && hasData && value !== null && value >= (amountUsd * t.percent) / 100
+        return { ...t, crossed, alerted: crossed }
+      }),
+    }
+  }
+
+  async listBudgets(tenantId: string): Promise<Budget[]> {
+    await this.tick()
+    this.tenant(tenantId)
+    return Promise.all((this.state.budgets?.[tenantId] ?? []).map((b) => this.budgetView(tenantId, b)))
+  }
+
+  private checkBudget(tenantId: string, body: Partial<BudgetInput>): void {
+    const local = this.tenant(tenantId).displayCurrency
+    if (body.currency && body.currency !== 'USD' && body.currency !== local) {
+      throw new ApiError(422, `A budget is in USD or the workspace currency (${local}).`)
+    }
+    if (body.amount !== undefined && !(body.amount > 0)) throw new ApiError(422, 'The amount must be more than 0.')
+    if (body.name !== undefined && !body.name.trim()) throw new ApiError(422, 'A budget needs a name.')
+    if (body.scope?.type === 'accounts' && body.scope.accounts.length === 0) {
+      throw new ApiError(422, 'Choose at least one account.')
+    }
+  }
+
+  async createBudget(tenantId: string, body: BudgetInput): Promise<Budget> {
+    await this.tick()
+    this.checkBudget(tenantId, body)
+    const stored = { ...structuredClone(body), name: body.name.trim(), id: randomId(), isActive: true, createdAt: new Date().toISOString() }
+    ;((this.state.budgets ??= {})[tenantId] ??= []).push(stored)
+    this.save()
+    return this.budgetView(tenantId, stored)
+  }
+
+  async updateBudget(tenantId: string, id: string, change: Partial<BudgetInput> & { isActive?: boolean }): Promise<Budget> {
+    await this.tick()
+    this.checkBudget(tenantId, change)
+    const stored = this.state.budgets?.[tenantId]?.find((b) => b.id === id)
+    if (!stored) throw new ApiError(404, 'Budget not found')
+    Object.assign(stored, structuredClone(change), change.name ? { name: change.name.trim() } : {})
+    this.save()
+    return this.budgetView(tenantId, stored)
+  }
+
+  async deleteBudget(tenantId: string, id: string): Promise<void> {
+    await this.tick()
+    const list = this.state.budgets?.[tenantId] ?? []
+    if (!list.some((b) => b.id === id)) throw new ApiError(404, 'Budget not found')
+    this.state.budgets![tenantId] = list.filter((b) => b.id !== id)
+    this.save()
   }
 
   async inviteMember(tenantId: string, email: string, role: Role): Promise<Invite> {

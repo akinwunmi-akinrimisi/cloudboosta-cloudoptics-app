@@ -15,6 +15,7 @@ import { SignIn } from '../pages/SignIn'
 import { Costs } from '../pages/Costs'
 import { RecommendationDetail, Recommendations } from '../pages/Recommendations'
 import { Settings } from '../pages/Settings'
+import { Budgets } from '../pages/Budgets'
 import { ComingSoon, Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
 
@@ -114,13 +115,7 @@ const anomalies = createRoute({
     <ComingSoon title="Anomalies" sprint="Sprint 5" what="Unexpected spend, with the cause and FX effect separated." />
   ),
 })
-const budgets = createRoute({
-  getParentRoute: () => app,
-  path: '/budgets',
-  component: () => (
-    <ComingSoon title="Budgets" sprint="Sprint 5" what="Budgets in local currency with forecast alerts." />
-  ),
-})
+const budgets = createRoute({ getParentRoute: () => app, path: '/budgets', component: Budgets })
 const reports = createRoute({
   getParentRoute: () => app,
   path: '/reports',

@@ -79,6 +79,54 @@ describe('Cloudoptics web app', () => {
     expect(screen.getByText('1 USD = GH₵15.50')).toBeTruthy()
   })
 
+  it('creates, edits and deletes a budget', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('zola@example.com')
+    const tenant = await api.createTenant({ name: 'Joburg Data', countryCode: 'ZA' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '210987654322',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'zola@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: /Budgets/ }))
+    expect(await screen.findByText(/No budgets yet/)).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'New budget' }))
+    await user.type(screen.getByLabelText('Name'), 'Company total')
+    await user.type(screen.getByLabelText('Amount a month'), '100000')
+    await user.selectOptions(screen.getByLabelText('Budget currency'), 'USD')
+    expect(screen.getByLabelText('Threshold 4 measure')).toHaveProperty('value', 'forecast')
+    await user.type(screen.getByLabelText('Other addresses'), 'finance@example.com')
+    await user.click(screen.getByRole('button', { name: 'Create budget' }))
+    expect(await screen.findByText('Company total')).toBeTruthy()
+    expect(screen.getByText('On track')).toBeTruthy()
+    expect(screen.getByRole('progressbar', { name: 'Company total: spent so far' })).toBeTruthy()
+    const stored = (await api.listBudgets(tenant.id))[0]!
+    expect(stored.recipients.emails).toEqual(['finance@example.com'])
+    expect(stored.thresholds.map((t) => `${t.kind}:${t.percent}`)).toEqual([
+      'actual:50',
+      'actual:80',
+      'actual:100',
+      'forecast:100',
+    ])
+
+    // A budget far below this month's spend is over it.
+    await user.click(screen.getByRole('button', { name: 'Edit' }))
+    const amountField = screen.getByLabelText('Amount a month')
+    await user.clear(amountField)
+    await user.type(amountField, '1')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(await screen.findByText('Over budget')).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Delete…' }))
+    await user.click(screen.getByRole('button', { name: 'Delete Company total' }))
+    expect(await screen.findByText(/No budgets yet/)).toBeTruthy()
+  })
+
   it('lists connections with their checks', async () => {
     const { api } = renderApp('/sign-in')
     await api.signIn('amina@example.com')
