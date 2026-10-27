@@ -17,7 +17,15 @@ function dayLabel(isoDate: string): string {
  * Daily spend as bars. Plain SVG keeps the app shell inside its size budget; ECharts
  * (ADR-005) arrives with the Costs Explorer, which needs zoom, stacking and tooltips.
  */
-export function DailySpendChart({ points, currency }: { points: DailyBar[]; currency: string }) {
+export function DailySpendChart({
+  points,
+  currency,
+  label = 'Daily spend',
+}: {
+  points: DailyBar[]
+  currency: string
+  label?: string
+}) {
   const width = 600
   const height = 160
   const max = Math.max(...points.map((p) => p.amount), 0)
@@ -35,7 +43,7 @@ export function DailySpendChart({ points, currency }: { points: DailyBar[]; curr
         preserveAspectRatio="none"
         className="h-40 w-full"
         role="img"
-        aria-label={`Daily spend, ${points.length} days, ${formatMoney(total, currency)} in total`}
+        aria-label={`${label}, ${points.length} days, ${formatMoney(total, currency)} in total`}
       >
         <line x1={0} y1={height - 0.5} x2={width} y2={height - 0.5} stroke="var(--border)" />
         {points.map((p, i) => {

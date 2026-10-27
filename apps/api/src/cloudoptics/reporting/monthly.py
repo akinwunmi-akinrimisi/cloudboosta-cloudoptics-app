@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.anomalies import service as anomalies
 from cloudoptics.budgets import service as budgets
+from cloudoptics.credits import service as credits
 from cloudoptics.fx import service as fx
 from cloudoptics.ingestion import queries as costs
 from cloudoptics.notifications import preferences
@@ -150,6 +151,8 @@ class MonthlyReport(ApiModel):
     savings: Savings
     top_recommendations: list[TopRecommendation]
     anomalies: AnomalySummary
+    #: The credits runway at the end of the month, when there are credits.
+    credits: str | None = None
     accuracy: Accuracy
 
 
@@ -274,6 +277,9 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, month: date) -> Mon
             for t in recs.top
         ],
         anomalies=AnomalySummary(count=found.count, impact_usd=found.impact_usd),
+        credits=credits.describe(
+            await credits.runway(session, end), lambda usd: _money(usd, None, currency)
+        ),
         accuracy=Accuracy(
             data_through=through,
             reconciliation=check.status if check else None,
@@ -387,6 +393,8 @@ def render(r: MonthlyReport, app_url: str) -> tuple[str, str, str]:
                 ],
             )
         )
+    if r.credits:
+        sections.append(("AWS credits", [r.credits]))
     sections.append(("About these figures", [r.accuracy.note]))
     body_text = "\n".join(
         [f"{r.workspace}: {label}", ""]

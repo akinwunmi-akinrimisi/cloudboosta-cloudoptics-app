@@ -521,6 +521,34 @@ export interface MonthlyReport {
   }
 }
 
+export type CreditsStatus = 'no_credits' | 'no_balance' | 'ok' | 'ending_soon' | 'used_up'
+
+/** AWS credits runway in USD: burn is the 30-day average; remaining counts down from the entered balance. */
+export interface CreditsRunway {
+  status: CreditsStatus
+  dataThrough: string | null
+  appliedMonthUsd: number
+  burnUsdDay: number
+  burnDays: number
+  /** What the bill becomes once credits run out (30-day month). */
+  spendBeforeCreditsUsdMonth: number
+  balance: { amountUsd: number; asOf: string; expiresOn: string | null; note: string | null; enteredBy: string | null; enteredAt: string } | null
+  usedSinceBalanceUsd: number | null
+  remainingUsd: number | null
+  daysLeft: number | null
+  depletionDate: string | null
+  /** The credits expire before they would run out. */
+  expiresFirst: boolean
+  daily: { date: string; amount: number }[]
+}
+
+export interface CreditBalanceInput {
+  amountUsd: number
+  asOf?: string
+  expiresOn?: string | null
+  note?: string | null
+}
+
 export interface ReportList {
   reports: { month: string; generatedAt: string; spendUsd: number; spendLocal: number | null; currency: string }[]
   /** The last full month, shown as a draft until its report is made. */
@@ -618,6 +646,9 @@ export interface Api {
   saveNotificationDefaults(tenantId: string, change: Partial<NotificationChoices>): Promise<NotificationPreferences>
   /** Last full week's digest as emailed; 404 when there are no bills for it. */
   digestPreview(tenantId: string): Promise<DigestPreview>
+  getCredits(tenantId: string): Promise<CreditsRunway>
+  /** Admins only: the balance from the AWS Billing console (Credits page). */
+  setCreditBalance(tenantId: string, body: CreditBalanceInput): Promise<CreditsRunway>
   listReports(tenantId: string): Promise<ReportList>
   /** `stored: false`: worked out from today's data (made on the 3rd working day). 404 without bills. */
   getReport(tenantId: string, month: string): Promise<{ report: MonthlyReport; stored: boolean }>
