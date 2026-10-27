@@ -21,9 +21,13 @@ from cloudoptics.platform.ids import uuid7
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/budgets", tags=["budgets"])
 
-SELECT_BUDGETS = (
+SELECT_BUDGET = text(
     "SELECT id, name, scope, amount, currency, thresholds, recipients, is_active, created_at "
-    "FROM budget"
+    "FROM budget WHERE id = :id"
+)
+SELECT_BUDGETS = text(
+    "SELECT id, name, scope, amount, currency, thresholds, recipients, is_active, created_at "
+    "FROM budget ORDER BY created_at"
 )
 
 
@@ -167,7 +171,7 @@ async def _out(session: AsyncSession, row: Any) -> Budget:
 
 async def _load(session: AsyncSession, budget_id: uuid.UUID) -> Any:
     row = (
-        await session.execute(text(f"{SELECT_BUDGETS} WHERE id = :id"), {"id": budget_id})
+        await session.execute(SELECT_BUDGET, {"id": budget_id})
     ).one_or_none()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Budget not found")
@@ -219,7 +223,7 @@ def _dump(model: Any) -> str:
 
 @router.get("", response_model=list[Budget])
 async def list_budgets(access: ViewerAccess, session: Session) -> list[Budget]:
-    rows = await session.execute(text(f"{SELECT_BUDGETS} ORDER BY created_at"))
+    rows = await session.execute(SELECT_BUDGETS)
     return [await _out(session, r) for r in rows.all()]
 
 
