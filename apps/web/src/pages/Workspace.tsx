@@ -794,15 +794,3 @@ function Accounts({ tenantId }: { tenantId: string }) {
     </Card>
   )
 }
-
-export function ComingSoon({ title, sprint, what }: { title: string; sprint: string; what: string }) {
-  return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-semibold">{title}</h1>
-      <Card>
-        <p className="text-sm text-secondary">{what}</p>
-        <p className="mt-2 text-xs text-muted">Arrives in {sprint}.</p>
-      </Card>
-    </div>
-  )
-}

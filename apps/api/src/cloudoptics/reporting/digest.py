@@ -88,9 +88,9 @@ class Digest:
     spend: float
     previous: float
     changes: list[Change]
-    recommendations: recommendations.RecommendationWeek
+    recommendations: recommendations.RecommendationPeriod
     budgets: list[budgets.BudgetLine]
-    anomalies: anomalies.AnomalyWeek
+    anomalies: anomalies.AnomalyPeriod
 
     @property
     def change_percent(self) -> float | None:
@@ -147,9 +147,9 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, week_start: date) -
         spend=round(sum(s.amount for s in this_week.values()), 2),
         previous=round(sum(s.amount for s in last_week.values()), 2),
         changes=changes[:TOP_CHANGES],
-        recommendations=await recommendations.week(session, start, start + timedelta(days=7)),
+        recommendations=await recommendations.period(session, start, start + timedelta(days=7)),
         budgets=await budgets.active_budgets(session, week_end + timedelta(days=1)),
-        anomalies=await anomalies.week(session, week_start, week_end),
+        anomalies=await anomalies.period(session, week_start, week_end),
     )
 
 

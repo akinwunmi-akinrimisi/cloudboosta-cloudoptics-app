@@ -72,6 +72,33 @@ def decompose(
     return FxDecomposition(round(usage, 2), round(fx, 2), round(usage + fx, 2))
 
 
+@dataclass(frozen=True)
+class Conversion:
+    """USD amounts converted day by day; ``rate`` is the resulting average (local per USD)."""
+
+    local: float
+    rate: float
+
+
+async def convert_days(
+    session: AsyncSession, currency: str, by_day: dict[date, float]
+) -> Conversion | None:
+    """Convert each day's USD at that day's rate (FR-FX-01); ``None`` when a day with spend
+    has no usable rate, or there is no spend."""
+    usd = sum(by_day.values())
+    local = 0.0
+    for day, amount in by_day.items():
+        q = await quote(session, currency, day)
+        if q is None:
+            if abs(amount) >= 0.005:
+                return None
+            continue
+        local += amount * q.rate
+    if abs(usd) < 0.005:
+        return None  # nothing to convert, and no average rate to state
+    return Conversion(round(local, 2), round(local / usd, 4))
+
+
 _LATEST = (
     "SELECT rate, rate_date, basis, source FROM fx_rate WHERE currency = :ccy "
     "AND source = :source AND (CAST(:basis AS text) IS NULL OR basis = :basis) "

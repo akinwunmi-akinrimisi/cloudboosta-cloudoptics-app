@@ -90,3 +90,15 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Printing (the monthly report): white page, A4 margins, no app background. */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+  body {
+    background: #fff;
+    color: #0b0b0b;
+  }
+}

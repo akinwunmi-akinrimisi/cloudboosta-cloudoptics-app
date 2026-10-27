@@ -497,6 +497,12 @@ const NOTIFICATION_KINDS: { key: keyof NotificationChoices; label: string; detai
     detail: 'When a day’s spend on a service is well above normal.',
     roles: ['admin', 'member'],
   },
+  {
+    key: 'monthlyReport',
+    label: 'Monthly report',
+    detail: 'On the 3rd working day of each month: the month before, in USD and the workspace currency.',
+    roles: ['admin', 'member', 'viewer'],
+  },
 ]
 
 function NotificationsCard({ tenantId, role }: { tenantId: string; role: Role }) {

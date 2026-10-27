@@ -8,6 +8,8 @@ import type {
   AnomalyDetail,
   AnomalyStatus,
   DigestPreview,
+  MonthlyReport,
+  ReportList,
   NotificationChoices,
   NotificationPreferences,
   Api,
@@ -149,6 +151,26 @@ export class HttpApi implements Api {
 
   digestPreview(tenantId: string): Promise<DigestPreview> {
     return this.request('GET', `/v1/tenants/${tenantId}/digest/preview`)
+  }
+
+  listReports(tenantId: string): Promise<ReportList> {
+    return this.request('GET', `/v1/tenants/${tenantId}/reports`)
+  }
+
+  getReport(tenantId: string, month: string): Promise<{ report: MonthlyReport; stored: boolean }> {
+    return this.request('GET', `/v1/tenants/${tenantId}/reports/${month}`)
+  }
+
+  sendReport(tenantId: string, month: string): Promise<{ sentTo: number; report: MonthlyReport }> {
+    return this.request('POST', `/v1/tenants/${tenantId}/reports/${month}/send`)
+  }
+
+  getReportSettings(tenantId: string): Promise<{ emails: string[] }> {
+    return this.request('GET', `/v1/tenants/${tenantId}/reports/settings`)
+  }
+
+  saveReportSettings(tenantId: string, emails: string[]): Promise<{ emails: string[] }> {
+    return this.request('PUT', `/v1/tenants/${tenantId}/reports/settings`, { emails })
   }
 
   getAlertSettings(tenantId: string): Promise<AlertSettingsView> {

@@ -20,6 +20,7 @@ class Choices(ApiModel):
 
     weekly_digest: bool | None = None
     anomaly_alert: bool | None = None
+    monthly_report: bool | None = None
 
     def changes(self) -> dict[preferences.Kind, bool]:
         return {k: v for k, v in self.model_dump().items() if v is not None}  # type: ignore[misc]

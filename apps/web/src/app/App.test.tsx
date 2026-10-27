@@ -186,11 +186,40 @@ describe('Cloudoptics web app', () => {
     await waitFor(async () => expect((await api.getNotificationPreferences(tenant.id)).mine.weeklyDigest).toBe(false))
     await user.click(screen.getByLabelText('Anomaly alerts by default'))
     await waitFor(async () =>
-      expect((await api.getNotificationPreferences(tenant.id)).defaults).toEqual({ weeklyDigest: true, anomalyAlert: false }),
+      expect((await api.getNotificationPreferences(tenant.id)).defaults).toEqual({ weeklyDigest: true, anomalyAlert: false, monthlyReport: true }),
     )
     await user.click(screen.getByRole('button', { name: 'Preview last week’s digest' }))
     expect(await screen.findByText(/^Your AWS week: USD/)).toBeTruthy()
     expect(screen.getByTitle('Weekly digest preview')).toBeTruthy()
+  })
+
+  it('shows last month’s report as a draft, and sends it with extra recipients', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('ada@example.com')
+    const tenant = await api.createTenant({ name: 'Lagos Labs', countryCode: 'NG' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '210987654325',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'ada@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: /Reports/ }))
+    const doc = await screen.findByRole('article', { name: /Report for/ })
+    expect(doc.textContent).toContain('Total spend')
+    expect(doc.textContent).toContain('What changed most')
+    expect(screen.getByText(/Draft from today/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Print or save as PDF/ })).toBeTruthy()
+
+    await user.type(screen.getByLabelText('Also send to'), 'Board@Example.com')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(async () => expect((await api.getReportSettings(tenant.id)).emails).toEqual(['board@example.com']))
+    await user.click(screen.getByRole('button', { name: /Make and send now/ }))
+    expect(await screen.findByText('Sent to 2 recipients.')).toBeTruthy()
+    expect(await screen.findByText(/the figures stay as they were then/)).toBeTruthy()
+    expect((await api.listReports(tenant.id)).reports).toHaveLength(1)
   })
 
   it('lists connections with their checks', async () => {

@@ -13,8 +13,8 @@ from typing import Literal
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-Kind = Literal["weekly_digest", "anomaly_alert"]
-KINDS: tuple[Kind, ...] = ("weekly_digest", "anomaly_alert")
+Kind = Literal["weekly_digest", "anomaly_alert", "monthly_report"]
+KINDS: tuple[Kind, ...] = ("weekly_digest", "anomaly_alert", "monthly_report")
 
 SELECT_PREFERENCES = text(
     "SELECT user_id, kind, email FROM notification_preference WHERE user_id IS NULL OR user_id = :u"

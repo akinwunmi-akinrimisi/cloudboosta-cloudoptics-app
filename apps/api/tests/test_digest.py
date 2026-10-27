@@ -128,7 +128,11 @@ async def test_each_member_gets_one_digest_about_last_week(
     quiet_email, quiet = await member(client, login, owner_sql, tenant, "member")
     prefs = f"/v1/tenants/{tid}/notification-preferences"
     r = await client.put(f"{prefs}/me", json={"weeklyDigest": False}, headers=quiet)
-    assert r.json()["mine"] == {"weeklyDigest": False, "anomalyAlert": True}
+    assert r.json()["mine"] == {
+        "weeklyDigest": False,
+        "anomalyAlert": True,
+        "monthlyReport": True,
+    }
 
     assert await run(tid, MONDAY - timedelta(hours=1)) == 0  # 06:30 in Lagos: not yet
     assert await run(tid, MONDAY) == 2
@@ -155,7 +159,11 @@ async def test_each_member_gets_one_digest_about_last_week(
     r = await client.put(f"{prefs}/defaults", json={"weeklyDigest": False}, headers=viewer)
     assert r.status_code == 403
     r = await client.put(f"{prefs}/defaults", json={"weeklyDigest": False}, headers=admin)
-    assert r.json()["defaults"] == {"weeklyDigest": False, "anomalyAlert": True}
+    assert r.json()["defaults"] == {
+        "weeklyDigest": False,
+        "anomalyAlert": True,
+        "monthlyReport": True,
+    }
     assert r.json()["mine"]["weeklyDigest"] is False
     await client.put(f"{prefs}/me", json={"weeklyDigest": True}, headers=quiet)
     next_monday = MONDAY + timedelta(days=7)
@@ -220,13 +228,16 @@ async def test_the_hourly_poll_queues_every_connected_workspace(
     import cloudoptics.platform.jobs as platform_jobs
 
     tenant, _, _ = await workspace(client, login, owner_sql)
-    queued: list[str] = []
+    queued: list[tuple[str, str]] = []
 
     async def fake_defer(app, name, lock, **kwargs):  # type: ignore[no-untyped-def]
-        queued.append(kwargs["tenant_id"])
+        queued.append((name, kwargs["tenant_id"]))
 
     monkeypatch.setattr(jobs, "defer_once", fake_defer)
     monkeypatch.setattr(platform_jobs, "get_job_app", lambda: None)
-    assert await jobs.poll(0) == len(queued)
-    assert tenant["id"] in queued
+    assert await jobs.poll(0) == len({t for _, t in queued})
+    # The digest and the monthly report are checked for each workspace.
+    assert (jobs.DIGEST_TASK, tenant["id"]) in queued
+    assert (jobs.REPORT_TASK, tenant["id"]) in queued
     assert await jobs.weekly(tenant["id"]) == 0  # not due now, or no bills
+    assert await jobs.report(tenant["id"]) == 0

@@ -482,6 +482,49 @@ export interface AlertSettingsView {
 export interface NotificationChoices {
   weeklyDigest: boolean
   anomalyAlert: boolean
+  monthlyReport: boolean
+}
+
+/** A month's executive report: stored figures do not change once made. Money in USD, local where a rate exists. */
+export interface MonthlyReport {
+  month: string
+  workspace: string
+  currency: string
+  generatedAt: string
+  spend: {
+    usd: number
+    local: number | null
+    /** Month average, local per USD. */
+    rate: number | null
+    previousUsd: number
+    previousLocal: number | null
+    previousRate: number | null
+    changeUsd: number
+    changePercent: number | null
+    /** Local change split into usage and exchange-rate effects. */
+    usageEffect: number | null
+    fxEffect: number | null
+    /** Credits applied (zero or negative). */
+    creditsUsd: number
+  }
+  drivers: { serviceName: string; usd: number; previousUsd: number; changeUsd: number }[]
+  budgets: { name: string; currency: string; amount: number; status: string; actual: number | null; actualPercent: number | null }[]
+  savings: { openCount: number; openUsdMonth: number; newCount: number; doneCount: number; doneUsdMonth: number }
+  topRecommendations: { title: string; savingsUsdMonth: number; riskLevel: string; effort: string }[]
+  anomalies: { count: number; impactUsd: number }
+  accuracy: {
+    dataThrough: string
+    reconciliation: 'ok' | 'mismatch' | 'failed' | null
+    differencePercent: number | null
+    checkedAt: string | null
+    note: string
+  }
+}
+
+export interface ReportList {
+  reports: { month: string; generatedAt: string; spendUsd: number; spendLocal: number | null; currency: string }[]
+  /** The last full month, shown as a draft until its report is made. */
+  latestMonth: string
 }
 
 export interface NotificationPreferences {
@@ -575,6 +618,13 @@ export interface Api {
   saveNotificationDefaults(tenantId: string, change: Partial<NotificationChoices>): Promise<NotificationPreferences>
   /** Last full week's digest as emailed; 404 when there are no bills for it. */
   digestPreview(tenantId: string): Promise<DigestPreview>
+  listReports(tenantId: string): Promise<ReportList>
+  /** `stored: false`: worked out from today's data (made on the 3rd working day). 404 without bills. */
+  getReport(tenantId: string, month: string): Promise<{ report: MonthlyReport; stored: boolean }>
+  /** Admins only: make it again from today's data and email every recipient. */
+  sendReport(tenantId: string, month: string): Promise<{ sentTo: number; report: MonthlyReport }>
+  getReportSettings(tenantId: string): Promise<{ emails: string[] }>
+  saveReportSettings(tenantId: string, emails: string[]): Promise<{ emails: string[] }>
   getAlertSettings(tenantId: string): Promise<AlertSettingsView>
   /** Admins only. */
   saveAlertSettings(tenantId: string, settings: AlertSettings): Promise<AlertSettingsView>
