@@ -104,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(anomaly_routes.settings_router)
     app.include_router(notification_routes.router)
     app.include_router(reporting_routes.router)
+    app.include_router(reporting_routes.reports_router)
     if settings.auth_mode == "dev":
         app.include_router(dev_routes.router)
     return app

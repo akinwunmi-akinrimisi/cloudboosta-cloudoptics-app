@@ -23,7 +23,7 @@ class TopRecommendation:
 
 
 @dataclass(frozen=True)
-class RecommendationWeek:
+class RecommendationPeriod:
     open_count: int
     open_savings_usd_month: float
     new_count: int
@@ -32,9 +32,9 @@ class RecommendationWeek:
     top: list[TopRecommendation]
 
 
-async def week(
+async def period(
     session: AsyncSession, start: datetime, end: datetime, limit: int = 5
-) -> RecommendationWeek:
+) -> RecommendationPeriod:
     """Open recommendations (the best ``limit``), those first found and those marked done
     or verified by someone between ``start`` and ``end``. Inside a tenant-scoped
     transaction."""
@@ -72,7 +72,7 @@ async def week(
         ),
         {**params, "limit": limit},
     )
-    return RecommendationWeek(
+    return RecommendationPeriod(
         open_count=totals.n,
         open_savings_usd_month=round(float(totals.savings), 2),
         new_count=totals.new,

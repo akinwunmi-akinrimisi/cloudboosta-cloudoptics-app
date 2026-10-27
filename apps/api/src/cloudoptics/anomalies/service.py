@@ -437,14 +437,15 @@ async def series(session: AsyncSession, row: Any, settings: AlertSettings) -> li
 
 
 @dataclass(frozen=True)
-class AnomalyWeek:
+class AnomalyPeriod:
     count: int
     impact_usd: float
     open_count: int  # open now, of any day
 
 
-async def week(session: AsyncSession, first: date, last: date) -> AnomalyWeek:
-    """Anomalies on days ``first`` to ``last`` (suppressed ones left out), for the digest."""
+async def period(session: AsyncSession, first: date, last: date) -> AnomalyPeriod:
+    """Anomalies on days ``first`` to ``last`` (suppressed ones left out), for the digest
+    and the monthly report."""
     row = (
         await session.execute(
             text(
@@ -456,4 +457,4 @@ async def week(session: AsyncSession, first: date, last: date) -> AnomalyWeek:
             {"first": first, "last": last},
         )
     ).one()
-    return AnomalyWeek(row.n, round(float(row.impact), 2), row.open)
+    return AnomalyPeriod(row.n, round(float(row.impact), 2), row.open)

@@ -8,6 +8,8 @@ import type {
   AnomalyDetail,
   AnomalyStatus,
   DigestPreview,
+  MonthlyReport,
+  ReportList,
   NotificationChoices,
   NotificationPreferences,
   Api,
@@ -102,6 +104,9 @@ interface State {
   /** tenantId -> this browser's choices, and tenantId -> workspace defaults. */
   notificationsMine?: Record<string, Partial<NotificationChoices>>
   notificationDefaults?: Record<string, Partial<NotificationChoices>>
+  /** tenantId -> months whose report was "made" in the demo, and extra report addresses. */
+  reportsMade?: Record<string, Record<string, string>>
+  reportEmails?: Record<string, string[]>
   /** Open invites per tenant. Nobody else signs in to the demo, so they stay pending. */
   invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
@@ -1313,7 +1318,7 @@ export class DemoApi implements Api {
   async getNotificationPreferences(tenantId: string): Promise<NotificationPreferences> {
     await this.tick()
     this.tenant(tenantId)
-    const defaults = { weeklyDigest: true, anomalyAlert: true, ...this.state.notificationDefaults?.[tenantId] }
+    const defaults = { weeklyDigest: true, anomalyAlert: true, monthlyReport: true, ...this.state.notificationDefaults?.[tenantId] }
     return { mine: { ...defaults, ...this.state.notificationsMine?.[tenantId] }, defaults }
   }
 
@@ -1369,6 +1374,131 @@ export class DemoApi implements Api {
       `<p><strong>${esc(head)}</strong></p>` +
       sections.map(([t, lines]) => `<h3>${esc(t)}</h3><ul>${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`).join('')
     return { weekStart, weekEnd, subject, text, html }
+  }
+
+  private lastFullMonth(): string {
+    const now = new Date()
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7)
+  }
+
+  /** A report from the demo estate's figures (same services and accounts as the Overview). */
+  private async demoReport(tenantId: string, month: string): Promise<MonthlyReport> {
+    const tenant = this.tenant(tenantId)
+    const recs = (await this.listRecommendations(tenantId)).filter((r) => OPEN.includes(r.status))
+    const rate = (await this.fxCurrent(tenantId)).quote?.rate ?? null
+    const usd = 1186.4
+    const previousUsd = 1237.75
+    const prevRate = rate === null ? null : Math.round(rate * 0.97 * 100) / 100
+    const local = rate === null ? null : Math.round(usd * rate * 100) / 100
+    const previousLocal = prevRate === null ? null : Math.round(previousUsd * prevRate * 100) / 100
+    const usage = prevRate === null ? null : Math.round((usd - previousUsd) * prevRate * 100) / 100
+    const fx = rate === null || prevRate === null ? null : Math.round(usd * (rate - prevRate) * 100) / 100
+    const lastDay = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10)
+    const madeAt = this.state.reportsMade?.[tenantId]?.[month]
+    return {
+      month,
+      workspace: tenant.name,
+      currency: tenant.displayCurrency,
+      generatedAt: madeAt ?? new Date().toISOString(),
+      spend: {
+        usd,
+        local,
+        rate,
+        previousUsd,
+        previousLocal,
+        previousRate: prevRate,
+        changeUsd: Math.round((usd - previousUsd) * 100) / 100,
+        changePercent: Math.round((1000 * (usd - previousUsd)) / previousUsd) / 10,
+        usageEffect: usage,
+        fxEffect: fx,
+        creditsUsd: -25,
+      },
+      drivers: [
+        { serviceName: 'Amazon Elastic Compute Cloud', usd: 612.3, previousUsd: 668.9, changeUsd: -56.6 },
+        { serviceName: 'Amazon Virtual Private Cloud', usd: 88.1, previousUsd: 61.4, changeUsd: 26.7 },
+        { serviceName: 'Amazon Relational Database Service', usd: 214.5, previousUsd: 230.2, changeUsd: -15.7 },
+        { serviceName: 'Amazon Simple Storage Service', usd: 88.3, previousUsd: 81.0, changeUsd: 7.3 },
+      ],
+      budgets: (await this.listBudgets(tenantId)).map((b) => ({
+        name: b.name,
+        currency: b.currency,
+        amount: b.amount,
+        status: b.status,
+        actual: b.actual,
+        actualPercent: b.actualPercent,
+      })),
+      savings: {
+        openCount: recs.length,
+        openUsdMonth: Math.round(recs.reduce((t, r) => t + r.savingsUsdMonth, 0) * 100) / 100,
+        newCount: 2,
+        doneCount: 1,
+        doneUsdMonth: 18.4,
+      },
+      topRecommendations: recs.slice(0, 5).map((r) => ({
+        title: r.title,
+        savingsUsdMonth: r.savingsUsdMonth,
+        riskLevel: r.riskLevel,
+        effort: r.effort,
+      })),
+      anomalies: { count: 2, impactUsd: 189.5 },
+      accuracy: {
+        dataThrough: lastDay,
+        reconciliation: 'ok',
+        differencePercent: 0.2,
+        checkedAt: `${lastDay}T08:00:00Z`,
+        note:
+          `From the AWS bills (CUR 2.0), amortised, after credits, up to ${lastDay}. The bills agree with Cost Explorer (within 1%).` +
+          (rate === null ? '' : ` Converted at each day's official rate; month average ${tenant.displayCurrency} ${rate.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per USD.`),
+      },
+    }
+  }
+
+  async listReports(tenantId: string): Promise<ReportList> {
+    await this.tick()
+    this.tenant(tenantId)
+    const made = this.state.reportsMade?.[tenantId] ?? {}
+    const reports = await Promise.all(
+      Object.keys(made)
+        .sort()
+        .reverse()
+        .map(async (month) => {
+          const r = await this.demoReport(tenantId, month)
+          return { month, generatedAt: made[month]!, spendUsd: r.spend.usd, spendLocal: r.spend.local, currency: r.currency }
+        }),
+    )
+    return { reports, latestMonth: this.lastFullMonth() }
+  }
+
+  async getReport(tenantId: string, month: string): Promise<{ report: MonthlyReport; stored: boolean }> {
+    await this.tick()
+    this.tenant(tenantId)
+    if (month >= new Date().toISOString().slice(0, 7)) throw new ApiError(422, 'A report covers a month that has ended.')
+    if (!this.hasData(tenantId)) throw new ApiError(404, 'No bills for this month')
+    return { report: await this.demoReport(tenantId, month), stored: Boolean(this.state.reportsMade?.[tenantId]?.[month]) }
+  }
+
+  async sendReport(tenantId: string, month: string): Promise<{ sentTo: number; report: MonthlyReport }> {
+    await this.getReport(tenantId, month)
+    ;((this.state.reportsMade ??= {})[tenantId] ??= {})[month] = new Date().toISOString()
+    this.save()
+    const prefs = await this.getNotificationPreferences(tenantId)
+    const extra = this.state.reportEmails?.[tenantId] ?? []
+    return { sentTo: (prefs.mine.monthlyReport ? 1 : 0) + extra.length, report: await this.demoReport(tenantId, month) }
+  }
+
+  async getReportSettings(tenantId: string): Promise<{ emails: string[] }> {
+    await this.tick()
+    this.tenant(tenantId)
+    return { emails: [...(this.state.reportEmails?.[tenantId] ?? [])] }
+  }
+
+  async saveReportSettings(tenantId: string, emails: string[]): Promise<{ emails: string[] }> {
+    this.tenant(tenantId)
+    const clean = [...new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean))].sort()
+    if (clean.some((e) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))) throw new ApiError(422, 'Enter valid email addresses.')
+    ;(this.state.reportEmails ??= {})[tenantId] = clean
+    this.save()
+    return { emails: clean }
   }
 
   async getAlertSettings(tenantId: string): Promise<AlertSettingsView> {

@@ -14,10 +14,11 @@ import { Onboarding } from '../pages/Onboarding'
 import { SignIn } from '../pages/SignIn'
 import { Costs } from '../pages/Costs'
 import { RecommendationDetail, Recommendations } from '../pages/Recommendations'
+import { Reports } from '../pages/Reports'
 import { Settings } from '../pages/Settings'
 import { Anomalies } from '../pages/Anomalies'
 import { Budgets } from '../pages/Budgets'
-import { ComingSoon, Connections, Overview } from '../pages/Workspace'
+import { Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
 
 export interface RouterContext {
@@ -118,7 +119,12 @@ const budgets = createRoute({ getParentRoute: () => app, path: '/budgets', compo
 const reports = createRoute({
   getParentRoute: () => app,
   path: '/reports',
-  component: () => <ComingSoon title="Reports" sprint="Sprint 6" what="Monthly executive summary as PDF and email." />,
+  validateSearch: (search: Record<string, unknown>): { month?: string } =>
+    typeof search.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(search.month) ? { month: search.month } : {},
+  component: function ReportsRoute() {
+    const { month } = reports.useSearch()
+    return <Reports month={month} />
+  },
 })
 const settings = createRoute({ getParentRoute: () => app, path: '/settings', component: Settings })
 

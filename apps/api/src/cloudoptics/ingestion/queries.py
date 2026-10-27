@@ -522,3 +522,39 @@ async def service_totals(session: AsyncSession, first: date, last: date) -> list
         {"first": first, "last": last},
     )
     return [ServiceTotal(r.service_code, r.service_name, float(r.amount)) for r in rows]
+
+
+@dataclass(frozen=True)
+class PeriodTotals:
+    """Spend from the bills over some days: per day (amortised, after credits, with tax,
+    as the Overview's month to date) and the credits applied (zero or negative)."""
+
+    by_day: dict[date, float]
+    credits: float
+
+    @property
+    def total(self) -> float:
+        return round(sum(self.by_day.values()), 2)
+
+
+async def period_totals(session: AsyncSession, first: date, last: date) -> PeriodTotals:
+    rows = await session.execute(
+        text(
+            "SELECT usage_date, sum(effective_cost_usd) AS amount, "
+            "coalesce(sum(effective_cost_usd) FILTER (WHERE charge_category = 'Credit'), 0) "
+            "AS credits FROM cost_daily WHERE usage_date BETWEEN :first AND :last "
+            "GROUP BY usage_date"
+        ),
+        {"first": first, "last": last},
+    )
+    by_day: dict[date, float] = {}
+    credits = 0.0
+    for r in rows:
+        by_day[r.usage_date] = float(r.amount)
+        credits += float(r.credits)
+    return PeriodTotals(by_day, round(credits, 2))
+
+
+async def month_reconciliation(session: AsyncSession, month: date) -> Reconciliation | None:
+    """The latest check of one month's bills against Cost Explorer (a mismatch first)."""
+    return await _reconciliation(session, month, month)

@@ -50,8 +50,8 @@ export function AppShell() {
   })
 
   return (
-    <div className="min-h-screen md:grid md:grid-cols-[240px_1fr]">
-      <aside className="bg-brand-navy text-white md:min-h-screen">
+    <div className="min-h-screen md:grid md:grid-cols-[240px_1fr] print:block">
+      <aside className="bg-brand-navy text-white md:min-h-screen print:hidden">
         <div className="flex h-14 items-center gap-2 px-4 font-semibold">
           <Logo size={26} /> Cloudoptics
         </div>
@@ -71,7 +71,7 @@ export function AppShell() {
         </nav>
       </aside>
       <div className="min-w-0">
-        <header className="flex h-14 items-center justify-between gap-3 border-b border-border bg-surface-1 px-4">
+        <header className="flex h-14 items-center justify-between gap-3 border-b border-border bg-surface-1 px-4 print:hidden">
           <div className="flex min-w-0 items-center gap-2">
             {me && me.memberships.length > 1 ? (
               <select
@@ -126,7 +126,7 @@ export function AppShell() {
             </button>
           </div>
         </header>
-        <main className="mx-auto max-w-6xl px-4 py-6 md:px-6">
+        <main className="mx-auto max-w-6xl px-4 py-6 md:px-6 print:max-w-none print:p-0">
           <Outlet />
         </main>
       </div>
