@@ -399,4 +399,37 @@ describe('Cloudoptics web app', () => {
     ).toBeTruthy()
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
+
+  it('notices a stack update without reloading the page, and refreshes on request', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('efua@example.com')
+    const tenant = await api.createTenant({ name: 'Tema Tech', countryCode: 'GH' })
+    const link = await api.createIntent(tenant.id)
+    const intent = await api.getIntent(tenant.id, link.intent.id)
+    expect(intent.status).toBe('connected')
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'efua@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: 'Connections' }))
+    expect(await screen.findByText(/Resource access in this account/)).toBeTruthy()
+    expect(screen.queryByText('Move to the single CloudOptics stack')).toBeNull()
+
+    // An update is offered while AWS is still updating the stack ...
+    const real = api.getSetup.bind(api)
+    let updated = false
+    vi.spyOn(api, 'getSetup').mockImplementation(async (t, c) => {
+      const s = await real(t, c)
+      return updated ? s : { ...s, updateAvailable: true, latestStackVersion: '9.9.9' }
+    })
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByText('Update Cloudoptics access to version 9.9.9')).toBeTruthy()
+    // ... and once it is done, Refresh (or the page's own check) shows it without a reload.
+    updated = true
+    const calls = vi.spyOn(api, 'listConnections')
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByText(/Cloudoptics access is up to date/)).toBeTruthy()
+    expect(calls).toHaveBeenCalled()
+    expect(screen.getByText(/^Updated /)).toBeTruthy()
+  })
+
 })
