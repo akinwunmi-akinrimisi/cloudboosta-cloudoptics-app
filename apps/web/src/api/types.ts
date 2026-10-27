@@ -478,6 +478,26 @@ export interface AlertSettingsView {
   defaults: AlertSettings
 }
 
+/** Emails a member can turn off. */
+export interface NotificationChoices {
+  weeklyDigest: boolean
+  anomalyAlert: boolean
+}
+
+export interface NotificationPreferences {
+  /** What this member gets: their own choice, else the workspace default. */
+  mine: NotificationChoices
+  defaults: NotificationChoices
+}
+
+export interface DigestPreview {
+  weekStart: string
+  weekEnd: string
+  subject: string
+  text: string
+  html: string
+}
+
 export interface Invite {
   id: string
   email: string
@@ -549,6 +569,12 @@ export interface Api {
   getAnomaly(tenantId: string, id: string): Promise<AnomalyDetail>
   /** Members and admins. Expected stops new anomalies for the same scope for a week. */
   updateAnomaly(tenantId: string, id: string, change: { status: AnomalyStatus; note?: string | null }): Promise<AnomalyDetail>
+  getNotificationPreferences(tenantId: string): Promise<NotificationPreferences>
+  saveMyNotifications(tenantId: string, change: Partial<NotificationChoices>): Promise<NotificationPreferences>
+  /** Admins only: for members who have not chosen. */
+  saveNotificationDefaults(tenantId: string, change: Partial<NotificationChoices>): Promise<NotificationPreferences>
+  /** Last full week's digest as emailed; 404 when there are no bills for it. */
+  digestPreview(tenantId: string): Promise<DigestPreview>
   getAlertSettings(tenantId: string): Promise<AlertSettingsView>
   /** Admins only. */
   saveAlertSettings(tenantId: string, settings: AlertSettings): Promise<AlertSettingsView>

@@ -7,6 +7,9 @@ import type {
   Anomaly,
   AnomalyDetail,
   AnomalyStatus,
+  DigestPreview,
+  NotificationChoices,
+  NotificationPreferences,
   Api,
   AuditEntry,
   Budget,
@@ -96,6 +99,9 @@ interface State {
   /** tenantId:anomalyId -> status and note set in the demo. */
   anomalyStatus?: Record<string, { status: AnomalyStatus; note: string | null; at: string }>
   alertSettings?: Record<string, AlertSettings>
+  /** tenantId -> this browser's choices, and tenantId -> workspace defaults. */
+  notificationsMine?: Record<string, Partial<NotificationChoices>>
+  notificationDefaults?: Record<string, Partial<NotificationChoices>>
   /** Open invites per tenant. Nobody else signs in to the demo, so they stay pending. */
   invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
@@ -1302,6 +1308,67 @@ export class DemoApi implements Api {
     }
     this.save()
     return this.getAnomaly(tenantId, id)
+  }
+
+  async getNotificationPreferences(tenantId: string): Promise<NotificationPreferences> {
+    await this.tick()
+    this.tenant(tenantId)
+    const defaults = { weeklyDigest: true, anomalyAlert: true, ...this.state.notificationDefaults?.[tenantId] }
+    return { mine: { ...defaults, ...this.state.notificationsMine?.[tenantId] }, defaults }
+  }
+
+  async saveMyNotifications(tenantId: string, change: Partial<NotificationChoices>): Promise<NotificationPreferences> {
+    this.tenant(tenantId)
+    const store = (this.state.notificationsMine ??= {})
+    store[tenantId] = { ...store[tenantId], ...change }
+    this.save()
+    return this.getNotificationPreferences(tenantId)
+  }
+
+  async saveNotificationDefaults(tenantId: string, change: Partial<NotificationChoices>): Promise<NotificationPreferences> {
+    this.tenant(tenantId)
+    const store = (this.state.notificationDefaults ??= {})
+    store[tenantId] = { ...store[tenantId], ...change }
+    this.save()
+    return this.getNotificationPreferences(tenantId)
+  }
+
+  /** A digest built from the demo's daily costs and recommendations, as the API words it. */
+  async digestPreview(tenantId: string): Promise<DigestPreview> {
+    const tenant = this.tenant(tenantId)
+    if (!this.hasData(tenantId)) throw new ApiError(404, 'No bills for last week yet')
+    const days = (await this.costDaily(tenantId, 21)).points
+    const today = new Date(`${isoDaysAgo(0)}T00:00:00Z`)
+    const weekStart = isoDaysAgo(((today.getUTCDay() + 6) % 7) + 7)
+    const weekEnd = isoDaysAgo(((today.getUTCDay() + 6) % 7) + 1)
+    const lastStart = isoDaysAgo(((today.getUTCDay() + 6) % 7) + 14)
+    const sum = (from: string, to: string) => days.filter((p) => p.date >= from && p.date <= to).reduce((s, p) => s + p.amount, 0)
+    const spend = sum(weekStart, weekEnd)
+    const previous = sum(lastStart, isoDaysAgo(((today.getUTCDay() + 6) % 7) + 8))
+    const usd = (n: number) => `USD ${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const pct = previous ? Math.round((100 * (spend - previous)) / previous) : null
+    const recs = (await this.listRecommendations(tenantId)).filter((r) => OPEN.includes(r.status))
+    const saving = recs.reduce((s, r) => s + r.savingsUsdMonth, 0)
+    const sections: [string, string[]][] = [
+      ['Spend', [`Spent ${usd(spend)}, against ${usd(previous)} the week before.`]],
+      [
+        'Recommendations',
+        [
+          `${recs.length} open, worth ${usd(saving)} a month.`,
+          ...recs.slice(0, 5).map((r) => `${r.title}: ${usd(r.savingsUsdMonth)} a month, ${r.riskLevel} risk, effort ${r.effort}`),
+        ],
+      ],
+      ['Anomalies', ['1 unusual day, USD 124.20 above normal.', '1 still open.']],
+    ]
+    const subject = `Your AWS week: ${usd(spend)} spent${pct === null ? '' : ` (${pct >= 0 ? '+' : ''}${pct}% on the week before)`}`
+    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const fmt = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' })
+    const head = `${tenant.name}: ${fmt(weekStart)} to ${fmt(weekEnd)} ${weekEnd.slice(0, 4)}`
+    const text = [head, '', ...sections.flatMap(([t, lines]) => [t, ...lines.map((l) => `- ${l}`), ''])].join('\n')
+    const html =
+      `<p><strong>${esc(head)}</strong></p>` +
+      sections.map(([t, lines]) => `<h3>${esc(t)}</h3><ul>${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>`).join('')
+    return { weekStart, weekEnd, subject, text, html }
   }
 
   async getAlertSettings(tenantId: string): Promise<AlertSettingsView> {

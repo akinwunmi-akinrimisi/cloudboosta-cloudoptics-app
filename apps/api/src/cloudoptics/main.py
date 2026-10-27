@@ -19,9 +19,11 @@ from cloudoptics.identity import invites as invite_routes
 from cloudoptics.identity import routes as identity_routes
 from cloudoptics.ingestion import routes as ingestion_routes
 from cloudoptics.inventory import routes as inventory_routes
+from cloudoptics.notifications import routes as notification_routes
 from cloudoptics.platform.db import get_engine
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.recommendations import routes as recommendation_routes
+from cloudoptics.reporting import routes as reporting_routes
 
 PROBLEM_JSON = "application/problem+json"
 
@@ -100,6 +102,8 @@ def create_app() -> FastAPI:
     app.include_router(budget_routes.router)
     app.include_router(anomaly_routes.router)
     app.include_router(anomaly_routes.settings_router)
+    app.include_router(notification_routes.router)
+    app.include_router(reporting_routes.router)
     if settings.auth_mode == "dev":
         app.include_router(dev_routes.router)
     return app

@@ -23,10 +23,10 @@ from cloudoptics.metrics.puller import usage
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.recommendations.queries import OPEN
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/recommendations", tags=["recommendations"])
 
-OPEN = ["new", "assigned", "in_progress"]
 # Literal statements only; request values are always bound parameters.
 LIST_RECOMMENDATIONS = text(
     "SELECT id, type, rule_id, account_id, region_id, resource_id, title, current_config, "
