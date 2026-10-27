@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -16,7 +17,7 @@ from cloudoptics.audit import log as audit
 from cloudoptics.audit.log import Actor
 from cloudoptics.connectors.aws import SessionFactory, session_name
 from cloudoptics.connectors.crypto import get_encryptor
-from cloudoptics.connectors.validation import ValidationResult, validate_billing_access
+from cloudoptics.connectors.validation import Check, ValidationResult, validate_billing_access
 from cloudoptics.notifications.alerts import should_alert
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
@@ -70,6 +71,34 @@ async def get_connection(session: AsyncSession, connection_id: uuid.UUID) -> Any
     return row
 
 
+async def _store_result(
+    session: AsyncSession, connection_id: uuid.UUID, result: ValidationResult, verified: bool
+) -> None:
+    await session.execute(
+        text(
+            "UPDATE cloud_connection SET status = :status, health = :status, "
+            "permission_checks = CAST(:checks AS jsonb), last_error = CAST(:err AS jsonb), "
+            "last_validated_at = now(), cur_bucket = COALESCE(:bucket, cur_bucket), "
+            "cur_prefix = COALESCE(:prefix, cur_prefix), "
+            "cur_region = COALESCE(:region, cur_region), "
+            "cur_export_arn = COALESCE(:export_arn, cur_export_arn), "
+            "account_verified_at = CASE WHEN :verified THEN coalesce(account_verified_at, now()) "
+            "ELSE account_verified_at END WHERE id = :c"
+        ),
+        {
+            "status": result.status,
+            "checks": json.dumps(result.checks_json()),
+            "err": json.dumps(result.error) if result.error else None,
+            "bucket": result.cur_bucket,
+            "prefix": result.cur_prefix,
+            "region": result.cur_region,
+            "export_arn": result.cur_export_arn,
+            "verified": verified,
+            "c": connection_id,
+        },
+    )
+
+
 async def run_validation(
     session: AsyncSession,
     *,
@@ -93,26 +122,27 @@ async def run_validation(
         account_type=conn.account_type,
         create_cur_export=conn.create_cur_export,
     )
-    await session.execute(
-        text(
-            "UPDATE cloud_connection SET status = :status, health = :status, "
-            "permission_checks = CAST(:checks AS jsonb), last_error = CAST(:err AS jsonb), "
-            "last_validated_at = now(), cur_bucket = COALESCE(:bucket, cur_bucket), "
-            "cur_prefix = COALESCE(:prefix, cur_prefix), "
-            "cur_region = COALESCE(:region, cur_region), "
-            "cur_export_arn = COALESCE(:export_arn, cur_export_arn) WHERE id = :c"
-        ),
-        {
-            "status": result.status,
-            "checks": json.dumps(result.checks_json()),
-            "err": json.dumps(result.error) if result.error else None,
-            "bucket": result.cur_bucket,
-            "prefix": result.cur_prefix,
-            "region": result.cur_region,
-            "export_arn": result.cur_export_arn,
-            "c": connection_id,
-        },
-    )
+    # Assuming the role in the account proves control of it: only now is the account reserved
+    # for this workspace (migration 0017).
+    verified = any(c.id == "assume_role" and c.status == "ok" for c in result.checks)
+    try:
+        async with session.begin_nested():
+            await _store_result(session, connection_id, result, verified)
+    except IntegrityError:
+        result = ValidationResult(
+            "failed",
+            [
+                Check(
+                    "assume_role",
+                    "Assume the Cloudoptics role",
+                    "error",
+                    "This AWS account is already connected to another Cloudoptics workspace.",
+                    "Disconnect it there first, or ask that workspace's admin to invite you.",
+                )
+            ],
+            error={"code": "AccountInUse", "check": "assume_role"},
+        )
+        await _store_result(session, connection_id, result, verified=False)
     if result.status != "failed":
         await session.execute(
             text(

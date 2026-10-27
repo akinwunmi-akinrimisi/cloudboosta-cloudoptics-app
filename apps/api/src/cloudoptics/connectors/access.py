@@ -203,8 +203,7 @@ async def _connection_from_intent(
         except IntegrityError as exc:
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                f"AWS account {body.account_id} is already connected to another Cloudoptics "
-                "workspace.",
+                f"AWS account {body.account_id} is already connected to this workspace.",
             ) from exc
     await session.execute(
         text("UPDATE connection_intent SET connection_id = :c, error = NULL WHERE id = :i"),
