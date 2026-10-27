@@ -2,6 +2,11 @@ import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
   AccountList,
+  AlertSettings,
+  AlertSettingsView,
+  Anomaly,
+  AnomalyDetail,
+  AnomalyStatus,
   Api,
   AuditEntry,
   Budget,
@@ -88,6 +93,9 @@ interface State {
   scanStartedAt?: Record<string, string>
   /** Budgets per tenant, as entered; how the month is going is worked out on each read. */
   budgets?: Record<string, (BudgetInput & { id: string; isActive: boolean; createdAt: string })[]>
+  /** tenantId:anomalyId -> status and note set in the demo. */
+  anomalyStatus?: Record<string, { status: AnomalyStatus; note: string | null; at: string }>
+  alertSettings?: Record<string, AlertSettings>
   /** Open invites per tenant. Nobody else signs in to the demo, so they stay pending. */
   invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
@@ -103,6 +111,62 @@ const empty = (): State => ({
   externalIds: {},
   recommendationStatus: {},
 })
+
+const DEFAULT_ALERT_SETTINGS: AlertSettings = {
+  anomalyMinImpact: 50,
+  anomalyMinImpactCurrency: 'USD',
+  anomalyMinPercent: 30,
+  anomalyEmails: [],
+}
+
+type DemoAnomaly = Pick<
+  Anomaly,
+  'id' | 'accountId' | 'accountName' | 'serviceCode' | 'serviceName' | 'contributors' | 'status' | 'note'
+> & { daysAgo: number; base: number; spike: number }
+
+// Illustrative anomalies for the demo estate: a forgotten load test and a NAT data spike.
+const DEMO_ANOMALIES: DemoAnomaly[] = [
+  {
+    id: 'demo-anomaly-1',
+    daysAgo: 2,
+    accountId: '333333333333',
+    accountName: 'demo-dev',
+    serviceCode: 'AmazonEC2',
+    serviceName: 'Amazon Elastic Compute Cloud',
+    base: 18.4,
+    spike: 142.6,
+    status: 'open',
+    note: null,
+    contributors: [
+      { usageType: 'EU-BoxUsage:c5.4xlarge', region: 'eu-west-1', actualUsd: 97.92, expectedUsd: 0, impactUsd: 97.92 },
+      { usageType: 'EU-EBS:VolumeUsage.gp3', region: 'eu-west-1', actualUsd: 21.6, expectedUsd: 4.1, impactUsd: 17.5 },
+      { usageType: 'EU-DataTransfer-Regional-Bytes', region: 'eu-west-1', actualUsd: 9.2, expectedUsd: 0.4, impactUsd: 8.8 },
+    ],
+  },
+  {
+    id: 'demo-anomaly-2',
+    daysAgo: 9,
+    accountId: '111111111111',
+    accountName: 'demo-prod',
+    serviceCode: 'AmazonVPC',
+    serviceName: 'Amazon Virtual Private Cloud',
+    base: 6.2,
+    spike: 71.5,
+    status: 'investigating',
+    note: 'Backup job copying to S3 through the NAT gateway?',
+    contributors: [
+      { usageType: 'AFS1-NatGateway-Bytes', region: 'af-south-1', actualUsd: 63.1, expectedUsd: 1.9, impactUsd: 61.2 },
+      { usageType: 'AFS1-NatGateway-Hours', region: 'af-south-1', actualUsd: 4.4, expectedUsd: 4.3, impactUsd: 0.1 },
+    ],
+  },
+]
+
+const isoDaysAgo = (days: number): string => {
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - days * 86_400_000)
+    .toISOString()
+    .slice(0, 10)
+}
 
 const OPEN: RecommendationStatus[] = ['new', 'assigned', 'in_progress']
 
@@ -1172,6 +1236,97 @@ export class DemoApi implements Api {
     })
     this.save()
     return this.recommendationEvents(tenantId, id)
+  }
+
+  private anomalyView(tenantId: string, a: DemoAnomaly): Anomaly {
+    const stored = this.state.anomalyStatus?.[`${tenantId}:${a.id}`]
+    const date = isoDaysAgo(a.daysAgo)
+    const round = (n: number) => Math.round(n * 100) / 100
+    return {
+      id: a.id,
+      date,
+      accountId: a.accountId,
+      accountName: a.accountName,
+      serviceCode: a.serviceCode,
+      serviceName: a.serviceName,
+      actualUsd: a.spike,
+      expectedUsd: a.base,
+      impactUsd: round(a.spike - a.base),
+      deviationPercent: Math.round((1000 * (a.spike - a.base)) / a.base) / 10,
+      contributors: structuredClone(a.contributors),
+      status: stored?.status ?? a.status,
+      suppressed: false,
+      note: stored ? stored.note : a.note,
+      statusChangedAt: stored?.at ?? (a.status === 'open' ? null : `${isoDaysAgo(a.daysAgo - 1)}T09:12:00Z`),
+      statusChangedBy: stored || a.status !== 'open' ? (this.state.me?.displayName ?? null) : null,
+      detectedAt: `${isoDaysAgo(a.daysAgo - 1)}T07:40:00Z`,
+      alerted: true,
+    }
+  }
+
+  async listAnomalies(tenantId: string, status?: AnomalyStatus): Promise<Anomaly[]> {
+    await this.tick()
+    this.tenant(tenantId)
+    if (!this.hasData(tenantId)) return []
+    return DEMO_ANOMALIES.map((a) => this.anomalyView(tenantId, a)).filter((a) => !status || a.status === status)
+  }
+
+  async getAnomaly(tenantId: string, id: string): Promise<AnomalyDetail> {
+    await this.tick()
+    this.tenant(tenantId)
+    const a = DEMO_ANOMALIES.find((x) => x.id === id)
+    if (!a || !this.hasData(tenantId)) throw new ApiError(404, 'Anomaly not found')
+    const series = Array.from({ length: 28 + Math.min(7, a.daysAgo) }, (_, i) => {
+      const daysAgo = a.daysAgo + 27 - i
+      const day = isoDaysAgo(daysAgo)
+      const weekend = [0, 6].includes(new Date(`${day}T00:00:00Z`).getUTCDay())
+      const expected = Math.round(a.base * (weekend ? 0.7 : 1) * 100) / 100
+      const wobble = ((i * 7) % 5) * 0.04 * a.base
+      const actual = daysAgo === a.daysAgo ? a.spike : Math.round((expected + wobble - 0.08 * a.base) * 100) / 100
+      return { date: day, actual, expected, upper: Math.round(expected * 1.3 * 100) / 100 }
+    })
+    return { ...this.anomalyView(tenantId, a), series }
+  }
+
+  async updateAnomaly(
+    tenantId: string,
+    id: string,
+    change: { status: AnomalyStatus; note?: string | null },
+  ): Promise<AnomalyDetail> {
+    this.tenant(tenantId)
+    if (!DEMO_ANOMALIES.some((a) => a.id === id)) throw new ApiError(404, 'Anomaly not found')
+    ;(this.state.anomalyStatus ??= {})[`${tenantId}:${id}`] = {
+      status: change.status,
+      note: change.note?.trim() || null,
+      at: new Date().toISOString(),
+    }
+    this.save()
+    return this.getAnomaly(tenantId, id)
+  }
+
+  async getAlertSettings(tenantId: string): Promise<AlertSettingsView> {
+    await this.tick()
+    this.tenant(tenantId)
+    const settings = structuredClone(this.state.alertSettings?.[tenantId] ?? DEFAULT_ALERT_SETTINGS)
+    const rate = settings.anomalyMinImpactCurrency === 'USD' ? 1 : ((await this.fxCurrent(tenantId)).quote?.rate ?? null)
+    return {
+      settings,
+      minImpactUsd: rate ? Math.round((settings.anomalyMinImpact / rate) * 100) / 100 : null,
+      defaults: structuredClone(DEFAULT_ALERT_SETTINGS),
+    }
+  }
+
+  async saveAlertSettings(tenantId: string, settings: AlertSettings): Promise<AlertSettingsView> {
+    const local = this.tenant(tenantId).displayCurrency
+    if (![local, 'USD'].includes(settings.anomalyMinImpactCurrency))
+      throw new ApiError(422, `The minimum is in USD or the workspace currency (${local}).`)
+    if (!(settings.anomalyMinImpact >= 1)) throw new ApiError(422, 'The minimum must be at least 1.')
+    ;(this.state.alertSettings ??= {})[tenantId] = {
+      ...structuredClone(settings),
+      anomalyEmails: [...new Set(settings.anomalyEmails.map((e) => e.trim().toLowerCase()).filter(Boolean))].sort(),
+    }
+    this.save()
+    return this.getAlertSettings(tenantId)
   }
 
   async getRuleSettings(tenantId: string): Promise<RuleSettingsView> {

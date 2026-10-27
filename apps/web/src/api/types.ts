@@ -425,6 +425,59 @@ export interface Budget extends BudgetInput {
   thresholds: (BudgetThresholdInput & { crossed: boolean; alerted: boolean })[]
 }
 
+export type AnomalyStatus = 'open' | 'investigating' | 'expected' | 'resolved'
+
+export interface AnomalyContributor {
+  usageType: string
+  region: string | null
+  actualUsd: number
+  expectedUsd: number
+  impactUsd: number
+}
+
+/** A day's spend for one account and service well above its same-weekday baseline (USD). */
+export interface Anomaly {
+  id: string
+  date: string
+  accountId: string
+  accountName: string
+  serviceCode: string
+  serviceName: string
+  actualUsd: number
+  expectedUsd: number
+  impactUsd: number
+  /** Null when nothing was expected (new spend). */
+  deviationPercent: number | null
+  contributors: AnomalyContributor[]
+  status: AnomalyStatus
+  /** Stored as expected because the same scope was marked expected in the week before. */
+  suppressed: boolean
+  note: string | null
+  statusChangedAt: string | null
+  statusChangedBy: string | null
+  detectedAt: string
+  alerted: boolean
+}
+
+export interface AnomalyDetail extends Anomaly {
+  /** Four weeks before the anomaly and up to a week after; expected/upper null without history. */
+  series: { date: string; actual: number; expected: number | null; upper: number | null }[]
+}
+
+export interface AlertSettings {
+  anomalyMinImpact: number
+  anomalyMinImpactCurrency: string
+  anomalyMinPercent: number
+  anomalyEmails: string[]
+}
+
+export interface AlertSettingsView {
+  settings: AlertSettings
+  /** The minimum in USD used now; null when the workspace currency has no rate (USD default applies). */
+  minImpactUsd: number | null
+  defaults: AlertSettings
+}
+
 export interface Invite {
   id: string
   email: string
@@ -492,6 +545,13 @@ export interface Api {
   createBudget(tenantId: string, body: BudgetInput): Promise<Budget>
   updateBudget(tenantId: string, id: string, change: Partial<BudgetInput> & { isActive?: boolean }): Promise<Budget>
   deleteBudget(tenantId: string, id: string): Promise<void>
+  listAnomalies(tenantId: string, status?: AnomalyStatus): Promise<Anomaly[]>
+  getAnomaly(tenantId: string, id: string): Promise<AnomalyDetail>
+  /** Members and admins. Expected stops new anomalies for the same scope for a week. */
+  updateAnomaly(tenantId: string, id: string, change: { status: AnomalyStatus; note?: string | null }): Promise<AnomalyDetail>
+  getAlertSettings(tenantId: string): Promise<AlertSettingsView>
+  /** Admins only. */
+  saveAlertSettings(tenantId: string, settings: AlertSettings): Promise<AlertSettingsView>
   /** Admins only. The invitee joins the first time they sign in with that email. */
   inviteMember(tenantId: string, email: string, role: Role): Promise<Invite>
   listInvites(tenantId: string): Promise<Invite[]>

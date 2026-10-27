@@ -2,6 +2,11 @@ import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
   AccountList,
+  AlertSettings,
+  AlertSettingsView,
+  Anomaly,
+  AnomalyDetail,
+  AnomalyStatus,
   Api,
   AuditPage,
   AuthConfig,
@@ -112,6 +117,27 @@ export class HttpApi implements Api {
 
   deleteBudget(tenantId: string, id: string): Promise<void> {
     return this.request('DELETE', `/v1/tenants/${tenantId}/budgets/${id}`)
+  }
+
+  listAnomalies(tenantId: string, status?: AnomalyStatus): Promise<Anomaly[]> {
+    const query = status ? `?status=${status}` : ''
+    return this.request('GET', `/v1/tenants/${tenantId}/anomalies${query}`)
+  }
+
+  getAnomaly(tenantId: string, id: string): Promise<AnomalyDetail> {
+    return this.request('GET', `/v1/tenants/${tenantId}/anomalies/${id}`)
+  }
+
+  updateAnomaly(tenantId: string, id: string, change: { status: AnomalyStatus; note?: string | null }): Promise<AnomalyDetail> {
+    return this.request('PATCH', `/v1/tenants/${tenantId}/anomalies/${id}`, change)
+  }
+
+  getAlertSettings(tenantId: string): Promise<AlertSettingsView> {
+    return this.request('GET', `/v1/tenants/${tenantId}/alert-settings`)
+  }
+
+  saveAlertSettings(tenantId: string, settings: AlertSettings): Promise<AlertSettingsView> {
+    return this.request('PUT', `/v1/tenants/${tenantId}/alert-settings`, settings)
   }
 
   inviteMember(tenantId: string, email: string, role: Role): Promise<Invite> {

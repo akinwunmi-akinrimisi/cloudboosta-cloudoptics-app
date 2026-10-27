@@ -127,6 +127,45 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByText(/No budgets yet/)).toBeTruthy()
   })
 
+  it('triages an anomaly and changes the alert thresholds', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('ada@example.com')
+    const tenant = await api.createTenant({ name: 'Lagos Labs', countryCode: 'NG' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '210987654323',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'ada@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: /Anomalies/ }))
+    expect(await screen.findByRole('tab', { name: 'Open (1)' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /Amazon Elastic Compute Cloud in demo-dev/ }))
+    expect(await screen.findByText('EU-BoxUsage:c5.4xlarge')).toBeTruthy()
+    expect(await screen.findByRole('img', { name: /against the expected level/ })).toBeTruthy()
+    await user.type(screen.getByLabelText('Note (optional)'), 'Planned load test')
+    await user.click(screen.getByRole('button', { name: 'Mark expected' }))
+    await waitFor(async () => expect((await api.listAnomalies(tenant.id, 'expected')).length).toBe(1))
+    expect(await screen.findByRole('tab', { name: 'Open (0)' })).toBeTruthy()
+
+    const minimum = screen.getByLabelText('Minimum above expected, per day')
+    await user.clear(minimum)
+    await user.type(minimum, '100')
+    await user.selectOptions(screen.getByLabelText('And at least'), '50')
+    await user.type(screen.getByLabelText('Also email'), 'Ops@Example.com')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(async () =>
+      expect((await api.getAlertSettings(tenant.id)).settings).toEqual({
+        anomalyMinImpact: 100,
+        anomalyMinImpactCurrency: 'USD',
+        anomalyMinPercent: 50,
+        anomalyEmails: ['ops@example.com'],
+      }),
+    )
+  })
+
   it('lists connections with their checks', async () => {
     const { api } = renderApp('/sign-in')
     await api.signIn('amina@example.com')
