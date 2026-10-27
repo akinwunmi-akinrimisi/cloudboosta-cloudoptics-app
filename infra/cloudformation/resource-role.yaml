@@ -6,7 +6,7 @@ Description: >-
 
 Metadata:
   cloudoptics:
-    templateVersion: "1.0.1"
+    templateVersion: "1.0.2"
 
 Parameters:
   ExternalId:
@@ -47,14 +47,26 @@ Resources:
               - Sid: Inventory
                 Effect: Allow
                 Action:
-                  - ec2:Describe*
+                # Metadata only: no ec2:Describe* or autoscaling:Describe* (user data in instance
+                # attributes, launch templates and launch configurations), no Lambda configuration
+                # (environment variables) and no DNS records, which can hold secrets.
+                  - ec2:DescribeRegions
+                  - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeVolumeStatus
+                  - ec2:DescribeVolumesModifications
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeImages
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeNatGateways
+                  - ec2:DescribeReservedInstances
+                  - ec2:DescribeTags
                   - rds:Describe*
                   - rds:ListTagsForResource
                   - elasticloadbalancing:Describe*
-                  - autoscaling:Describe*
-                  - lambda:ListFunctions
-                  - lambda:ListProvisionedConcurrencyConfigs
-                  - lambda:GetFunctionConfiguration
                   - eks:DescribeCluster
                   - eks:ListClusters
                   - logs:DescribeLogGroups
@@ -64,8 +76,6 @@ Resources:
                   - s3:GetLifecycleConfiguration
                   - s3:GetIntelligentTieringConfiguration
                   - tag:GetResources
-                  - route53:ListHostedZones
-                  - route53:ListResourceRecordSets
                 Resource: "*"
               - Sid: Metrics
                 Effect: Allow

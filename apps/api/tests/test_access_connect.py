@@ -208,6 +208,22 @@ async def test_a_failed_member_rollout_is_in_the_audit_log(
     assert entry["after"]["reason"] == reason
 
 
+async def test_member_roles_left_behind_by_a_deleted_stack_are_in_the_audit_log(
+    client: AsyncClient, login, quick_create, fake_aws
+) -> None:
+    acct = account()
+    tenant, headers = await workspace(client, login)
+    params = link_params((await new_link(client, tenant, headers))["quickCreateUrl"])
+    fake_aws.clients = healthy_clients(acct)
+    await client.post("/v1/cfn/callback", json=callback_body(params, acct))
+    reason = "failed: member roles not removed: RuntimeError: ended FAILED"
+    body = callback_body(params, acct, requestType="Delete", memberRollout=reason)
+    assert (await client.post("/v1/cfn/callback", json=body)).json()["status"] == "disconnected"
+    log = (await client.get(f"/v1/tenants/{tenant}/audit-log", headers=headers)).json()
+    [entry] = [e for e in log["entries"] if e["action"] == "connection.member_roles_left"]
+    assert entry["after"]["reason"] == reason
+
+
 def test_stack_update_url_opens_the_update_page_with_the_template_chosen() -> None:
     url = aws.stack_update_url("https://bucket.s3.amazonaws.com/cloudoptics-access.yaml")
     assert url.startswith(

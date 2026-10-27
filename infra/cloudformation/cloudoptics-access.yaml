@@ -8,7 +8,7 @@ Description: >-
 
 Metadata:
   cloudoptics:
-    templateVersion: "2.0.2"
+    templateVersion: "2.0.3"
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: Connection (pre-filled by Cloudoptics) }
@@ -33,7 +33,7 @@ Parameters:
     Description: The resource role template that member accounts get.
   CallbackUrl:
     Type: String
-    AllowedPattern: "https?://.+/v1/cfn/callback"
+    AllowedPattern: "https://.+/v1/cfn/callback"
     Description: Where the setup step tells Cloudoptics that this stack is ready.
   ConnectionRef:
     Type: String
@@ -196,6 +196,14 @@ Resources:
       Handler: index.handler
       Timeout: 900
       Role: !GetAtt SetupRole.Arn
+      # What the setup step rolls out and calls back to comes from these parameters only, not
+      # from the invoking event (see FIXED in the setup source).
+      Environment:
+        Variables:
+          ExternalId: !Ref ExternalId
+          CloudopticsPrincipalArn: !Ref CloudopticsPrincipalArn
+          ResourceTemplateUrl: !Ref ResourceTemplateUrl
+          CallbackUrl: !Ref CallbackUrl
       Code:
         ZipFile: |
           # Cloudoptics setup step for cloudoptics-access.yaml. Runs in the customer's account as a
@@ -207,6 +215,7 @@ Resources:
           #            management account, then tell Cloudoptics the stack is ready (or gone).
           import contextlib
           import json
+          import os
           import time
           import urllib.error
           import urllib.request
@@ -234,6 +243,10 @@ Resources:
           # without a reply the stack waits an hour and then fails with no reason.
           RESERVE_SECONDS = 120
           _deadline = None
+          # Taken from this stack's own parameters (the function's environment), never from the event:
+          # anyone allowed to invoke the function could otherwise choose the template and the trusted
+          # principal rolled out to every member account, or where the callback is sent.
+          FIXED = ("ExternalId", "CloudopticsPrincipalArn", "ResourceTemplateUrl", "CallbackUrl")
 
 
           def time_left():
@@ -277,7 +290,7 @@ Resources:
               global _deadline
               if context is not None:
                   _deadline = time.time() + context.get_remaining_time_in_millis() / 1000 - RESERVE_SECONDS
-              props = event["ResourceProperties"]
+              props = {**event["ResourceProperties"], **{k: os.environ[k] for k in FIXED}}
               physical = event.get("PhysicalResourceId") or "cloudoptics-" + props["Action"]
               try:
                   data = ACTIONS[props["Action"]](event["RequestType"], props) or {}
@@ -598,13 +611,17 @@ Resources:
               org = organization()
               management = org is not None and org["MasterAccountId"] == props["AccountId"]
               if kind == "Delete":
+                  left = None
                   if management:
-                      # A rollout left behind is taken over by the next stack, so it never blocks a delete.
+                      # A rollout left behind is taken over by the next stack, so it never blocks a
+                      # delete; Cloudoptics is told, so the workspace's audit log says the member
+                      # accounts still have the role.
                       try:
                           remove_stackset()
                       except Exception as exc:
-                          print(f"member rollout not removed: {type(exc).__name__}: {exc}")
-                  callback(kind, props, management)
+                          left = f"failed: member roles not removed: {type(exc).__name__}: {exc}"[:900]
+                          print(left)
+                  callback(kind, props, management, left)
                   return None
               if not management:
                   rollout = "not an Organization's management account"
@@ -731,14 +748,26 @@ Resources:
               - Sid: Inventory
                 Effect: Allow
                 Action:
-                  - ec2:Describe*
+                # Metadata only: no ec2:Describe* or autoscaling:Describe* (user data in instance
+                # attributes, launch templates and launch configurations), no Lambda configuration
+                # (environment variables) and no DNS records, which can hold secrets.
+                  - ec2:DescribeRegions
+                  - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeInstances
+                  - ec2:DescribeInstanceStatus
+                  - ec2:DescribeInstanceTypes
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeVolumeStatus
+                  - ec2:DescribeVolumesModifications
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeImages
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeNatGateways
+                  - ec2:DescribeReservedInstances
+                  - ec2:DescribeTags
                   - rds:Describe*
                   - rds:ListTagsForResource
                   - elasticloadbalancing:Describe*
-                  - autoscaling:Describe*
-                  - lambda:ListFunctions
-                  - lambda:ListProvisionedConcurrencyConfigs
-                  - lambda:GetFunctionConfiguration
                   - eks:DescribeCluster
                   - eks:ListClusters
                   - logs:DescribeLogGroups
@@ -748,8 +777,6 @@ Resources:
                   - s3:GetLifecycleConfiguration
                   - s3:GetIntelligentTieringConfiguration
                   - tag:GetResources
-                  - route53:ListHostedZones
-                  - route53:ListResourceRecordSets
                 Resource: "*"
               - Sid: Metrics
                 Effect: Allow
@@ -819,7 +846,7 @@ Resources:
       ServiceTimeout: "960"
       Action: setup
       # A new version number makes every update run the setup step (and the callback) again.
-      TemplateVersion: "2.0.2"
+      TemplateVersion: "2.0.3"
       StackName: !Ref AWS::StackName
       AccountId: !Ref AWS::AccountId
       ExternalId: !Ref ExternalId
@@ -833,7 +860,7 @@ Resources:
 
 Outputs:
   TemplateVersion:
-    Value: "2.0.2"
+    Value: "2.0.3"
   BillingRoleArn:
     Value: !GetAtt BillingRole.Arn
   ResourceRoleArn:

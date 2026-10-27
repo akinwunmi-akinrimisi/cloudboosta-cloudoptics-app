@@ -297,6 +297,17 @@ async def stack_callback(body: StackCallback, session: Session) -> CallbackResul
             await mark_disconnected(
                 session, body.tenant_id, conn.id, conn.status, Actor(type="system")
             )
+        if body.member_rollout and body.member_rollout.startswith("failed"):
+            # The stack is gone but member accounts may still have a role trusting Cloudoptics.
+            await audit.record(
+                session,
+                tenant_id=body.tenant_id,
+                actor=Actor(type="system"),
+                action="connection.member_roles_left",
+                target_type="cloud_connection",
+                target_id=str(conn.id),
+                after={"reason": body.member_rollout},
+            )
         return CallbackResult(connection_id=conn.id, status="disconnected")
 
     await session.execute(

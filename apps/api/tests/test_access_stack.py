@@ -175,6 +175,8 @@ def setup_step(monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     monkeypatch.setattr(module.boto3, "client", lambda name, **_: clients[name])
     posted: list[dict[str, Any]] = []
     monkeypatch.setattr(module.urllib.request, "urlopen", _accepting(posted))
+    for name in module.FIXED:  # the template sets these from the stack's parameters
+        monkeypatch.setenv(name, PROPS[name])
     return types.SimpleNamespace(
         module=module, clients=clients, sent=sent, posted=posted, monkeypatch=monkeypatch
     )
@@ -315,6 +317,75 @@ def test_management_account_rolls_the_role_out_to_members(setup_step: Any) -> No
         "OrganizationalUnitIds": ["r-ab12"]
     }
     assert setup_step.posted[0]["management"] is True
+
+
+def test_rollout_and_callback_ignore_values_from_the_invoking_event(setup_step: Any) -> None:
+    """Someone allowed to invoke the function must not choose what member accounts get."""
+    setup_step.clients["organizations"] = Fake(
+        describe_organization={
+            "Organization": {"MasterAccountId": PROPS["AccountId"], "FeatureSet": "ALL"}
+        },
+        list_roots={"Roots": [{"Id": "r-ab12"}]},
+    )
+    cfn = Fake(
+        describe_organizations_access={"Status": "ENABLED"},
+        describe_stack_set=client_error("StackSetNotFoundException"),
+    )
+    setup_step.clients["cloudformation"] = cfn
+    forged = {
+        "ResourceTemplateUrl": "https://evil.example/resource-role.yaml",
+        "CloudopticsPrincipalArn": "arn:aws:iam::666666666666:role/Attacker",
+        "ExternalId": "attacker-chosen",
+        "CallbackUrl": "https://evil.example/v1/cfn/callback",
+    }
+    run(setup_step, "setup", **forged)
+    created = dict(cfn.calls)["create_stack_set"]
+    assert created["TemplateURL"] == PROPS["ResourceTemplateUrl"]
+    params = {p["ParameterKey"]: p["ParameterValue"] for p in created["Parameters"]}
+    assert params["CloudopticsPrincipalArn"] == PROPS["CloudopticsPrincipalArn"]
+    assert params["ExternalId"] == PROPS["ExternalId"]
+    [posted] = setup_step.posted
+    assert posted["url"] == PROPS["CallbackUrl"]
+
+
+def test_the_setup_function_gets_the_fixed_values_from_the_stack(setup_step: Any) -> None:
+    function = load("cloudoptics-access.yaml")["Resources"]["SetupFunction"]["Properties"]
+    assert function["Environment"]["Variables"] == {
+        name: {"Ref": name} for name in setup_step.module.FIXED
+    }
+
+
+def test_read_roles_leave_out_calls_that_can_return_secrets() -> None:
+    for name, policies in (
+        ("cloudoptics-access.yaml", ["ResourceRole"]),
+        ("resource-role.yaml", ["ResourceRole"]),
+    ):
+        resources = load(name)["Resources"]
+        for resource in policies:
+            for policy in resources[resource]["Properties"]["Policies"]:
+                for stmt in policy["PolicyDocument"]["Statement"]:
+                    for action in _actions(stmt):
+                        service = action.split(":")[0]
+                        assert service not in {"lambda", "route53", "autoscaling"}, action
+                        assert action != "ec2:Describe*", action
+
+
+def test_a_failed_member_cleanup_on_delete_is_reported(setup_step: Any) -> None:
+    setup_step.clients["organizations"] = Fake(
+        describe_organization={
+            "Organization": {"MasterAccountId": PROPS["AccountId"], "FeatureSet": "ALL"}
+        },
+        list_roots={"Roots": [{"Id": "r-ab12"}]},
+    )
+    setup_step.clients["cloudformation"] = Fake(
+        list_stack_set_operations={"Summaries": []},
+        list_stack_instances={"Summaries": [{"Account": "172630973115"}]},
+        delete_stack_instances={"OperationId": "op2"},
+        describe_stack_set_operation={"StackSetOperation": {"Status": "FAILED"}},
+    )
+    assert run(setup_step, "setup", kind="Delete")["status"] == "SUCCESS"  # never blocks
+    [posted] = setup_step.posted
+    assert posted["memberRollout"].startswith("failed: member roles not removed")
 
 
 def test_update_refreshes_the_existing_rollout(setup_step: Any) -> None:
