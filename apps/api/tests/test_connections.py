@@ -65,16 +65,35 @@ async def test_external_id_is_encrypted_at_rest(client: AsyncClient, login, owne
     assert external_id.encode() not in bytes(stored)
 
 
-async def test_an_aws_account_can_join_only_one_workspace(client: AsyncClient, login) -> None:
+async def test_an_aws_account_can_join_only_one_workspace(
+    client: AsyncClient, login, fake_aws, owner_sql
+) -> None:
     a, ha = await workspace(client, login)
     b, hb = await workspace(client, login)
     body = {"awsAccountId": "333344445555"}
-    assert (
-        await client.post(f"/v1/tenants/{a}/connections", json=body, headers=ha)
-    ).status_code == 201
-    r = await client.post(f"/v1/tenants/{b}/connections", json=body, headers=hb)
-    assert r.status_code == 409
-    assert "already connected" in r.json()["title"]
+    # Claiming an account proves nothing, so it blocks nobody and reveals nothing.
+    ca = (await client.post(f"/v1/tenants/{a}/connections", json=body, headers=ha)).json()
+    cb = (await client.post(f"/v1/tenants/{b}/connections", json=body, headers=hb)).json()
+    # A second claim inside the same workspace is still refused.
+    r = await client.post(f"/v1/tenants/{a}/connections", json=body, headers=ha)
+    assert r.status_code == 409 and "this workspace" in r.json()["title"]
+
+    # The first workspace to assume the role in the account (it has the stack) keeps it.
+    va = f"/v1/tenants/{a}/connections/{ca['connection']['id']}/validate"
+    assert (await client.post(va, headers=ha)).json()["status"] == "healthy"
+    vb = f"/v1/tenants/{b}/connections/{cb['connection']['id']}/validate"
+    conn = (await client.post(vb, headers=hb)).json()
+    assert conn["status"] == "failed"
+    [check] = conn["permissionChecks"]
+    assert "another Cloudoptics workspace" in check["message"]
+    verified = owner_sql(
+        "SELECT tenant_id::text FROM cloud_connection WHERE aws_account_id = '333344445555' "
+        "AND account_verified_at IS NOT NULL"
+    )
+    assert verified == [(a,)]
+    # Once the first disconnects, the account is free for the other.
+    await client.delete(f"/v1/tenants/{a}/connections/{ca['connection']['id']}", headers=ha)
+    assert (await client.post(vb, headers=hb)).json()["status"] == "healthy"
 
 
 async def test_validate_marks_the_connection_healthy(client: AsyncClient, login, fake_aws) -> None:

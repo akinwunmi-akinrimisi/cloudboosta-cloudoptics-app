@@ -26,6 +26,7 @@ def token(key: Any = KEY, **claims: Any) -> str:
         "exp": now + 300,
         **claims,
     }
+    payload = {k: v for k, v in payload.items() if v is not None}  # None: leave the claim out
     return jwt.encode(payload, key, algorithm="RS256", headers={"kid": "k1"})
 
 
@@ -115,6 +116,7 @@ async def test_all_workos_issuer_forms_are_accepted(issuer: str) -> None:
         ({"iss": "https://api.workos.com/user_management/client_x/../evil"}, KEY),
         ({"iss": "https://api.workos.com.evil.example/user_management/client_x"}, KEY),
         ({"client_id": "client_someone_else"}, KEY),
+        ({"client_id": None}, KEY),  # no claim: not ours to accept
         ({"exp": int(time.time()) - 10}, KEY),
         ({}, OTHER_KEY),
     ],

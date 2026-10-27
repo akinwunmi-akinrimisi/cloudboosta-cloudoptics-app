@@ -253,7 +253,7 @@ async def create_connection(
     except IntegrityError as exc:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "This AWS account is already connected to a Cloudoptics workspace.",
+            "This AWS account is already connected to this workspace.",
         ) from exc
     await audit.record(
         session,
