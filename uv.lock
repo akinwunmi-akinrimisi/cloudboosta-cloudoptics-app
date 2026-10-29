@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -165,15 +165,15 @@ wheels = [
 
 [[package]]
 name = "boto3-stubs"
-version = "1.43.117"
+version = "1.43.119"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "botocore-stubs" },
     { name = "types-s3transfer" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/d8/1ef018f6fdd9a4b9d63fbad241825e211b1d72b405aae89df6c9f6f9a15d/boto3_stubs-1.43.117.tar.gz", hash = "sha256:9aea6f96e33cc5d7e548cf6ad726ff8690dbf9a8d037bb8bd6a52777ce8a6662", size = 105342, upload-time = "2026-10-21T22:28:17.045Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/89/460a01ee879d0eaf34f4e1b9a8d7f1da17ec972bd738122bbd616d3ea947/boto3_stubs-1.43.119.tar.gz", hash = "sha256:5734e5c36496d6a41c9ffa247fae83ece5e14b1da33222861482974f5f67e48f", size = 105535, upload-time = "2026-10-26T21:50:20.435Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/2b/24eb940cdad0c492b6dbad303f8628fb973f4fe705f686267b9dfa430bea/boto3_stubs-1.43.117-py3-none-any.whl", hash = "sha256:4cc6d2380c616e1658f85292d8081b118a4da78757ad5432e77370a1ca55181b", size = 71912, upload-time = "2026-10-21T22:28:11.22Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/0e/df9807a63ad9a37ec5921f8950a6fd46ecc3c556b6e91efb4a53b7009b84/boto3_stubs-1.43.119-py3-none-any.whl", hash = "sha256:12d6a2cff9439798ac20e7b069cca92a79334898727d6ed1c3100ef44ce63cb4", size = 72013, upload-time = "2026-10-26T21:50:16.162Z" },
 ]
 
 [package.optional-dependencies]
@@ -563,7 +563,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "boto3-stubs", extras = ["bcm-data-exports", "ce", "ec2", "organizations", "s3", "sts"], specifier = ">=1.43.117" },
+    { name = "boto3-stubs", extras = ["bcm-data-exports", "ce", "ec2", "organizations", "s3", "sts"], specifier = ">=1.43.119" },
     { name = "cfn-lint", specifier = ">=1.58.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "hypothesis", specifier = ">=6.112" },
