@@ -165,6 +165,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - CFN template review by security → involve the tech lead in review.
 
 ### Sprint 2 (Weeks 4–5) — Billing ingestion end-to-end
+- **Status (17 Nov 2026): complete** (#14, #15): CUR 2.0 ingestion to daily aggregates, Cost Explorer month-to-date first value, trend and breakdown, staff-set FX rates, Organizations discovery.
 - **Goals:** CUR data flows from customer S3 to `cost_daily`; first numbers in the UI.
 - **Deliverables:**
   - CUR poller + landing (CC-8); FOCUS mapping v1 (IN-2); DQ checks (IN-3); aggregation (IN-4); cost metrics + credits (IN-5).
@@ -179,6 +180,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - Ingestion performance → profile with a 5M-row synthetic dataset.
 
 ### Sprint 3 (Weeks 6–7) — "See it" + quick wins → **Increment 1 alpha**
+- **Status (17 Nov 2026): complete on staging** (#16–#20): reconciliation, inventory scanners, R1–R3 with scoring, Recommendations and Costs Explorer pages, connection-failure emails, audit log. Then the single onboarding stack with one-click connect and in-place "Update CloudOptics access" (#28–#33, #36–#38, #44, #45). Production environment and the design-partner alpha are deferred.
 - **Goals:** a complete cost-visibility experience plus the first low-risk recommendations; alpha with 3–5 design partners.
 - **Deliverables:**
   - Inventory scanners (CC-10); native recs pull (CC-12); price catalogue (IN-9).
@@ -196,6 +198,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - Wrong numbers → reconciliation + an internal "data accuracy" review per partner before sharing.
 
 ### Sprint 4 (Weeks 8–9) — "Cut it safely" core
+- **Status (17 Nov 2026): complete** (#34, #35, then #40–#42): CloudWatch metrics puller, R4 idle EC2/RDS, R5 rightsizing (with Compute Optimizer), R6 older and x86 types, assignment, comments, bulk actions, rule settings, console-first detail page with usage charts. The Slack app moved to Sprint 5.
 - **Goals:** usage-based recommendations with risk scoring, evidence and workflow.
 - **Deliverables:**
   - Metrics puller (CC-11); rate limiting + API cost budget (CC-13).
@@ -210,6 +213,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - CloudWatch cost → candidate-only pulls; budget enforcement.
 
 ### Sprint 5 (Weeks 10–11) — Plan it: budgets, anomalies, FX, credits
+- **Status (17 Nov 2026): in progress.** Merged: budgets and budget alerts (#46), anomaly detection and alerts (#47), notification preferences and weekly digest (#48); the Sprint 6 monthly executive report also landed early (#49). Open: credits runway (#50). Not started: R7 scheduling, R8 Savings Plans advice, R6b Extended Support, R10 idle NAT, FX scenario, what-changed, Commitments page, verification of realised savings, Slack app.
 - **Goals:** finance persona value and proactive alerts.
 - **Deliverables:**
   - R7 scheduling, R8 SP advisory (AN-9, AN-10); R6b Extended Support and R10 idle NAT (AN-18, AN-19).
