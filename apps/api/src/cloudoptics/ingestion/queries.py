@@ -558,3 +558,26 @@ async def period_totals(session: AsyncSession, first: date, last: date) -> Perio
 async def month_reconciliation(session: AsyncSession, month: date) -> Reconciliation | None:
     """The latest check of one month's bills against Cost Explorer (a mismatch first)."""
     return await _reconciliation(session, month, month)
+
+
+@dataclass(frozen=True)
+class CreditDay:
+    usage_date: date
+    credits: float  # credits applied that day, as a positive amount
+    spend: float  # amortised spend before credits (usage, purchases, tax, adjustments)
+
+
+async def credit_days(session: AsyncSession, first: date, last: date) -> list[CreditDay]:
+    """Per day with bills from ``first`` to ``last``: credits applied (``Credit`` lines,
+    which include refunds) and spend before them."""
+    rows = await session.execute(
+        text(
+            "SELECT usage_date, "
+            "coalesce(-sum(effective_cost_usd) FILTER (WHERE charge_category = 'Credit'), 0) "
+            "AS credits, coalesce(sum(effective_cost_usd) FILTER "
+            "(WHERE charge_category <> 'Credit'), 0) AS spend FROM cost_daily "
+            "WHERE usage_date BETWEEN :first AND :last GROUP BY usage_date ORDER BY usage_date"
+        ),
+        {"first": first, "last": last},
+    )
+    return [CreditDay(r.usage_date, float(r.credits), float(r.spend)) for r in rows]

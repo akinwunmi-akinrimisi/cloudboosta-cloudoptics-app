@@ -222,6 +222,33 @@ describe('Cloudoptics web app', () => {
     expect((await api.listReports(tenant.id)).reports).toHaveLength(1)
   })
 
+  it('shows the credits runway and warns on the overview when they end soon', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('ada@example.com')
+    const tenant = await api.createTenant({ name: 'Lagos Labs', countryCode: 'NG' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '210987654326',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'ada@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    await user.click(await screen.findByRole('link', { name: /Cost Explorer/ }))
+    expect(await screen.findByText(/AWS does not report the balance left/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Enter the balance' }))
+    await user.type(screen.getByLabelText('Remaining balance (USD)'), '1000')
+    await user.click(screen.getByRole('button', { name: 'Save balance' }))
+    expect(await screen.findByText(/in about \d+ days/)).toBeTruthy()
+    const runway = await api.getCredits(tenant.id)
+    expect(runway.status).toBe('ending_soon')
+    expect(runway.remainingUsd).toBe(1000)
+
+    await user.click(screen.getByRole('link', { name: /Overview/ }))
+    expect(await screen.findByText(/Your AWS credits run out in about/)).toBeTruthy()
+  })
+
   it('lists connections with their checks', async () => {
     const { api } = renderApp('/sign-in')
     await api.signIn('amina@example.com')

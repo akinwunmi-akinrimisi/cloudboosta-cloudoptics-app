@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.anomalies import service as anomalies
 from cloudoptics.budgets import service as budgets
+from cloudoptics.credits import service as credits
 from cloudoptics.fx import service as fx
 from cloudoptics.ingestion.queries import data_range, service_totals
 from cloudoptics.notifications import preferences
@@ -91,6 +92,7 @@ class Digest:
     recommendations: recommendations.RecommendationPeriod
     budgets: list[budgets.BudgetLine]
     anomalies: anomalies.AnomalyPeriod
+    credits: credits.Runway
 
     @property
     def change_percent(self) -> float | None:
@@ -150,6 +152,7 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, week_start: date) -
         recommendations=await recommendations.period(session, start, start + timedelta(days=7)),
         budgets=await budgets.active_budgets(session, week_end + timedelta(days=1)),
         anomalies=await anomalies.period(session, week_start, week_end),
+        credits=await credits.runway(session, week_end),
     )
 
 
@@ -213,6 +216,10 @@ def render(d: Digest, app_url: str) -> tuple[str, str, str]:
         if a.open_count:
             lines.append(f"{a.open_count} still open.")
         sections.append(("Anomalies", lines, f"{app}/anomalies"))
+
+    runway = credits.describe(d.credits, d.money)
+    if runway:
+        sections.append(("AWS credits", [runway], f"{app}/costs"))
 
     settings_link = f"{app}/settings"
     footer = (
