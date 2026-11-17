@@ -14,24 +14,38 @@ The demo is the real web app running on in-browser demo data: sign in with any e
 
 Sign-in uses WorkOS AuthKit (ADR-006). **Actions → Staging setup** (run from `main`) sets up Cloudoptics' AWS account (template bucket, broker role and user) and pushes the broker key and WorkOS settings to App Platform; see `docs/handoff/staging-next-steps.md` for the one-time WorkOS dashboard settings.
 
+## What works today (17 Nov 2026)
+
+| Area | What you can do |
+|---|---|
+| Sign-in and workspaces | Sign in with WorkOS, create a workspace, invite people and change or remove members |
+| Connecting AWS | One CloudFormation stack with a one-click link: billing access, resource access and member-account rollout together. Later permission changes are one-click in-place updates ("Update CloudOptics access"). CloudOptics only reads |
+| Costs | Month-to-date spend and forecast, daily trend, top spend, Costs Explorer, every figure in USD and local currency |
+| Recommendations | Unattached volumes, old snapshots, idle IPs and load balancers, gp2 to gp3, idle servers and databases, rightsizing, older and x86 server types; each with a risk score, usage charts, an "Open in AWS console" fix and rollback steps. Assign, comment and act in bulk |
+| Planning and alerts | Budgets with alerts, credits runway (how long AWS credits will last), anomaly detection, connection-failure emails, notification preferences and a weekly digest |
+| Reports | Monthly executive report; audit log under Settings |
+
+Progress against the sprint plan is in [docs/11d](docs/11d_implementation_roadmap_and_sprint_plan.md) (Sprints 2 to 4 complete, Sprint 5 in progress).
+
 ## Run the full stack
 
 **In GitHub Codespaces:** Code → Codespaces → Create codespace on `main`. The dev container installs everything, starts PostgreSQL, runs migrations, starts the API and opens the web app pointed at it.
 
 **Locally with Docker:** `docker compose up -d api` (PostgreSQL, migrations, API on :8000), then `pnpm install && pnpm --filter @cloudoptics/web dev` (web on :5173).
 
-Sign-in uses development tokens until the identity provider is chosen (ADR-006). Validating a connection calls AWS with the credentials available to the API process; without any, it reports that the role could not be assumed.
+Locally, sign-in uses development tokens; staging uses WorkOS AuthKit (ADR-006). Validating a connection calls AWS with the credentials available to the API process; without any, it reports that the role could not be assumed.
 
 ## Repository layout
 
 | Path | What it is |
 |---|---|
 | `docs/` | Product and engineering plan (phases 1–12), ADRs in `docs/adr/`, Sprint 0 spikes in `docs/spikes/` |
-| `apps/api/` | Python backend: FastAPI API and the modular-monolith modules (`identity`, `connectors`, `ingestion`, `inventory`, `fx`, `analysis`, `recommendations`, `budgets`, `notifications`, `reporting`, `audit`, `platform`) |
+| `apps/api/` | Python backend: FastAPI API and the modular-monolith modules (`identity`, `connectors`, `ingestion`, `inventory`, `metrics`, `fx`, `analysis`, `recommendations`, `budgets`, `anomalies`, `notifications`, `reporting`, `audit`, `platform`) |
 | `apps/web/` | React + TypeScript single-page app (Vite) |
 | `tools/cur-fixture/` | Synthetic AWS CUR 2.0 generator for ingestion and engine tests |
-| `infra/cloudformation/` | Customer-facing read-only roles: `billing-role.yaml` (stage 1, with optional CUR 2.0 export) and `resource-role.yaml` (stage 2) |
-| `.github/workflows/` | `ci.yml` (lint, types, tests with PostgreSQL, cfn-lint, bundle budget, audits, Gitleaks, Semgrep, Trivy, SBOM), `pages.yml` (demo), `container.yml` (API image to GHCR) |
+| `infra/cloudformation/` | Customer-facing read-only access: `cloudoptics-access.yaml` is the single onboarding stack (setup step in `setup/`). `billing-role.yaml`, `resource-role.yaml` and `resource-stackset.yaml` are the older stacks, kept for connections that have not moved yet |
+| `infra/aws/`, `infra/digitalocean/` | Staging setup: Cloudoptics' own AWS account (template bucket, broker role) and the App Platform app |
+| `.github/workflows/` | `ci.yml` (lint, types, tests with PostgreSQL, cfn-lint, bundle budget, audits, Gitleaks, Semgrep, Trivy, SBOM), `pages.yml` (demo), `container.yml` (API image to GHCR), `deploy-staging.yml` (redeploy staging after each merge), `staging-setup.yml` (one-off staging setup) |
 
 ## Getting started
 
