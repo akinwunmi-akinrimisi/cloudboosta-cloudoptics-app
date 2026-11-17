@@ -22,7 +22,7 @@ Sign-in uses WorkOS AuthKit (ADR-006). **Actions → Staging setup** (run from `
 | Connecting AWS | One CloudFormation stack with a one-click link: billing access, resource access and member-account rollout together. Later permission changes are one-click in-place updates ("Update CloudOptics access"). CloudOptics only reads |
 | Costs | Month-to-date spend and forecast, daily trend, top spend, Costs Explorer, every figure in USD and local currency |
 | Recommendations | Unattached volumes, old snapshots, idle IPs and load balancers, gp2 to gp3, idle servers and databases, rightsizing, older and x86 server types; each with a risk score, usage charts, an "Open in AWS console" fix and rollback steps. Assign, comment and act in bulk |
-| Planning and alerts | Budgets with alerts, anomaly detection, connection-failure emails, notification preferences and a weekly digest |
+| Planning and alerts | Budgets with alerts, credits runway (how long AWS credits will last), anomaly detection, connection-failure emails, notification preferences and a weekly digest |
 | Reports | Monthly executive report; audit log under Settings |
 
 Progress against the sprint plan is in [docs/11d](docs/11d_implementation_roadmap_and_sprint_plan.md) (Sprints 2 to 4 complete, Sprint 5 in progress).
