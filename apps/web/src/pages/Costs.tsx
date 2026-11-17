@@ -1,10 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState, type FormEvent } from 'react'
 
 import { useApi } from '../app/context'
-import type { CostDimension } from '../api/types'
+import type { CostDimension, CreditsRunway } from '../api/types'
 import { DailySpendChart } from '../components/charts'
-import { Alert, Card, cx } from '../components/ui'
+import { Alert, Button, Card, Field, cx } from '../components/ui'
 import { DIMENSIONS, useMoney, useWorkspace } from './Workspace'
 
 const RANGES = [30, 90] as const
@@ -160,6 +160,145 @@ export function Costs() {
           </table>
         )}
       </Card>
+      {tenantId !== null && <CreditsCard tenantId={tenantId} />}
     </div>
+  )
+}
+
+function dateLabel(iso: string): string {
+  return new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
+}
+
+/** AWS credits runway (PRD US-2.4): burn from the bills, countdown from the balance an admin enters. */
+export function CreditsCard({ tenantId }: { tenantId: string }) {
+  const api = useApi()
+  const { me } = useWorkspace()
+  const { money } = useMoney()
+  const isAdmin = me?.memberships.find((m) => m.tenantId === tenantId)?.role === 'admin'
+  const [editing, setEditing] = useState(false)
+  const credits = useQuery({ queryKey: ['credits', tenantId], queryFn: () => api.getCredits(tenantId) })
+  const c = credits.data
+  if (!c || (c.status === 'no_credits' && !isAdmin)) return null
+  return (
+    <Card className="p-5">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h2 className="text-base font-semibold">AWS credits</h2>
+          <p className="text-xs text-muted">
+            {c.burnDays ? `Average over the last ${c.burnDays} days of bills` : 'No bills yet'}
+            {c.dataThrough && `, to ${dateLabel(c.dataThrough)}`}
+          </p>
+        </div>
+        {isAdmin && !editing && (
+          <Button variant="secondary" onClick={() => setEditing(true)}>
+            {c.balance ? 'Update the balance' : 'Enter the balance'}
+          </Button>
+        )}
+      </div>
+      {c.status === 'no_credits' && !editing && (
+        <p className="text-sm text-secondary">No credits applied to your bills recently. If you have credits, enter the balance.</p>
+      )}
+      {c.status === 'no_balance' && (
+        <Alert tone="info">
+          Credits are being applied, but AWS does not report the balance left. {isAdmin ? 'Enter it' : 'An admin can enter it'} from
+          the AWS Billing console (Credits page) to see when they run out.
+        </Alert>
+      )}
+      {c.status === 'ending_soon' && c.depletionDate && (
+        <Alert tone="warning">
+          Credits {c.expiresFirst ? 'expire' : 'run out'} around {dateLabel(c.depletionDate)}, in about {c.daysLeft} days. After that
+          the bill is about {money(c.spendBeforeCreditsUsdMonth)} a month.
+        </Alert>
+      )}
+      {c.status === 'used_up' && (
+        <Alert tone="warning">
+          The entered balance is used up: the bill is now about {money(c.spendBeforeCreditsUsdMonth)} a month. Update the balance
+          if you have more credits.
+        </Alert>
+      )}
+      {c.status !== 'no_credits' && <RunwayFigures c={c} money={money} />}
+      {c.daily.some((d) => d.amount > 0) && (
+        <div className="mt-4">
+          <p className="mb-1 text-xs text-muted">Credits applied per day</p>
+          <DailySpendChart points={c.daily} currency="USD" label="Credits applied per day" />
+        </div>
+      )}
+      {c.balance && (
+        <p className="mt-3 text-xs text-muted">
+          Balance {money(c.balance.amountUsd)} on {dateLabel(c.balance.asOf)}
+          {c.balance.expiresOn && `, expiring ${dateLabel(c.balance.expiresOn)}`}
+          {c.balance.enteredBy && `, entered by ${c.balance.enteredBy}`}
+          {c.balance.note && ` (${c.balance.note})`}. Credits applied since: {money(c.usedSinceBalanceUsd ?? 0)}.
+        </p>
+      )}
+      {editing && <BalanceForm tenantId={tenantId} current={c} onDone={() => setEditing(false)} />}
+    </Card>
+  )
+}
+
+function RunwayFigures({ c, money }: { c: CreditsRunway; money: (usd: number) => string }) {
+  const figures: [string, string][] = [
+    ['Applied this month', money(c.appliedMonthUsd)],
+    ['Average a day', money(c.burnUsdDay)],
+    ['Left', c.remainingUsd === null ? '—' : money(c.remainingUsd)],
+    [
+      c.expiresFirst ? 'Expire on' : 'Run out around',
+      c.depletionDate ? dateLabel(c.depletionDate) : c.remainingUsd ? 'Not at this rate' : '—',
+    ],
+    ['Bill without credits', `${money(c.spendBeforeCreditsUsdMonth)} a month`],
+  ]
+  return (
+    <dl className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {figures.map(([label, value]) => (
+        <div key={label} className="rounded-sm border border-border p-3">
+          <dt className="text-xs text-muted">{label}</dt>
+          <dd className="text-sm font-semibold">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
+function BalanceForm({ tenantId, current, onDone }: { tenantId: string; current: CreditsRunway; onDone: () => void }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const [today] = useState(() => new Date().toISOString().slice(0, 10))
+  const [amount, setAmount] = useState(current.balance ? String(current.remainingUsd ?? '') : '')
+  const [asOf, setAsOf] = useState(today)
+  const [expiresOn, setExpiresOn] = useState(current.balance?.expiresOn ?? '')
+  const [note, setNote] = useState('')
+  const save = useMutation({
+    mutationFn: () =>
+      api.setCreditBalance(tenantId, { amountUsd: Number(amount), asOf, expiresOn: expiresOn || null, note: note || null }),
+    onSuccess: (updated) => {
+      qc.setQueryData(['credits', tenantId], updated)
+      onDone()
+    },
+  })
+  const submit = (e: FormEvent) => {
+    e.preventDefault()
+    save.mutate()
+  }
+  return (
+    <form onSubmit={submit} className="mt-4 flex flex-col gap-3 border-t border-border pt-4">
+      <p className="text-sm text-secondary">
+        In the AWS Billing console, open Credits and copy the remaining amount (all credits together, in USD).
+      </p>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Field label="Remaining balance (USD)" type="number" min={0} step="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <Field label="As shown on" type="date" max={today} required value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+        <Field label="Expires on (optional)" type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />
+        <Field label="Note (optional)" maxLength={200} value={note} placeholder="AWS Activate" onChange={(e) => setNote(e.target.value)} />
+      </div>
+      {save.error && <Alert tone="error">{save.error.message}</Alert>}
+      <div className="flex gap-2">
+        <Button type="submit" disabled={save.isPending || amount === ''}>
+          {save.isPending ? 'Saving…' : 'Save balance'}
+        </Button>
+        <Button variant="ghost" onClick={onDone}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   )
 }

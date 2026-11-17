@@ -137,6 +137,11 @@ export function Overview() {
     queryFn: () => api.recommendationSummary(tenantId as string),
     enabled: tenantId !== null,
   })
+  const credits = useQuery({
+    queryKey: ['credits', tenantId],
+    queryFn: () => api.getCredits(tenantId as string),
+    enabled: tenantId !== null,
+  })
   const waiting = summary.data?.status === 'waiting'
 
   return (
@@ -165,6 +170,16 @@ export function Overview() {
       {summary.data?.reconciliation?.status === 'mismatch' && (
         <Alert tone="warning">
           {reconciliationMessage(summary.data.reconciliation.month, summary.data.reconciliation.differencePct)}
+        </Alert>
+      )}
+      {credits.data && (credits.data.status === 'ending_soon' || credits.data.status === 'used_up') && (
+        <Alert tone="warning">
+          {credits.data.status === 'used_up'
+            ? 'Your AWS credits are used up. '
+            : `Your AWS credits ${credits.data.expiresFirst ? 'expire' : 'run out'} in about ${credits.data.daysLeft} days. `}
+          <Link to="/costs" className="font-medium underline">
+            See the credits runway
+          </Link>
         </Alert>
       )}
       {summary.data?.status === 'provisional' && (

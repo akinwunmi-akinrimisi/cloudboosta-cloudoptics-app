@@ -7,6 +7,8 @@ import type {
   Anomaly,
   AnomalyDetail,
   AnomalyStatus,
+  CreditBalanceInput,
+  CreditsRunway,
   DigestPreview,
   MonthlyReport,
   ReportList,
@@ -151,6 +153,14 @@ export class HttpApi implements Api {
 
   digestPreview(tenantId: string): Promise<DigestPreview> {
     return this.request('GET', `/v1/tenants/${tenantId}/digest/preview`)
+  }
+
+  getCredits(tenantId: string): Promise<CreditsRunway> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/credits`)
+  }
+
+  setCreditBalance(tenantId: string, body: CreditBalanceInput): Promise<CreditsRunway> {
+    return this.request('PUT', `/v1/tenants/${tenantId}/costs/credits/balance`, body)
   }
 
   listReports(tenantId: string): Promise<ReportList> {
