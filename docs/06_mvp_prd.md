@@ -48,7 +48,7 @@ The MVP is delivered in two increments (detailed sprint plan in Phase 11).
 | Increment | Goal | Contents | Used by |
 |---|---|---|---|
 | **Increment 1 — "See it" (first build increment)** | Connect AWS and show trustworthy cost data plus the first, lowest-risk recommendations | Auth + tenancy + RBAC; AWS connector (CloudFormation, CUR 2.0, inventory); ingestion & normalisation; dual-currency cost overview; FX rates; recommendations **R1–R3** (unattached EBS/snapshots, idle IPs/LBs, gp2→gp3) with guided fixes; CSV export; audit log | First 3–5 design partners (internal alpha) |
-| **Increment 2 — "Cut it safely"** | Complete the MVP | Recommendations **R4–R8** (idle EC2/RDS, rightsizing, previous-gen, non-prod schedule, Savings Plan advisory) plus **R6b** (Extended Support charges) and **R10** (idle NAT gateways), with risk scoring; workflow (assign, status, Slack); verification of realised savings; budgets; anomaly detection; credits runway; executive report; in-product learning; product analytics | All 8–12 design partners (beta) |
+| **Increment 2 — "Cut it safely"** | Complete the MVP | Recommendations **R4–R8** (idle EC2/RDS, rightsizing, previous-gen, non-prod schedule, Savings Plan advisory) plus **R6b** (Extended Support charges) and **R10** (idle NAT gateways), with risk scoring; workflow (assign, status); verification of realised savings; budgets; anomaly detection; credits runway; executive report; in-product learning; product analytics | All 8–12 design partners (beta) |
 
 ### 2.2 In scope (MVP)
 - Everything in Phase 5 §A4 (F1–F10), as specified in Section 4 below.
@@ -171,7 +171,7 @@ Format: *As a [role], I want [capability], so that [benefit].* Acceptance criter
 **US-5.1 Assign and track** (M)
 *As a FinOps lead, I want to assign a recommendation to an engineer with a due date, so that savings get implemented.*
 - Assign to any tenant user; optional due date and comment. Status: New → Assigned → In progress → Done (user-declared) → **Verified** / Not verified.
-- The assignee receives email and Slack (if connected) notifications.
+- The assignee receives an email notification.
 - All changes are recorded in the item's activity timeline and the audit log.
 
 **US-5.2 Automatic verification** (M)
@@ -184,7 +184,7 @@ Format: *As a [role], I want [capability], so that [benefit].* Acceptance criter
 
 **US-6.1 Create budget** (M)
 *As a finance manager, I want to set monthly budgets for the tenant, an account or a tag value, in USD or local currency, so that we control spend.*
-- Budget fields: name, scope (tenant / account(s) / tag key=value), amount, currency, thresholds (default 50/80/100% of actual, 100% of forecast), recipients (users, email addresses, Slack channel).
+- Budget fields: name, scope (tenant / account(s) / tag key=value), amount, currency, thresholds (default 50/80/100% of actual, 100% of forecast), recipients (users, email addresses).
 - Local-currency budgets are evaluated using the current rate; the UI shows both currencies.
 
 **US-6.2 Budget alert** (M)
@@ -197,7 +197,7 @@ Format: *As a [role], I want [capability], so that [benefit].* Acceptance criter
 - Minimum impact threshold (default: USD 50/day and 30% above baseline; configurable per tenant) to avoid noise.
 
 **US-6.4 Weekly digest** (S)
-- Weekly email/Slack digest: spend vs last week, new top recommendations, savings realised, budget status, credits warnings.
+- Weekly email digest: spend vs last week, new top recommendations, savings realised, budget status, credits warnings.
 
 ### Epic E7 — Reporting & export
 
@@ -326,7 +326,7 @@ Thresholds in FR-ANA-01 to FR-ANA-14 were revised on 22 Oct 2026 from the compet
 |---|---|---|
 | FR-UI-01 | Primary navigation: Overview · Costs · Recommendations · Budgets & Alerts · Reports · Settings (Connections, Users, Notifications, Preferences, Audit log) | M |
 | FR-UI-02 | Global controls: tenant switcher (for multi-tenant users), account filter, date range, currency toggle (USD / Local / Both) persisted per user | M |
-| FR-UI-03 | Onboarding wizard: currency & country → connect AWS → (optional) Org StackSet → invite team → Slack connect; with progress and resumable state | M |
+| FR-UI-03 | Onboarding wizard: currency & country → connect AWS → (optional) Org StackSet → invite team; with progress and resumable state | M |
 | FR-UI-04 | Empty, loading and error states for every view; "data as of" timestamp on every data view | M |
 | FR-UI-05 | Responsive web (desktop-first; usable at ≥ 375 px width for Overview, Recommendation detail and Budgets) | M |
 | FR-UI-06 | Accessibility: WCAG 2.2 AA for colour contrast, keyboard navigation and screen-reader labels; charts with table alternatives | M |
@@ -339,10 +339,10 @@ Thresholds in FR-ANA-01 to FR-ANA-14 were revised on 22 Oct 2026 from the compet
 
 | ID | Requirement | Pri |
 |---|---|---|
-| FR-NOT-01 | Channels: email (all), Slack (via a Slack app, OAuth install per tenant; post to chosen channels and DMs by email match) | M |
+| FR-NOT-01 | Channels: email (all notifications). No Slack integration ([ADR-014](adr/014-no-slack-integration.md), 18 Nov 2026) | M |
 | FR-NOT-02 | Event types: budget threshold, anomaly, connection failure/stale data, recommendation assigned/status change, weekly digest, monthly report ready, credits depletion warning | M |
 | FR-NOT-03 | User notification preferences per event type and channel; Admin-level defaults | M |
-| FR-NOT-04 | De-duplication and rate limiting: max one alert per budget threshold per period; anomaly alerts grouped per tenant per day; max 20 Slack messages per tenant per hour (excess batched) | M |
+| FR-NOT-04 | De-duplication and rate limiting: max one alert per budget threshold per period; anomaly alerts grouped per tenant per day | M |
 | FR-NOT-05 | Every alert has a deep link to the relevant filtered view | M |
 | FR-NOT-06 | Email deliverability: SPF/DKIM/DMARC on the sending domain; unsubscribe for non-critical emails | M |
 
@@ -357,7 +357,7 @@ Thresholds in FR-ANA-01 to FR-ANA-14 were revised on 22 Oct 2026 from the compet
 | FR-SEC-05 | Authentication: email/password (min 12 chars, breached-password check), Google OIDC, TOTP MFA; session timeout 12h idle, 7d absolute; tenant-enforced MFA | M |
 | FR-SEC-06 | **Audit log:** append-only; records actor, tenant, action, target, timestamp, IP, user agent, before/after for settings; exportable; retained ≥ 12 months | M |
 | FR-SEC-07 | Internal staff access to tenant data only via a break-glass tool with reason, time-limited and logged in the tenant-visible audit log | M |
-| FR-SEC-08 | Secrets (our AWS principal, Slack tokens, API keys) stored only in the secrets manager; never logged | M |
+| FR-SEC-08 | Secrets (our AWS principal, API keys) stored only in the secrets manager; never logged | M |
 
 ---
 
@@ -415,7 +415,7 @@ Thresholds in FR-ANA-01 to FR-ANA-14 were revised on 22 Oct 2026 from the compet
 | ID | Integration | MVP scope | Pri |
 |---|---|---|---|
 | INT-01 | **AWS** (STS, BCM Data Exports/CUR 2.0, S3, Cost Explorer, Cost Optimization Hub, Compute Optimizer, CloudWatch, EC2/EBS/ELB/RDS/Lambda/S3 describe APIs, Organizations, Savings Plans, Price List) | As in FR-CON/FR-ANA | M |
-| INT-02 | **Slack** | OAuth app install per tenant; post alerts/digests to channels; DMs to assignees (email match); interactive buttons (Acknowledge anomaly, Mark in progress) | M |
+| INT-02 | ~~**Slack**~~ | Removed from scope on 18 Nov 2026 ([ADR-014](adr/014-no-slack-integration.md)); email carries every notification | — |
 | INT-03 | **Email** (transactional provider) | Alerts, invites, reports, digests; bounce handling | M |
 | INT-04 | **Google OIDC** | Login with Google | M |
 | INT-05 | **FX rate provider(s)** | Daily rates + history, with fallback | M |
@@ -483,7 +483,7 @@ Dashboards (internal) track every metric in Section 1.2.
 | AS3 | Typical design-partner scale: ≤ 20 accounts, ≤ 5,000 resources, ≤ 5M CUR rows/month |
 | AS4 | English-only UI is acceptable for the MVP (French/Arabic later for North/West/Francophone Africa) |
 | AS5 | Customer-side AWS charges from our access remain < USD 5/month per typical tenant with the polling plan in FR-CON-07 (to be measured in Increment 1) |
-| AS6 | Slack is the dominant chat tool among the ICP; Teams follows in v1 |
+| AS6 | Slack is the dominant chat tool among the ICP; Teams follows in v1. *Not acted on: chat integrations are out of scope ([ADR-014](adr/014-no-slack-integration.md))* |
 | AS7 | Manual invoicing is acceptable for design-partner conversion; self-serve local-currency billing ships at v1 |
 | AS8 | Engineering team and timeline per Phase 11 (target: ~12 weeks for Increments 1–2) |
 

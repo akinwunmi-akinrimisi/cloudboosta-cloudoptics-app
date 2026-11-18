@@ -91,7 +91,7 @@ Story IDs (`CC-x`, `IN-x`, …) are backlog keys; PRD references in brackets. Es
 | FE-8 | Recommendation detail (evidence charts, risk panel, guided fix tabs, workflow) + Commitments page | L |
 | FE-9 | Budgets & alert settings | M |
 | FE-10 | Reports (monthly view, forecast & FX, exports) + print route for PDF | M |
-| FE-11 | Settings (connections, users, notifications/Slack, preferences, security/audit, workspace) | L |
+| FE-11 | Settings (connections, users, notifications, preferences, security/audit, workspace) | L |
 | FE-12 | Accessibility pass (WCAG 2.2 AA), performance budgets, mobile layouts | M |
 
 ### Epic E-ADM: Auth, Multi-Tenancy, Admin
@@ -104,7 +104,7 @@ Story IDs (`CC-x`, `IN-x`, …) are backlog keys; PRD references in brackets. Es
 | ADM-5 | Tenant settings model + validation + history | S |
 | ADM-6 | Staff break-glass tool (internal) | M |
 | ADM-7 | Data deletion flows (connection, tenant) with verification | M |
-| ADM-8 | Notifications service: email (Postmark), Slack app (OAuth, channels, DMs, interactivity), de-dup, preferences, digests | L |
+| ADM-8 | Notifications service: email (Postmark), de-dup, preferences, digests | L |
 | ADM-9 | Monthly report generation (renderer worker, PDF, email) | M |
 | ADM-10 | **Platform admin console: exchange rates.** Cloudoptics staff set the rate per currency by hand, with an effective date and reason. Includes rate history, a reference feed shown alongside, a staleness alert and audit (PRD FR-FX-06/07) | M |
 
@@ -198,7 +198,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - Wrong numbers → reconciliation + an internal "data accuracy" review per partner before sharing.
 
 ### Sprint 4 (Weeks 8–9) — "Cut it safely" core
-- **Status (17 Nov 2026): complete** (#34, #35, then #40–#42): CloudWatch metrics puller, R4 idle EC2/RDS, R5 rightsizing (with Compute Optimizer), R6 older and x86 types, assignment, comments, bulk actions, rule settings, console-first detail page with usage charts. The Slack app moved to Sprint 5.
+- **Status (17 Nov 2026): complete** (#34, #35, then #40–#42): CloudWatch metrics puller, R4 idle EC2/RDS, R5 rightsizing (with Compute Optimizer), R6 older and x86 types, assignment, comments, bulk actions, rule settings, console-first detail page with usage charts. The Slack app was later removed from scope (ADR-014).
 - **Goals:** usage-based recommendations with risk scoring, evidence and workflow.
 - **Deliverables:**
   - Metrics puller (CC-11); rate limiting + API cost budget (CC-13).
@@ -206,14 +206,13 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - Lifecycle + events + assignment (AN-16 partial); tenant rule settings (AN-17).
   - Recommendations endpoints complete (API-5).
   - FE: recommendation detail with evidence charts and risk panel (FE-8), list filters + bulk (FE-7).
-  - Slack app (ADM-8 partial).
 - **Dependencies:** CloudWatch history in test accounts (14–30 days); FinOps SME review of thresholds.
 - **Risks & mitigations:**
   - Rightsizing accuracy → conservative thresholds, engine feature flags, a golden dataset.
   - CloudWatch cost → candidate-only pulls; budget enforcement.
 
 ### Sprint 5 (Weeks 10–11) — Plan it: budgets, anomalies, FX, credits
-- **Status (17 Nov 2026): in progress.** Merged: budgets and budget alerts (#46), anomaly detection and alerts (#47), notification preferences and weekly digest (#48); credits runway (#50); the Sprint 6 monthly executive report also landed early (#49). Not started: R7 scheduling, R8 Savings Plans advice, R6b Extended Support, R10 idle NAT, FX scenario, what-changed, Commitments page, verification of realised savings, Slack app.
+- **Status (17 Nov 2026): in progress.** Merged: budgets and budget alerts (#46), anomaly detection and alerts (#47), notification preferences and weekly digest (#48); credits runway (#50); the Sprint 6 monthly executive report also landed early (#49). Not started: R7 scheduling, R8 Savings Plans advice, R6b Extended Support, R10 idle NAT, FX scenario, what-changed, Commitments page, verification of realised savings. The Slack app was removed from scope on 18 Nov 2026 (ADR-014).
 - **Goals:** finance persona value and proactive alerts.
 - **Deliverables:**
   - R7 scheduling, R8 SP advisory (AN-9, AN-10); R6b Extended Support and R10 idle NAT (AN-18, AN-19).
@@ -221,7 +220,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - Budgets & alerts (API-6, FE-9); notification preferences + de-dup + weekly digest (ADM-8).
   - Overview complete (FE-5); Commitments page (FE-8); Anomalies + Credits views (FE-6).
   - Verification service + realised savings (AN-16).
-- **Dependencies:** FX rate basis decision implemented; Slack app approved for distribution (or unlisted install).
+- **Dependencies:** FX rate basis decision implemented.
 - **Risks & mitigations:**
   - Alert noise → minimum thresholds + design-partner tuning.
   - FX data gaps for some currencies → secondary provider + carry-forward flag.
