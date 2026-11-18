@@ -383,3 +383,32 @@ async def test_a_reload_left_running_is_shown_as_failed(
 def test_parse_month() -> None:
     assert reload.parse_month("2026-10") == date(2026, 10, 1)
     assert reload.next_allowed(None) is None
+
+
+def test_overall_status() -> None:
+    oct_, nov = date(2026, 10, 1), date(2026, 11, 1)
+    done = reload.PeriodResult(oct_, "reloaded")
+    failed = reload.PeriodResult(nov, "failed", detail="x")
+    gone = reload.PeriodResult(nov, "not_in_bucket")
+    status = reload._status
+    assert status(reload.ReloadResult("succeeded", periods=[done, failed]), None) == "partial"
+    assert status(reload.ReloadResult("succeeded", periods=[failed]), None) == "failed"
+    # A month gone from the bucket counts only when that month was asked for.
+    assert status(reload.ReloadResult("succeeded", periods=[done, gone]), None) == "succeeded"
+    assert status(reload.ReloadResult("succeeded", periods=[done, gone]), nov) == "partial"
+    assert status(reload.ReloadResult("succeeded", errors=["bad manifest"]), None) == "failed"
+    assert status(reload.ReloadResult("succeeded"), None) == "failed"  # nothing in the bucket
+
+
+async def test_a_connection_that_stopped_working_is_not_reloaded(
+    client: AsyncClient, login, owner_sql
+) -> None:
+    tenant, connection, headers = await connected(client, login, owner_sql)
+    owner_sql("UPDATE cloud_connection SET status = 'failed' WHERE id = %s", connection)
+    result = await reload.reload_connection(uuid.UUID(tenant), uuid.UUID(connection))
+    assert result.status == "skipped"
+    status = (
+        await client.get(f"/v1/tenants/{tenant}/connections/{connection}/reload", headers=headers)
+    ).json()
+    assert status["status"] == "failed"
+    assert status["error"] == "The connection is not working, or has no export. Check it first."

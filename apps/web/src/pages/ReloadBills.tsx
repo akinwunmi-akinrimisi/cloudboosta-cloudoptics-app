@@ -48,6 +48,9 @@ export function ReloadBills({ connection: c, tenantId }: { connection: Connectio
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [period, setPeriod] = useState('')
+  const refreshCosts = () => {
+    for (const key of REFRESH_AFTER) void qc.invalidateQueries({ queryKey: [key, tenantId] })
+  }
   const status = useQuery({
     queryKey: ['reload', tenantId, c.id],
     queryFn: () => api.reloadStatus(tenantId, c.id),
@@ -56,7 +59,11 @@ export function ReloadBills({ connection: c, tenantId }: { connection: Connectio
   })
   const reload = useMutation({
     mutationFn: () => api.reloadBills(tenantId, c.id, period || null),
-    onSuccess: (s) => qc.setQueryData(['reload', tenantId, c.id], s),
+    onSuccess: (s) => {
+      qc.setQueryData(['reload', tenantId, c.id], s)
+      // Inline jobs (local, tests) answer with the result straight away.
+      if (!running(s)) refreshCosts()
+    },
   })
   const s = status.data
   const busy = running(s)
