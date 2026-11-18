@@ -10,7 +10,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from cloudoptics.ingestion.aggregate import DailyAggregator, DailyCost
+from cloudoptics.ingestion.aggregate import DailyAggregator, DailyCost, ResourceDailyCost
 from cloudoptics.ingestion.focus import (
     MAPPING_VERSION,
     OPTIONAL_COLUMNS,
@@ -37,6 +37,7 @@ class LoadedExport:
     files: list[LoadedFile]
     checks: list[Check]
     rows: list[DailyCost] = field(default_factory=list)
+    resource_rows: list[ResourceDailyCost] = field(default_factory=list)
     tag_sets: dict[bytes, dict[str, str]] = field(default_factory=dict)
     accounts: dict[str, str | None] = field(default_factory=dict)
     mapping_version: str = MAPPING_VERSION
@@ -103,6 +104,7 @@ def load_export(
     loaded = LoadedExport(manifest, files, checks)
     if loaded.ok:
         loaded.rows = aggregator.finish()
+        loaded.resource_rows = aggregator.resource_rows()
         loaded.tag_sets = aggregator.tag_sets
         loaded.accounts = aggregator.accounts
     return loaded

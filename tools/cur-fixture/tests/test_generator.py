@@ -58,6 +58,16 @@ def test_idle_nat_has_hours_but_no_bytes() -> None:
     assert "AFS1-NatGateway-Bytes" in set(busy["line_item_usage_type"].to_pylist())
 
 
+def test_extended_support_lines_for_rds_and_eks() -> None:
+    t = generate(SEPT).table
+    lines = t.filter(pc.match_substring_regex(t["line_item_usage_type"], "(?i)extendedsupport"))
+    assert set(lines["line_item_product_code"].to_pylist()) == {"AmazonRDS", "AmazonEKS"}
+    assert set(lines["line_item_resource_id"].to_pylist()) == {
+        "arn:aws:rds:af-south-1:222222222222:db:ledger-pg11",
+        "arn:aws:eks:af-south-1:222222222222:cluster/payments",
+    }
+
+
 def test_covers_af_south_1_local_zone_and_eu() -> None:
     t = generate(SEPT).table
     assert {"af-south-1", "eu-west-1"} <= set(t["product_region_code"].to_pylist())

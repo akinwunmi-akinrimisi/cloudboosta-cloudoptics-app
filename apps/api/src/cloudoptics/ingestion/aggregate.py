@@ -15,6 +15,7 @@ from decimal import Decimal
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 KEY_COLUMNS = (
     "ChargeDate",
@@ -30,6 +31,18 @@ KEY_COLUMNS = (
 )
 SUM_COLUMNS = ("BilledCost", "EffectiveCost", "x_NetCost", "ListCost", "ConsumedQuantity")
 _KIND = KEY_COLUMNS.index("x_CommitmentKind")
+
+# Usage types kept per resource (PRD FR-ANA-06b, FR-ANA-14). EKS writes "extendedSupport".
+RESOURCE_USAGE_TYPES = r"NatGateway-(Hours|Bytes)$|ExtendedSupport"
+RESOURCE_KEY_COLUMNS = (
+    "ChargeDate",
+    "SubAccountId",
+    "x_ServiceCode",
+    "RegionId",
+    "x_UsageType",
+    "ResourceId",
+    "_tag_hash",
+)
 
 
 @dataclass(frozen=True)
@@ -48,6 +61,19 @@ class DailyCost:
     net_cost: Decimal
     list_cost: Decimal | None
     usage_quantity: Decimal | None
+
+
+@dataclass(frozen=True)
+class ResourceDailyCost:
+    usage_date: date
+    account_id: str
+    service_code: str
+    region_id: str | None
+    usage_type: str
+    resource_id: str
+    tag_set_hash: bytes | None
+    effective_cost: Decimal
+    usage_quantity: Decimal
 
 
 @dataclass
@@ -86,6 +112,7 @@ class DailyAggregator:
     tag_sets: dict[bytes, dict[str, str]] = field(default_factory=dict)
     accounts: dict[str, str | None] = field(default_factory=dict)
     _sums: dict[tuple[Any, ...], _Sums] = field(default_factory=dict)
+    _resource_sums: dict[tuple[Any, ...], list[float]] = field(default_factory=dict)
 
     def update(self, focus: pa.Table) -> None:
         hashes: list[bytes | None] = []
@@ -124,6 +151,49 @@ class DailyAggregator:
                 self._sums[key].add(sums)
             else:
                 self._sums[key] = sums
+        self._update_resources(table)
+
+    def _update_resources(self, table: pa.Table) -> None:
+        no: Any = pa.scalar(False)
+        usage: Any = pc.match_substring_regex(
+            table["x_UsageType"], RESOURCE_USAGE_TYPES, ignore_case=True
+        )
+        named: Any = pc.not_equal(table["ResourceId"], pa.scalar(""))
+        wanted = pc.and_(
+            pc.and_(pc.fill_null(usage, no), pc.fill_null(named, no)),
+            pc.equal(table["ChargeCategory"], pa.scalar("Usage")),
+        )
+        rows = table.filter(wanted)
+        if rows.num_rows == 0:
+            return
+        grouped = rows.group_by(list(RESOURCE_KEY_COLUMNS), use_threads=False).aggregate(
+            [("EffectiveCost", "sum"), ("ConsumedQuantity", "sum")]
+        )
+        columns = [grouped[c].to_pylist() for c in RESOURCE_KEY_COLUMNS]
+        cost = grouped["EffectiveCost_sum"].to_pylist()
+        quantity = grouped["ConsumedQuantity_sum"].to_pylist()
+        for i, key in enumerate(zip(*columns, strict=True)):
+            sums = self._resource_sums.setdefault(key, [0.0, 0.0])
+            sums[0] += cost[i] or 0.0
+            sums[1] += quantity[i] or 0.0
+
+    def resource_rows(self) -> list[ResourceDailyCost]:
+        rows = [
+            ResourceDailyCost(
+                usage_date=key[0],
+                account_id=key[1],
+                service_code=key[2],
+                region_id=key[3],
+                usage_type=key[4],
+                resource_id=key[5],
+                tag_set_hash=key[6],
+                effective_cost=_money(cost),
+                usage_quantity=_money(quantity),
+            )
+            for key, (cost, quantity) in self._resource_sums.items()
+        ]
+        rows.sort(key=lambda r: (r.usage_date, r.account_id, r.resource_id, r.usage_type))
+        return rows
 
     def _amortise_commitment_fees(self) -> None:
         """Take each day's used commitment off that day's recurring fees.

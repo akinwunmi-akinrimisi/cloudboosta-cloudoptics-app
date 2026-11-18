@@ -1,4 +1,5 @@
-"""Analysis run for one tenant: rules over the inventory, scored and stored (docs/09 §3.3).
+"""Analysis run for one tenant: rules over the inventory and the bill, scored and stored
+(docs/09 §3.3).
 
 Scoring follows PRD FR-REC-03/04: risk points add up to a score (Low < 35, Medium 35-65,
 High > 65); priority = monthly savings x confidence x risk x effort weights. Several
@@ -24,6 +25,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cloudoptics.analysis.billing import BILLING_RULES, load_billing
 from cloudoptics.analysis.compute import COMPUTE_RULES
 from cloudoptics.analysis.pricing import load_price_book
 from cloudoptics.analysis.rules import (
@@ -109,6 +111,9 @@ async def _load(session: AsyncSession) -> list[Resource]:
 def build_context(resources: list[Resource], ctx: Context) -> Context:
     for r in resources:
         key = (r.account_id, r.region_id)
+        ctx.inventory[(r.account_id, r.region_id, r.resource_type, r.resource_id)] = r
+        if r.arn:
+            ctx.inventory[(r.account_id, r.region_id, r.resource_type, r.arn)] = r
         if r.resource_type == "ebs_volume":
             ctx.live_volumes.add((r.account_id, r.region_id, r.resource_id))
             ctx.volumes[(r.account_id, r.region_id, r.resource_id)] = r
@@ -130,7 +135,7 @@ def evaluate(ctx: Context, resources: list[Resource]) -> list[Scored]:
     considered = [r for r in resources if not ctx.settings.ignores(r.tags)]
     return [
         score(c)
-        for rule in [*RULES, *COMPUTE_RULES, *SCHEDULE_RULES]
+        for rule in [*RULES, *COMPUTE_RULES, *SCHEDULE_RULES, *BILLING_RULES]
         for c in rule(ctx, considered)
         if c.rule_id not in ctx.settings.disabled_rules
     ]
@@ -153,7 +158,7 @@ def _row(s: Scored, generation: int) -> dict[str, Any]:
         "rule_version": c.rule_version,
         "rule_config": json.dumps(c.rule_config),
         "generation": generation,
-        "resource_ref": c.resource.id,
+        "resource_ref": c.resource.id if c.resource.in_inventory else None,
         "account_id": c.resource.account_id,
         "region_id": c.resource.region_id,
         "resource_id": c.resource.resource_id,
@@ -264,6 +269,7 @@ async def run_analysis(
             now=now or datetime.now(UTC),
             prices=await load_price_book(session),
             usage=await load_usage(session),
+            billing=await load_billing(session),
             settings=settings or await load_rule_settings(session),
             time_zone=tz.scalar_one_or_none() or "UTC",
             # The scheduler stack R7 offers: a download, and quick-create once it is in S3.

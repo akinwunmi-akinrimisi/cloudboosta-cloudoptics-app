@@ -365,12 +365,13 @@ describe('Cloudoptics web app', () => {
 
   it('lists recommendations best first and walks one to done', async () => {
     const { user } = await connectedWorkspace('wanjiru@example.com')
-    expect(await screen.findByText('7 open recommendations')).toBeTruthy()
+    expect(await screen.findByText('9 open recommendations')).toBeTruthy()
 
     await user.click(screen.getByRole('link', { name: 'Recommendations' }))
-    const first = await screen.findByRole('link', { name: /Delete unattached gp2 volume build-cache/ })
+    const first = await screen.findByRole('link', { name: /Upgrade database reports-db off PostgreSQL 12/ })
     const links = screen.getAllByRole('link', { name: /\/mo$/ })
     expect(links[0]).toBe(first)
+    expect(links[1]).toBe(screen.getByRole('link', { name: /Delete unattached gp2 volume build-cache/ }))
 
     await user.selectOptions(screen.getByLabelText('Type'), 'R2_idle_eip')
     expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(1)
@@ -398,7 +399,7 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('link', { name: /All recommendations/ }))
     await screen.findByRole('link', { name: /Change volume db-data/ })
     expect(screen.queryByRole('link', { name: /build-cache/ })).toBeNull()
-    expect(screen.getByText('6')).toBeTruthy()
+    expect(screen.getByText('8')).toBeTruthy()
   })
 
   it('shows a non-production schedule: the tag to copy, the template and the database caveat', async () => {
@@ -434,6 +435,31 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findAllByRole('link', { name: /07:00-18:00 weekdays, London time/ })).toHaveLength(2)
   })
 
+  it('shows the billing-only findings: Extended Support and idle NAT gateways', async () => {
+    const { user } = await connectedWorkspace('thandi@example.com')
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    await user.click(await screen.findByRole('link', { name: /reports-db off PostgreSQL 12/ }))
+    expect(await screen.findByRole('heading', { name: 'How to fix it' })).toBeTruthy()
+    expect(screen.getByText(/Extended Support charge · account 111111111111/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Open in AWS console/ }).getAttribute('href')).toContain(
+      '#database:id=reports-db;is-cluster=false',
+    )
+    expect(screen.getByText('A version upgrade, so test it on a copy first')).toBeTruthy()
+    expect(screen.getByText('Reversible from the snapshot · needs a restart')).toBeTruthy()
+    expect(screen.getByText('30 of the last 30')).toBeTruthy()
+    expect(screen.getByText(/aws rds create-db-snapshot --db-instance-identifier reports-db/)).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: /All recommendations/ }))
+    await user.selectOptions(await screen.findByLabelText('Type'), 'R10_idle_nat')
+    expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(1)
+    await user.click(screen.getByRole('link', { name: /Delete idle NAT gateway nat-0d1e2f3a4b5c6d7e8/ }))
+    expect(await screen.findByText('Route tables may still send traffic to it')).toBeTruthy()
+    expect(screen.getByText(/we cannot see your route tables/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Open in AWS console/ }).getAttribute('href')).toContain(
+      '#NatGatewayDetails:natGatewayId=nat-0d1e2f3a4b5c6d7e8',
+    )
+  })
+
   it('assigns, comments, acts on several at once and changes the rules', async () => {
     const { user } = await connectedWorkspace('kofi@example.com')
     await user.click(screen.getByRole('link', { name: 'Recommendations' }))
@@ -456,7 +482,7 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('button', { name: 'Dismiss…' }))
     await user.type(screen.getByLabelText(/Why are you dismissing them/), 'Kept on purpose')
     await user.click(screen.getByRole('button', { name: 'Dismiss' }))
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(5))
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(7))
     expect(screen.getByRole('link', { name: /Release idle Elastic IP/ })).toBeTruthy()
 
     await user.click(screen.getByRole('link', { name: 'Settings' }))

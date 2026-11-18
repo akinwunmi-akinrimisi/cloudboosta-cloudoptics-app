@@ -250,6 +250,39 @@ async def _store(
                     for r in loaded.rows
                 ],
             )
+        await session.execute(
+            text(
+                "DELETE FROM cost_resource_daily WHERE connection_id = :c AND billing_period = :p"
+            ),
+            {"c": conn.id, "p": period},
+        )
+        if loaded.resource_rows:
+            await session.execute(
+                text(
+                    "INSERT INTO cost_resource_daily (tenant_id, connection_id, usage_date, "
+                    "billing_period, account_id, service_code, region_id, usage_type, "
+                    "resource_id, tag_set_hash, effective_cost_usd, usage_quantity) VALUES "
+                    "(:t, :c, :d, :p, :acct, :svc, :region, :usage_type, :resource, :tags, "
+                    ":effective, :qty)"
+                ),
+                [
+                    {
+                        "t": tenant_id,
+                        "c": conn.id,
+                        "d": r.usage_date,
+                        "p": period,
+                        "acct": r.account_id,
+                        "svc": r.service_code,
+                        "region": r.region_id,
+                        "usage_type": r.usage_type,
+                        "resource": r.resource_id,
+                        "tags": r.tag_set_hash,
+                        "effective": r.effective_cost,
+                        "qty": r.usage_quantity,
+                    }
+                    for r in loaded.resource_rows
+                ],
+            )
         if loaded.accounts:
             await session.execute(
                 text(
