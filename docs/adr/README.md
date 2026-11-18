@@ -17,3 +17,4 @@ Format: context, decision, consequences, alternatives. Source of truth for the d
 | [ADR-011](011-static-egress-ips-from-lon1.md) | Static egress IPs from LON1 | Open — Sprint 0 verification |
 | [ADR-012](012-github-first-hosting.md) | Host on GitHub first, move to DigitalOcean when proven | Decided 22 Oct 2026 |
 | [ADR-013](013-digitalocean-app-platform-staging.md) | Staging on DigitalOcean App Platform, Kubernetes later | Decided 22 Oct 2026 |
+| [ADR-014](014-no-slack-integration.md) | No Slack integration; email is the only notification channel | Decided 18 Nov 2026 |
