@@ -6,7 +6,7 @@ Description: >-
 
 Metadata:
   cloudoptics:
-    templateVersion: "1.0.2"
+    templateVersion: "1.0.3"
 
 Parameters:
   ExternalId:
@@ -62,6 +62,8 @@ Resources:
                   - ec2:DescribeImages
                   - ec2:DescribeAddresses
                   - ec2:DescribeNatGateways
+                  # Which route tables still send traffic to a NAT gateway (R10).
+                  - ec2:DescribeRouteTables
                   - ec2:DescribeReservedInstances
                   - ec2:DescribeTags
                   - rds:Describe*

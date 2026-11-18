@@ -312,3 +312,107 @@ async def test_from_the_bill_to_the_api(
     assert owner_sql("SELECT DISTINCT status FROM recommendation WHERE tenant_id = %s", tenant) == [
         ("expired",)
     ]
+
+
+def nat(config: dict[str, object], resource_id: str = "nat-0idle00000000001") -> rules.Resource:
+    """The idle fixture gateway as the inventory scanned it (account 333333333333)."""
+    return rules.Resource(
+        id=uuid.uuid4(), account_id="333333333333", region_id="af-south-1",
+        resource_type="nat_gateway", resource_id=resource_id, name=None, state="available",
+        config={"subnetId": "subnet-pub", "allocationIds": ["eipalloc-1"], **config},
+        tags={}, state_since=NOW, first_seen_at=NOW,
+    )  # fmt: skip
+
+
+def r10(resources: list[rules.Resource]) -> engine.Scored:
+    [s] = [s for s in run(FIXTURE_BILL, resources) if s.candidate.rule_id == "R10_idle_nat"]
+    return s
+
+
+CHECKED = {"routeTablesStatus": "checked", "routeTablesCheckedAt": (NOW - timedelta(days=1))}
+
+
+def test_idle_nat_gateway_with_routes_still_pointing_at_it() -> None:
+    tables = [
+        {"routeTableId": "rtb-private-a", "vpcId": "vpc-1", "subnetIds": ["subnet-a", "subnet-b"],
+         "destinations": ["0.0.0.0/0", "::/0"], "main": False},
+        {"routeTableId": "rtb-main", "vpcId": "vpc-1", "subnetIds": [],
+         "destinations": ["pl-0123"], "main": True},
+    ]  # fmt: skip
+    gateway = nat({**CHECKED, "routeTables": tables})
+    s = r10([gateway])
+    c = s.candidate
+    assert c.resource is gateway and engine._row(s, 1)["resource_ref"] == gateway.id
+    assert c.confidence_notes == ["routes_still_point_here"]
+    # Untagged 15 + routes still pointing at it 30: higher than unchecked (15).
+    assert {f["factor"] for f in c.risk_factors} == {"environment_unknown", "routes_point_here"}
+    assert (s.risk_score, s.risk_level) == (45, "medium")
+    assert {"kind": "routeTables", "value": 2} in c.evidence
+    routes = c.fix["routes"]
+    assert routes["natGatewayId"] == "nat-0idle00000000001"
+    first, main = routes["tables"]
+    assert first["consoleUrl"] == (
+        "https://af-south-1.console.aws.amazon.com/vpc/home?region=af-south-1"
+        "#RouteTableDetails:RouteTableId=rtb-private-a"
+    )
+    assert first["inspect"] == (
+        "aws ec2 describe-route-tables --route-table-ids rtb-private-a --region af-south-1"
+    )
+    assert first["replace"] == [
+        "aws ec2 replace-route --route-table-id rtb-private-a --destination-cidr-block "
+        "0.0.0.0/0 --nat-gateway-id '<other-nat-gateway-id>' --region af-south-1",
+        "aws ec2 replace-route --route-table-id rtb-private-a --destination-ipv6-cidr-block "
+        "::/0 --nat-gateway-id '<other-nat-gateway-id>' --region af-south-1",
+    ]
+    assert main["delete"] == [
+        "aws ec2 delete-route --route-table-id rtb-main --destination-prefix-list-id pl-0123 "
+        "--region af-south-1"
+    ]
+    # The CLI route inspects and replaces each route before deleting the gateway; nothing
+    # deletes a route for the customer.
+    steps = c.fix["steps"]
+    assert steps[1] == first["inspect"] and steps[2:4] == first["replace"]
+    assert steps[-1].startswith("aws ec2 delete-nat-gateway") and len(steps) == 7
+    assert not any("delete-route" in step for step in steps)
+    assert "never changes routes" in c.fix["notes"]
+    listed = c.console_steps[1]
+    assert "rtb-private-a (VPC vpc-1): 0.0.0.0/0, ::/0, for subnets subnet-a, subnet-b" in listed
+    assert "rtb-main (VPC vpc-1, main route table): pl-0123, for every subnet" in listed
+    # Older route data still lists the routes it found.
+    stale = {**CHECKED, "routeTablesCheckedAt": NOW - timedelta(days=30), "routeTables": tables}
+    assert r10([nat(stale)]).candidate.confidence_notes == ["routes_still_point_here"]
+
+
+def test_idle_nat_gateway_with_no_routes_to_it() -> None:
+    s = r10([nat({**CHECKED, "routeTables": []})])
+    c = s.candidate
+    assert c.confidence_notes == ["no_routes_to_it"]
+    assert [f["factor"] for f in c.risk_factors] == ["environment_unknown"]
+    assert (s.risk_score, s.risk_level) == (15, "low")
+    assert {"kind": "routeTables", "value": 0} in c.evidence
+    assert "routes" not in c.fix
+    assert not any("delete-route" in step for step in c.fix["steps"])
+    assert c.fix["rollback"] == [
+        "aws ec2 create-nat-gateway --subnet-id '<subnet-id>' --allocation-id "
+        "'<allocation-id>' --region af-south-1"
+    ]
+    assert c.console_steps[1].startswith("No route tables send traffic to it")
+    # Route data older than a week does not prove there are none: back to unchecked.
+    old = {**CHECKED, "routeTablesCheckedAt": NOW - timedelta(days=8), "routeTables": []}
+    stale = r10([nat(old)]).candidate
+    assert stale.confidence_notes == ["route_tables_not_checked"]
+    assert {"factor": "routes_unchecked", "points": 15} in stale.risk_factors
+
+
+def test_idle_nat_gateway_when_route_tables_could_not_be_read() -> None:
+    denied = r10([nat({"routeTablesStatus": "access_denied", "routeTables": None})]).candidate
+    assert denied.confidence_notes == ["route_tables_need_access_update"]
+    assert {"factor": "routes_unchecked", "points": 15} in denied.risk_factors
+    assert "delete-route" in denied.fix["steps"][2]  # today's steps: find, then remove
+    assert "Update CloudOptics access (Connections) to version 2.0.4" in denied.fix["notes"]
+    assert "routes" not in denied.fix
+    # Another error, or a gateway scanned before 2.0.4 (no route fields): as from the bill.
+    for config in ({"routeTablesStatus": "error", "routeTables": None}, {}):
+        c = r10([nat(config)]).candidate
+        assert c.confidence_notes == ["route_tables_not_checked"]
+        assert "2.0.4" not in c.fix["notes"]

@@ -3,7 +3,8 @@
 For every account of a connection, assume ``CloudopticsResourceReadOnly`` (the optional
 stage-2 stack, same External ID as the billing role) and list, in each enabled region, the
 resources the recommendation rules need: EC2 instances, EBS volumes and snapshots, Elastic
-IPs, load balancers (ALB/NLB/GWLB and Classic) and RDS DB instances. An account whose role
+IPs, NAT gateways (with the route tables that send traffic to each, from template 2.0.4), load
+balancers (ALB/NLB/GWLB and Classic) and RDS DB instances. An account whose role
 cannot be assumed is marked without resource access and skipped. Regions are scanned four at a
 time (docs/11b §1.4). Only a region that scanned completely can mark resources deleted.
 
@@ -238,6 +239,79 @@ def _addresses(ec2: Any) -> Iterator[ResourceRecord]:
         )
 
 
+def _routes_by_gateway(ec2: Any) -> dict[str, list[dict[str, Any]]]:
+    """NAT gateway ID -> the route tables with a route to it (template 2.0.4 and later).
+
+    Each entry has the route table and VPC IDs, the destinations (IPv4 or IPv6 CIDR, or a
+    prefix list ID) whose target is the gateway, the explicitly associated subnets and whether
+    it is the VPC's main route table (which also serves every subnet with no association).
+    """
+    found: dict[str, list[dict[str, Any]]] = {}
+    for table in _paged(ec2.describe_route_tables, "RouteTables", "NextToken", "NextToken"):
+        destinations: dict[str, list[str]] = {}
+        for route in table.get("Routes", []):
+            gateway = route.get("NatGatewayId")
+            destination = (
+                route.get("DestinationCidrBlock")
+                or route.get("DestinationIpv6CidrBlock")
+                or route.get("DestinationPrefixListId")
+            )
+            if gateway and destination:
+                destinations.setdefault(gateway, []).append(destination)
+        associations = table.get("Associations", [])
+        for gateway, cidrs in destinations.items():
+            found.setdefault(gateway, []).append(
+                {
+                    "routeTableId": table["RouteTableId"],
+                    "vpcId": table.get("VpcId"),
+                    "destinations": cidrs,
+                    "subnetIds": sorted(a["SubnetId"] for a in associations if a.get("SubnetId")),
+                    "main": any(a.get("Main") for a in associations),
+                }
+            )
+    return found
+
+
+def _nat_gateways(ec2: Any, region: str, warnings: list[str]) -> Iterator[ResourceRecord]:
+    gateways = list(_paged(ec2.describe_nat_gateways, "NatGateways", "NextToken", "NextToken"))
+    if not gateways:
+        return
+    checked_at = datetime.now(UTC).isoformat()
+    routes: dict[str, list[dict[str, Any]]] | None = None
+    status = "checked"
+    try:
+        routes = _routes_by_gateway(ec2)
+    except (ClientError, BotoCoreError) as exc:
+        # A connection still on template 2.0.3 cannot read route tables: keep the gateways,
+        # say so in the scan, and let R10 fall back to the bill alone.
+        code = _code(exc)
+        status = "access_denied" if code in NO_ACCESS else "error"
+        hint = " (update CloudOptics access)" if status == "access_denied" else ""
+        warnings.append(f"{region}: route tables {code}{hint}")
+    for g in gateways:
+        gateway_id = g["NatGatewayId"]
+        yield ResourceRecord(
+            "nat_gateway",
+            gateway_id,
+            g.get("State"),
+            {
+                "vpcId": g.get("VpcId"),
+                "subnetId": g.get("SubnetId"),
+                "connectivityType": g.get("ConnectivityType", "public"),
+                "createTime": g.get("CreateTime"),
+                "allocationIds": [
+                    a["AllocationId"]
+                    for a in g.get("NatGatewayAddresses", [])
+                    if "AllocationId" in a
+                ],
+                "routeTablesStatus": status,
+                "routeTablesCheckedAt": checked_at,
+                "routeTables": None if routes is None else routes.get(gateway_id, []),
+            },
+            _tags(g.get("Tags")),
+        )
+
+
 def _load_balancers(elbv2: Any, elb: Any) -> Iterator[ResourceRecord]:
     for lb in _paged(elbv2.describe_load_balancers, "LoadBalancers", "Marker", "NextMarker"):
         arn = lb["LoadBalancerArn"]
@@ -343,7 +417,9 @@ def compute_optimizer_findings(optimizer: Any) -> dict[str, dict[str, Any]]:
     return findings
 
 
-def scan_region(aws: Any, region: str) -> list[ResourceRecord]:
+def scan_region(aws: Any, region: str, warnings: list[str] | None = None) -> list[ResourceRecord]:
+    """Every resource of one region. A part that could not be read without making the region
+    incomplete (route tables) is added to ``warnings`` instead of failing the region."""
     ec2 = aws.client("ec2", region)
     records: list[ResourceRecord] = []
     findings = compute_optimizer_findings(aws.client("compute-optimizer", region))
@@ -353,6 +429,7 @@ def scan_region(aws: Any, region: str) -> list[ResourceRecord]:
         records.append(instance)
     for lister in (_volumes, _snapshots, _addresses):
         records.extend(lister(ec2))
+    records.extend(_nat_gateways(ec2, region, warnings if warnings is not None else []))
     records.extend(_load_balancers(aws.client("elbv2", region), aws.client("elb", region)))
     records.extend(_db_instances(aws.client("rds", region)))
     return records
@@ -367,20 +444,21 @@ def scan_account(aws: Any, account_id: str, progress: ScanProgress | None = None
     if progress:
         progress.account_regions(len(regions))
 
-    def _one(region: str) -> tuple[str, list[ResourceRecord] | None, str | None]:
+    def _one(region: str) -> tuple[str, list[ResourceRecord] | None, list[str]]:
+        warnings: list[str] = []
         try:
-            return region, scan_region(aws, region), None
+            return region, scan_region(aws, region, warnings), warnings
         except (ClientError, BotoCoreError, KeyError) as exc:
-            return region, None, f"{region}: {_code(exc)}"
+            return region, None, [f"{region}: {_code(exc)}"]
         finally:
             if progress:
                 progress.region_done()
 
     with ThreadPoolExecutor(max_workers=REGION_CONCURRENCY) as pool:
-        for region, records, error in pool.map(_one, sorted(regions)):
-            if records is None:
-                result.errors.append(error or region)
-            else:
+        for region, records, errors in pool.map(_one, sorted(regions)):
+            # A region with warnings still scanned completely: it can mark deletions.
+            result.errors.extend(errors)
+            if records is not None:
                 result.regions_ok.append(region)
                 result.resources[region] = records
     return result

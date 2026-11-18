@@ -370,6 +370,27 @@ def test_read_roles_leave_out_calls_that_can_return_secrets() -> None:
                         assert action != "ec2:Describe*", action
 
 
+def test_read_roles_can_list_route_tables_with_an_explicit_ec2_list() -> None:
+    """R10 checks which route tables still point at an idle NAT gateway (2.0.4). The
+    management account's role and the member role rolled out by the StackSet both get it."""
+    for name in ("cloudoptics-access.yaml", "resource-role.yaml"):
+        policies = load(name)["Resources"]["ResourceRole"]["Properties"]["Policies"]
+        actions = [
+            action
+            for policy in policies
+            for stmt in policy["PolicyDocument"]["Statement"]
+            for action in _actions(stmt)
+        ]
+        assert "ec2:DescribeRouteTables" in actions, name
+        ec2 = [a for a in actions if a.startswith("ec2:")]
+        assert ec2 and all("*" not in a for a in ec2), (name, ec2)
+    # The StackSet rolls out resource-role.yaml itself, so members get the same list.
+    stackset = load("resource-stackset.yaml")["Resources"]["ResourceStackSet"]["Properties"]
+    assert stackset["TemplateURL"] == {"Ref": "ResourceTemplateUrl"}
+    assert load("resource-role.yaml")["Metadata"]["cloudoptics"]["templateVersion"] == "1.0.3"
+    assert aws.ACCESS_TEMPLATE_VERSION == "2.0.4"
+
+
 def test_a_failed_member_cleanup_on_delete_is_reported(setup_step: Any) -> None:
     setup_step.clients["organizations"] = Fake(
         describe_organization={

@@ -8,8 +8,11 @@ Both read the per-resource CUR lines in ``cost_resource_daily`` rather than the 
   that charge over the last 30 days of bills. Medium risk: an engine or Kubernetes upgrade
   needs testing.
 - R10: a NAT gateway billed ``NatGateway-Hours`` and no ``NatGateway-Bytes`` over the last
-  30 days. Deleting it saves the hourly charge. The inventory has no route tables, so the
-  fix starts by finding the routes that point at it.
+  30 days. Deleting it saves the hourly charge. From template 2.0.4 the inventory records the
+  route tables that send traffic to each gateway: routes still pointing at it raise the risk
+  and the fix lists them (changing them is the customer's decision); none clears the
+  "routes unchecked" factor. Without route data (an older template, or not scanned) the fix
+  starts by finding the routes.
 
 The window is the 30 days up to the newest day on the bill (CUR arrives a day or two late),
 not up to today. Savings are at the tenant's own rate (``effective_rate``).
@@ -24,6 +27,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
+from urllib.parse import quote
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,6 +42,7 @@ from cloudoptics.analysis.rules import (
     _cli,
     _region_args,
     env_factor,
+    parse_time,
 )
 
 WINDOW_DAYS = 30
@@ -378,6 +383,101 @@ def extended_support(ctx: Context, resources: list[Resource]) -> Iterator[Candid
 # --- R10: idle NAT gateways (FR-ANA-14) ---------------------------------------------------
 
 
+# Route data older than this (scans stopped) is not trusted to say that no route points at it.
+ROUTES_FRESH_DAYS = 7
+
+
+@dataclass(frozen=True)
+class _Routes:
+    """What the inventory knows about the routes to one NAT gateway."""
+
+    # checked: ``tables`` is the full list (maybe empty); access_needed: the role cannot read
+    # route tables (a template before 2.0.4); unchecked: not scanned, stale or the call failed.
+    status: Literal["checked", "access_needed", "unchecked"]
+    tables: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _routes(ctx: Context, r: Resource) -> _Routes:
+    if not r.in_inventory:
+        return _Routes("unchecked")
+    status = r.config.get("routeTablesStatus")
+    if status == "access_denied":
+        return _Routes("access_needed")
+    tables = r.config.get("routeTables")
+    checked = parse_time(r.config.get("routeTablesCheckedAt"))
+    if status != "checked" or not isinstance(tables, list) or checked is None:
+        return _Routes("unchecked")
+    if tables:
+        return _Routes("checked", tables)  # routes found are worth showing even if older
+    if ctx.now - checked > timedelta(days=ROUTES_FRESH_DAYS):
+        return _Routes("unchecked")
+    return _Routes("checked")
+
+
+def route_table_url(region: str, route_table_id: str) -> str:
+    """The route table's page in the AWS console."""
+    q = quote(region, safe="")
+    return (
+        f"https://{q}.console.aws.amazon.com/vpc/home?region={q}"
+        f"#RouteTableDetails:RouteTableId={quote(route_table_id, safe='')}"
+    )
+
+
+def _destination_args(destination: str) -> list[str]:
+    if destination.startswith("pl-"):
+        return ["--destination-prefix-list-id", destination]
+    if ":" in destination:
+        return ["--destination-ipv6-cidr-block", destination]
+    return ["--destination-cidr-block", destination]
+
+
+def _route_fix(r: Resource, gateway: str, tables: list[dict[str, Any]]) -> dict[str, Any]:
+    """The routes that still send traffic to the gateway: where to look and how to move each
+    one. Changing a route is the customer's decision; Cloudoptics only advises it."""
+    region = _region_args(r)
+    out = []
+    for t in tables:
+        table_id = str(t.get("routeTableId"))
+        destinations = [str(d) for d in t.get("destinations") or []]
+        out.append(
+            {
+                "routeTableId": table_id,
+                "vpcId": t.get("vpcId"),
+                "destinations": destinations,
+                "subnetIds": [str(s) for s in t.get("subnetIds") or []],
+                "main": bool(t.get("main")),
+                "consoleUrl": route_table_url(r.region_id, table_id),
+                "inspect": _cli("aws", "ec2", "describe-route-tables", "--route-table-ids",
+                                table_id, *region),
+                "replace": [
+                    _cli("aws", "ec2", "replace-route", "--route-table-id", table_id,
+                         *_destination_args(d), "--nat-gateway-id", "<other-nat-gateway-id>",
+                         *region)
+                    for d in destinations
+                ],
+                "delete": [
+                    _cli("aws", "ec2", "delete-route", "--route-table-id", table_id,
+                         *_destination_args(d), *region)
+                    for d in destinations
+                ],
+            }
+        )  # fmt: skip
+    return {"natGatewayId": gateway, "tables": out}
+
+
+def _describe_table(t: dict[str, Any]) -> str:
+    destinations = ", ".join(str(d) for d in t.get("destinations") or [])
+    subnets = [str(s) for s in t.get("subnetIds") or []]
+    if subnets:
+        used_by = f"subnets {', '.join(subnets)}"
+    elif t.get("main"):
+        used_by = "every subnet without its own route table"
+    else:
+        used_by = "no subnet"
+    main = ", main route table" if t.get("main") else ""
+    return f"{t.get('routeTableId')} (VPC {t.get('vpcId')}{main}): {destinations}, for {used_by}"
+
+
 def idle_nat_gateways(ctx: Context, resources: list[Resource]) -> Iterator[Candidate]:
     found = _window(ctx)
     if found is None:
@@ -400,14 +500,125 @@ def idle_nat_gateways(ctx: Context, resources: list[Resource]) -> Iterator[Candi
         r = _billed_resource(ctx, b, "nat_gateway", gateway, None)
         if ctx.settings.ignores(r.tags):
             continue
-        notes = ["route_tables_not_checked"]
+        routes = _routes(ctx, r)
+        if routes.status == "checked" and routes.tables:
+            notes = ["routes_still_point_here"]
+            route_factor = [{"factor": "routes_point_here", "points": 30}]
+        elif routes.status == "checked":
+            notes = ["no_routes_to_it"]
+            route_factor = []
+        else:
+            notes = [
+                "route_tables_need_access_update"
+                if routes.status == "access_needed"
+                else "route_tables_not_checked"
+            ]
+            # The inventory has no route tables for it: a route may still point at it.
+            route_factor = [{"factor": "routes_unchecked", "points": 15}]
         confidence = _confidence(len(b.days), notes)
         hourly = b.cost / b.quantity
         region = _region_args(r)
         export = f"{gateway}.json"
+        save = _cli("aws", "ec2", "describe-nat-gateways", "--nat-gateway-ids", gateway,
+                    *region) + f" > {export}"  # fmt: skip
+        find_routes = _cli(
+            "aws", "ec2", "describe-route-tables", "--filters",
+            f"Name=route.nat-gateway-id,Values={gateway}", "--query",
+            f"RouteTables[].[RouteTableId,Routes[?NatGatewayId==`{gateway}`].DestinationCidrBlock]",
+            *region,
+        )  # fmt: skip
+        delete = _cli("aws", "ec2", "delete-nat-gateway", "--nat-gateway-id", gateway, *region)
+        recreate = _cli("aws", "ec2", "create-nat-gateway", "--subnet-id", "<subnet-id>",
+                        "--allocation-id", "<allocation-id>", *region)  # fmt: skip
+        evidence: list[dict[str, Any]] = [
+            {"kind": "natBytes", "value": 0, "days": WINDOW_DAYS},
+            {"kind": "natHours", "value": round(b.quantity, 1), "days": WINDOW_DAYS},
+            *_evidence(b, end),
+        ]
+        first_step = (
+            "Open the NAT gateway in the AWS console and note its subnet, Elastic IP "
+            "allocation ID and tags."
+        )
+        wait_step = "Wait a few days and check that nothing broke (no failed outbound calls)."
+        last_step = (
+            "Back on the NAT gateway, choose Actions, then Delete NAT gateway, and confirm. "
+            "Keep its Elastic IP, or release it if you will not recreate the gateway."
+        )
+        fix_notes = (
+            f"The first command saves the gateway's configuration to {export}; take the subnet "
+            "and Elastic IP allocation from it to recreate the gateway."
+        )
+        extra: dict[str, Any] = {}
+        if routes.status == "checked" and routes.tables:
+            route_fix = _route_fix(r, gateway, routes.tables)
+            extra["routes"] = route_fix
+            evidence.append({"kind": "routeTables", "value": len(routes.tables)})
+            steps = [save]
+            for t in route_fix["tables"]:
+                steps += [t["inspect"], *t["replace"]]
+            steps.append(delete)
+            rollback = [recreate, *(t["inspect"] for t in route_fix["tables"])]
+            console_steps = [
+                first_step,
+                "These route tables still send traffic to it: "
+                + "; ".join(_describe_table(t) for t in routes.tables)
+                + ". Open each one, check what its subnets need, then choose Edit routes and "
+                "point each route at another NAT gateway, or remove it if the subnets need no "
+                "internet access.",
+                wait_step,
+                last_step,
+            ]
+            fix_notes += (
+                " Changing a route is your decision: Cloudoptics never changes routes. "
+                "replace-route sends the traffic to another NAT gateway (use one in the same "
+                "Availability Zone); delete-route removes it. Wait a few days after changing "
+                "the routes before you delete the gateway. Keep the Elastic IP if allow-lists "
+                "use its address."
+            )
+        elif routes.status == "checked":
+            evidence.append({"kind": "routeTables", "value": 0})
+            steps = [save, find_routes, delete]
+            rollback = [recreate]
+            console_steps = [
+                first_step,
+                "No route tables send traffic to it (from the last resource scan). To be sure "
+                "nothing was added since, open Route tables and search for the gateway's ID.",
+                last_step,
+            ]
+            fix_notes += " Keep the Elastic IP if allow-lists use its address."
+        else:
+            steps = [
+                save,
+                find_routes,
+                _cli("aws", "ec2", "delete-route", "--route-table-id", "<route-table-id>",
+                     "--destination-cidr-block", "0.0.0.0/0", *region),
+                delete,
+            ]  # fmt: skip
+            rollback = [
+                recreate,
+                _cli("aws", "ec2", "create-route", "--route-table-id", "<route-table-id>",
+                     "--destination-cidr-block", "0.0.0.0/0", "--nat-gateway-id",
+                     "<new-nat-gateway-id>", *region),
+            ]  # fmt: skip
+            console_steps = [
+                first_step,
+                "Open Route tables, search for the gateway's ID and delete each route that "
+                "points at it.",
+                wait_step,
+                last_step,
+            ]
+            fix_notes += (
+                " Wait a few days between removing the routes and deleting the gateway. Keep "
+                "the Elastic IP if allow-lists use its address."
+            )
+            if routes.status == "access_needed":
+                fix_notes += (
+                    " Update CloudOptics access (Connections) to version 2.0.4 so the next "
+                    "scan checks the route tables for you."
+                )
         yield Candidate(
             rule_id="R10_idle_nat",
-            rule_version=1,
+            rule_version=2,
             type="delete_idle_nat_gateway",
             resource=r,
             title=f"Delete idle NAT gateway {gateway} (no traffic in {WINDOW_DAYS} days)",
@@ -420,49 +631,16 @@ def idle_nat_gateways(ctx: Context, resources: list[Resource]) -> Iterator[Candi
             reversibility="reversible",
             confidence=confidence,
             confidence_notes=notes,
-            # The inventory has no route tables: a route may still point at it.
-            risk_factors=[*env_factor(r.tags), {"factor": "routes_unchecked", "points": 15}],
-            evidence=[
-                {"kind": "natBytes", "value": 0, "days": WINDOW_DAYS},
-                {"kind": "natHours", "value": round(b.quantity, 1), "days": WINDOW_DAYS},
-                *_evidence(b, end),
-            ],
-            rule_config={"windowDays": WINDOW_DAYS, "stillBilledDays": STILL_BILLED_DAYS},
-            console_steps=[
-                "Open the NAT gateway in the AWS console and note its subnet, Elastic IP "
-                "allocation ID and tags.",
-                "Open Route tables, search for the gateway's ID and delete each route that "
-                "points at it.",
-                "Wait a few days and check that nothing broke (no failed outbound calls).",
-                "Back on the NAT gateway, choose Actions, then Delete NAT gateway, and confirm. "
-                "Keep its Elastic IP, or release it if you will not recreate the gateway.",
-            ],
-            fix={
-                "steps": [
-                    _cli("aws", "ec2", "describe-nat-gateways", "--nat-gateway-ids", gateway,
-                         *region) + f" > {export}",
-                    _cli("aws", "ec2", "describe-route-tables", "--filters",
-                         f"Name=route.nat-gateway-id,Values={gateway}", "--query",
-                         "RouteTables[].[RouteTableId,Routes[?NatGatewayId=="
-                         f"`{gateway}`].DestinationCidrBlock]", *region),
-                    _cli("aws", "ec2", "delete-route", "--route-table-id", "<route-table-id>",
-                         "--destination-cidr-block", "0.0.0.0/0", *region),
-                    _cli("aws", "ec2", "delete-nat-gateway", "--nat-gateway-id", gateway,
-                         *region),
-                ],
-                "rollback": [
-                    _cli("aws", "ec2", "create-nat-gateway", "--subnet-id", "<subnet-id>",
-                         "--allocation-id", "<allocation-id>", *region),
-                    _cli("aws", "ec2", "create-route", "--route-table-id", "<route-table-id>",
-                         "--destination-cidr-block", "0.0.0.0/0", "--nat-gateway-id",
-                         "<new-nat-gateway-id>", *region),
-                ],
-                "notes": f"The first command saves the gateway's configuration to {export}; "
-                "take the subnet and Elastic IP allocation from it to recreate the gateway. "
-                "Wait a few days between removing the routes and deleting the gateway. Keep "
-                "the Elastic IP if allow-lists use its address.",
+            risk_factors=[*env_factor(r.tags), *route_factor],
+            evidence=evidence,
+            rule_config={
+                "windowDays": WINDOW_DAYS,
+                "stillBilledDays": STILL_BILLED_DAYS,
+                "routesFreshDays": ROUTES_FRESH_DAYS,
             },
-        )  # fmt: skip
+            console_steps=console_steps,
+            fix={"steps": steps, "rollback": rollback, "notes": fix_notes, **extra},
+        )
 
 
 BILLING_RULES: list[Callable[[Context, list[Resource]], Iterator[Candidate]]] = [
