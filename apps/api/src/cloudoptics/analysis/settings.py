@@ -61,6 +61,8 @@ RULE_IDS = [
     "R6_graviton",
     "R7_schedule_ec2",
     "R7_schedule_rds",
+    "R6b_extended_support",
+    "R10_idle_nat",
 ]
 
 

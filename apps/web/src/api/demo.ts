@@ -325,6 +325,99 @@ const DEMO_RECS: DemoRec[] = [
       notes: 'A released address cannot be got back; update DNS or allow-lists that use it first.',
     },
   },
+  {
+    id: 'demo-rec-8',
+    ruleId: 'R10_idle_nat',
+    type: 'delete_idle_nat_gateway',
+    accountId: '333333333333',
+    regionId: 'af-south-1',
+    resourceId: 'nat-0d1e2f3a4b5c6d7e8',
+    title: 'Delete idle NAT gateway nat-0d1e2f3a4b5c6d7e8 (no traffic in 30 days)',
+    costNowUsdMonth: 43.8,
+    costAfterUsdMonth: 0,
+    reversibility: 'reversible',
+    riskScore: 15,
+    riskFactors: [{ factor: 'routes_unchecked', points: 15 }],
+    confidenceNotes: ['route_tables_not_checked'],
+    currentConfig: { hourlyUsd: 0.06, bytesProcessed: 0 },
+    evidence: [
+      { kind: 'natBytes', value: 0, days: 30 },
+      { kind: 'natHours', value: 720, days: 30 },
+      { kind: 'billedDays', value: 30, days: 30 },
+      { kind: 'usageType', value: 'AFS1-NatGateway-Hours' },
+    ],
+    fix: {
+      steps: [
+        'aws ec2 describe-nat-gateways --nat-gateway-ids nat-0d1e2f3a4b5c6d7e8 --region af-south-1 > nat-0d1e2f3a4b5c6d7e8.json',
+        "aws ec2 describe-route-tables --filters Name=route.nat-gateway-id,Values=nat-0d1e2f3a4b5c6d7e8 --query 'RouteTables[].[RouteTableId,Routes[?NatGatewayId==`nat-0d1e2f3a4b5c6d7e8`].DestinationCidrBlock]' --region af-south-1",
+        "aws ec2 delete-route --route-table-id '<route-table-id>' --destination-cidr-block 0.0.0.0/0 --region af-south-1",
+        'aws ec2 delete-nat-gateway --nat-gateway-id nat-0d1e2f3a4b5c6d7e8 --region af-south-1',
+      ],
+      rollback: [
+        "aws ec2 create-nat-gateway --subnet-id '<subnet-id>' --allocation-id '<allocation-id>' --region af-south-1",
+        "aws ec2 create-route --route-table-id '<route-table-id>' --destination-cidr-block 0.0.0.0/0 --nat-gateway-id '<new-nat-gateway-id>' --region af-south-1",
+      ],
+      notes:
+        "The first command saves the gateway's configuration to nat-0d1e2f3a4b5c6d7e8.json; take the subnet and Elastic IP allocation from it to recreate the gateway. Wait a few days between removing the routes and deleting the gateway. Keep the Elastic IP if allow-lists use its address.",
+      console: {
+        url: 'https://af-south-1.console.aws.amazon.com/vpc/home?region=af-south-1#NatGatewayDetails:natGatewayId=nat-0d1e2f3a4b5c6d7e8',
+        steps: [
+          'Open the NAT gateway in the AWS console and note its subnet, Elastic IP allocation ID and tags.',
+          "Open Route tables, search for the gateway's ID and delete each route that points at it.",
+          'Wait a few days and check that nothing broke (no failed outbound calls).',
+          'Back on the NAT gateway, choose Actions, then Delete NAT gateway, and confirm. Keep its Elastic IP, or release it if you will not recreate the gateway.',
+        ],
+      },
+    },
+  },
+  {
+    id: 'demo-rec-9',
+    ruleId: 'R6b_extended_support',
+    type: 'upgrade_extended_support',
+    accountId: '111111111111',
+    regionId: 'eu-west-1',
+    resourceId: 'reports-db',
+    title: 'Upgrade database reports-db off PostgreSQL 12 Extended Support',
+    costNowUsdMonth: 288,
+    costAfterUsdMonth: 0,
+    effort: 'M',
+    reversibility: 'with_snapshot',
+    restartRequired: true,
+    riskScore: 60,
+    riskFactors: [
+      { factor: 'production', points: 25 },
+      { factor: 'version_upgrade', points: 35 },
+    ],
+    currentConfig: { service: 'rds', engine: 'postgres', version: '12', supportYears: 'Yr1-Yr2' },
+    recommendedConfig: { action: 'upgrade', engineVersion: 'standard_support' },
+    evidence: [
+      { kind: 'extendedSupportUsd', value: 288, days: 30 },
+      { kind: 'billedDays', value: 30, days: 30 },
+      { kind: 'usageType', value: 'EU-ExtendedSupport:Yr1-Yr2:PostgreSQL12' },
+    ],
+    fix: {
+      steps: [
+        "aws rds describe-db-engine-versions --engine postgres --engine-version 12 --query 'DBEngineVersions[].ValidUpgradeTarget[].EngineVersion' --region eu-west-1",
+        'aws rds create-db-snapshot --db-instance-identifier reports-db --db-snapshot-identifier reports-db-before-upgrade --region eu-west-1',
+        'aws rds wait db-snapshot-available --db-snapshot-identifier reports-db-before-upgrade --region eu-west-1',
+        "aws rds modify-db-instance --db-instance-identifier reports-db --engine-version '<target-version>' --allow-major-version-upgrade --apply-immediately --region eu-west-1",
+      ],
+      rollback: [
+        'aws rds restore-db-instance-from-db-snapshot --db-instance-identifier reports-db-restored --db-snapshot-identifier reports-db-before-upgrade --region eu-west-1',
+      ],
+      notes:
+        "Pick a target from the first command's list that is in standard support. Major upgrades take the database offline for a few minutes and cannot be undone in place: to go back, restore the snapshot to a new database and point the application at it. Upgrade any read replicas and check the parameter group for the new version.",
+      console: {
+        url: 'https://eu-west-1.console.aws.amazon.com/rds/home?region=eu-west-1#database:id=reports-db;is-cluster=false',
+        steps: [
+          'Open the database in the AWS console.',
+          "Test the upgrade first: restore a recent snapshot to a new database, upgrade that copy and run your application's tests against it.",
+          'Choose Actions, then Take snapshot, and wait until the snapshot shows Available.',
+          'Choose Modify, set the engine version to one in standard support, choose Continue, then pick when to apply it and choose Modify.',
+        ],
+      },
+    },
+  },
 ]
 
 const SCHEDULER_TEMPLATE =
@@ -499,6 +592,8 @@ const DEMO_RULES = [
   'R6_graviton',
   'R7_schedule_ec2',
   'R7_schedule_rds',
+  'R6b_extended_support',
+  'R10_idle_nat',
 ]
 
 const DEFAULT_RULE_SETTINGS: RuleSettings = {
@@ -1477,7 +1572,7 @@ export class DemoApi implements Api {
     return structuredClone(this.state.recommendationEvents?.[`${tenantId}:${id}`] ?? [])
   }
 
-  // Demo resources are volumes, addresses and load balancers: no usage series.
+  // Demo resources are volumes, addresses, load balancers and billing-only findings: no usage series.
   async recommendationUsage(tenantId: string, id: string): Promise<UsageSeries[]> {
     await this.getRecommendation(tenantId, id)
     return []

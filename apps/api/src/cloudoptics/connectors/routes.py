@@ -523,7 +523,9 @@ async def mark_disconnected(
     await session.execute(
         text(
             "UPDATE recommendation SET status = 'expired' WHERE status IN ('new', 'assigned', "
-            "'in_progress') AND resource_ref IN (SELECT id FROM resource WHERE connection_id = :c)"
+            "'in_progress') AND (resource_ref IN (SELECT id FROM resource WHERE connection_id = "
+            ":c) OR (resource_ref IS NULL AND account_id IN (SELECT aws_account_id FROM "
+            "cloud_account WHERE connection_id = :c)))"
         ),
         {"c": connection_id},
     )

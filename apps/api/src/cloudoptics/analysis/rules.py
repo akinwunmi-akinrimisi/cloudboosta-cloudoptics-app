@@ -1,5 +1,5 @@
 """Inventory rules: R1 unused storage, R2 idle network, R3 gp2 to gp3 (usage-based rules
-are in ``compute``).
+are in ``compute``, billing-only R6b and R10 in ``billing``).
 
 Each rule turns inventory rows into candidates with costs, risk factors, confidence and a
 fix (PRD FR-ANA-01/01b/02/02b/03, FR-REC-02/05). Rules are pure: the engine loads the
@@ -43,6 +43,23 @@ class Resource:
     state_since: datetime
     first_seen_at: datetime
     arn: str | None = None
+    # False for a resource known only from the bill (R6b, R10): nothing to link it to.
+    in_inventory: bool = True
+
+
+@dataclass(frozen=True)
+class BilledUsage:
+    """One day of a resource's charges for one usage type (``cost_resource_daily``)."""
+
+    day: date
+    account_id: str
+    region_id: str
+    service_code: str
+    usage_type: str
+    resource_id: str
+    cost: float
+    quantity: float
+    tags: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -64,6 +81,10 @@ class Context:
     # Where the customer gets the scheduler stack R7 relies on (set by the engine).
     scheduler_template_url: str = ""
     scheduler_quick_create_template_url: str | None = None
+    # Per-resource CUR lines the billing-only rules read (R6b, R10).
+    billing: list[BilledUsage] = field(default_factory=list)
+    # (account, region, resource type, resource id or ARN) -> Resource, for matching the bill.
+    inventory: dict[tuple[str, str, str, str], Resource] = field(default_factory=dict)
 
 
 @dataclass
@@ -141,6 +162,9 @@ CONSOLE_PAGES = {
     "eip": "ec2/home?region={region}#ElasticIpDetails:AllocationId={id}",
     "elb": "ec2/home?region={region}#LoadBalancers:search={id}",
     "rds_instance": "rds/home?region={region}#database:id={id};is-cluster=false",
+    "rds_cluster": "rds/home?region={region}#database:id={id};is-cluster=true",
+    "eks_cluster": "eks/home?region={region}#/clusters/{id}",
+    "nat_gateway": "vpc/home?region={region}#NatGatewayDetails:natGatewayId={id}",
 }
 
 

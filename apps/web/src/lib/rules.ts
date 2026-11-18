@@ -12,4 +12,6 @@ export const RULES: Record<string, string> = {
   R6_graviton: 'Move to Graviton (Arm)',
   R7_schedule_ec2: 'Office-hours schedule (server)',
   R7_schedule_rds: 'Office-hours schedule (database)',
+  R6b_extended_support: 'Extended Support charge',
+  R10_idle_nat: 'Idle NAT gateway',
 }

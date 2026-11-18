@@ -34,6 +34,9 @@ const FACTORS: Record<string, string> = {
   stops_out_of_hours: 'Stopped outside office hours, so not there for anyone working late',
   environment_from_name: 'Judged non-production from its name only, not a tag',
   database_stops_daily: 'The database stops every evening',
+  version_upgrade: 'A version upgrade, so test it on a copy first',
+  no_downgrade: 'A Kubernetes upgrade cannot be rolled back in place',
+  routes_unchecked: 'Route tables may still send traffic to it',
 }
 
 const NOTES: Record<string, string> = {
@@ -60,6 +63,9 @@ const NOTES: Record<string, string> = {
     'Saves the server charge for the hours it is off; its disks and any Elastic IP are still charged.',
   rds_restarts_after_7_days:
     'AWS starts a stopped database again after 7 days; a weekday schedule never stops it that long.',
+  short_billing_history: 'Based on less than 30 days of bills, so the monthly figure may change.',
+  route_tables_not_checked:
+    'Found from the bill alone: we cannot see your route tables, so check them before you delete it.',
 }
 
 const REVERSIBILITY: Record<Recommendation['reversibility'], string> = {
@@ -619,6 +625,12 @@ const EVIDENCE: Record<string, string> = {
   scheduledHoursPerWeek: 'Running on the schedule',
   hoursOffPerMonth: 'Off on the schedule',
   hourlyRateUsd: 'Costs per hour (USD)',
+  extendedSupportUsd: 'Extended Support charge',
+  billedDays: 'Days billed',
+  billedThrough: 'Bill read up to',
+  usageType: 'Billed as',
+  natHours: 'Hours billed',
+  natBytes: 'Data processed (GB)',
 }
 
 const PERCENT = new Set([
@@ -629,7 +641,7 @@ const PERCENT = new Set([
   'runningHoursPercent',
 ])
 const MONEY = new Set(['stopSavesUsdMonth', 'volumesUsdMonth'])
-const DATES = new Set(['created', 'lastSnapshot', 'started'])
+const DATES = new Set(['created', 'lastSnapshot', 'started', 'billedThrough'])
 
 function evidenceValue(e: Recommendation['evidence'][number], money: (usd: number) => string): string {
   const v = e.value
@@ -637,6 +649,8 @@ function evidenceValue(e: Recommendation['evidence'][number], money: (usd: numbe
   const days = typeof e.days === 'number' ? ` over ${e.days} days` : ''
   if (PERCENT.has(e.kind) && typeof v === 'number') return `${v}%${days}`
   if (MONEY.has(e.kind) && typeof v === 'number') return `${money(v)}/mo`
+  if (e.kind === 'extendedSupportUsd' && typeof v === 'number') return `${money(v)}${days}`
+  if (e.kind === 'billedDays' && typeof e.days === 'number') return `${String(v)} of the last ${e.days}`
   if (e.kind === 'busiestDayNetworkMb' && typeof v === 'number') return `${v} MB${days}`
   if (e.kind === 'scheduledHoursPerWeek' && typeof v === 'number') return `${v} hours a week`
   if (e.kind === 'hoursOffPerMonth' && typeof v === 'number') return `${Math.round(v)} hours a month`
