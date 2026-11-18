@@ -265,6 +265,14 @@ async def test_from_the_bill_to_the_api(
     bucket: Path,  # noqa: F811
 ) -> None:
     tenant, connection, headers = await connected(client, login, owner_sql)
+    # R8 (Savings Plan advisory) is payer-wide and sized from the same bills; it has its
+    # own tests (test_commitments.py), so it is off here.
+    r = await client.put(
+        f"/v1/tenants/{tenant}/rule-settings",
+        json={"disabledRules": ["R8_savings_plan"]},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
     write_export(generate(SEPT), bucket / "cloudoptics")
     assert (await ingest(client, tenant, connection, headers))["status"] == "succeeded"
     # Every resource line is kept; five of them a day are the ones the billing rules read.

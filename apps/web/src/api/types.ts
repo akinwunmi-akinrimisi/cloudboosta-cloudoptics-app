@@ -608,6 +608,8 @@ export interface NotificationChoices {
   weeklyDigest: boolean
   anomalyAlert: boolean
   monthlyReport: boolean
+  /** Savings Plans and Reserved Instances ending in 60, 30 and 15 days. */
+  commitmentExpiry: boolean
 }
 
 /** A month's executive report: stored figures do not change once made. Money in USD, local where a rate exists. */
@@ -761,6 +763,115 @@ export interface AuditPage {
   verified: boolean
 }
 
+export type CommitmentKind = 'savings_plan' | 'ec2_reserved' | 'rds_reserved'
+
+/** A Savings Plan or Reserved Instance, as the daily refresh last listed it. */
+export interface Commitment {
+  id: string
+  connectionId: string
+  kind: CommitmentKind
+  commitmentId: string
+  accountId: string | null
+  regionId: string | null
+  description: string
+  planType: string | null
+  termMonths: number | null
+  paymentOption: string | null
+  state: string | null
+  quantity: number | null
+  hourlyCommitmentUsd: number | null
+  upfrontUsd: number | null
+  startsAt: string | null
+  endsAt: string | null
+  /** Last 30 days, from Cost Explorer. */
+  utilisationPct: number | null
+  daysLeft: number | null
+  /** False once it ended or the refresh stopped listing it. */
+  current: boolean
+  lastSeenAt: string
+}
+
+/** Cost Explorer's 30-day view per connection (payer). */
+export interface PayerCoverage {
+  connectionId: string
+  savingsPlansCoveragePercent: number | null
+  savingsPlansUtilisationPercent: number | null
+  reservationsCoveragePercent: number | null
+  reservationsUtilisationPercent: number | null
+  fetchedAt: string
+  errors: string[]
+}
+
+export interface CommitmentList {
+  commitments: Commitment[]
+  coverage: PayerCoverage[]
+  expiryAlertDays: number[]
+}
+
+export type CommitmentPayment = 'no_upfront' | 'partial_upfront' | 'all_upfront'
+
+/** One cell of the Savings Plan advisory matrix. Break-even in months; 0 = saves from the first hour. */
+export interface CommitmentOption {
+  source: 'ours' | 'aws'
+  instrument: 'savings_plan' | 'reserved_instance'
+  termYears: number
+  payment: CommitmentPayment
+  lookbackDays: number | null
+  discountPercent: number
+  hourlyCommitmentUsd: number
+  coveredOnDemandHourlyUsd: number
+  monthlySavingsUsd: number
+  upfrontUsd: number
+  monthlyRecurringUsd: number
+  totalCommitmentUsd: number
+  breakEvenMonths: number
+  /** The discount is AWS's estimate for this account, not the typical one. */
+  discountFromAws: boolean
+}
+
+export interface SavingsPlanAdvice {
+  connectionId: string
+  payerAccountId: string
+  status: 'no_data' | 'not_enough_data' | 'no_purchase' | 'ok'
+  dataThrough: string | null
+  baseline: {
+    days: number
+    nettedUsdMonth: number
+    averageHourlyUsd: number
+    p10HourlyUsd: number
+    p20HourlyUsd: number
+    targetHourlyUsd: number
+    bandLowHourlyUsd: number
+    bandHighHourlyUsd: number
+  }
+  dailyEligible: { date: string; amount: number }[]
+  options: CommitmentOption[]
+  default: CommitmentOption | null
+  ladder: { month: number; buyOn: string; buyHourlyUsd: number; totalHourlyUsd: number; sharePercent: number }[]
+  fx: {
+    currency: string
+    rate: number
+    rateDate: string
+    estimated: boolean
+    scenarios: { weakeningPercent: number; rate: number; monthlyLocal: number; upfrontLocal: number; totalLocal: number }[]
+  } | null
+  fxExposed: boolean
+  currentCoveragePercent: number | null
+  targetCoveragePercent: number | null
+  utilisationPercent: number | null
+  declineTolerancePercent: number | null
+  awsFetchedAt: string | null
+  awsErrors: string[]
+}
+
+export interface SavingsPlanAdvisory {
+  advice: SavingsPlanAdvice[]
+  returnWindowDays: number
+  ladderFirstPercent: number
+  ladderStepPercent: number
+  fxStressPercent: number[]
+}
+
 export interface Api {
   readonly mode: 'http' | 'demo'
   authConfig(): Promise<AuthConfig>
@@ -837,6 +948,10 @@ export interface Api {
   /** Saving re-runs the rules, so recommendations change straight away. */
   saveRuleSettings(tenantId: string, settings: RuleSettings): Promise<RuleSettingsView>
   auditLog(tenantId: string, before?: number): Promise<AuditPage>
+  listCommitments(tenantId: string): Promise<CommitmentList>
+  savingsPlanAdvisory(tenantId: string): Promise<SavingsPlanAdvisory>
+  /** Admins only: read commitments and ask Cost Explorer again now (about USD 0.08 a connection). */
+  refreshCommitments(tenantId: string): Promise<{ status: string; connections: number }>
 }
 
 export class ApiError extends Error {

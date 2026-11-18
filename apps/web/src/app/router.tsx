@@ -18,6 +18,7 @@ import { Reports } from '../pages/Reports'
 import { Settings } from '../pages/Settings'
 import { Anomalies } from '../pages/Anomalies'
 import { Budgets } from '../pages/Budgets'
+import { Commitments } from '../pages/Commitments'
 import { Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
 
@@ -116,6 +117,7 @@ const anomalies = createRoute({
   component: Anomalies,
 })
 const budgets = createRoute({ getParentRoute: () => app, path: '/budgets', component: Budgets })
+const commitments = createRoute({ getParentRoute: () => app, path: '/commitments', component: Commitments })
 const reports = createRoute({
   getParentRoute: () => app,
   path: '/reports',
@@ -140,6 +142,7 @@ const routeTree = root.addChildren([
     recommendation,
     anomalies,
     budgets,
+    commitments,
     reports,
     settings,
   ]),

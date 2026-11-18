@@ -63,6 +63,7 @@ RULE_IDS = [
     "R7_schedule_rds",
     "R6b_extended_support",
     "R10_idle_nat",
+    "R8_savings_plan",
 ]
 
 
