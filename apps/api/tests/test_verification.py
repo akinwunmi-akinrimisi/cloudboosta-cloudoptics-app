@@ -175,6 +175,28 @@ def test_decide() -> None:
     assert verification.decide(item("R1", status="dismissed"), fixed, NOW) is None
 
 
+def test_bill_only_items_are_not_gone() -> None:
+    """R6b/R10 (and R8) have no inventory resource: only the rule no longer firing counts."""
+    from dataclasses import replace
+
+    open_item = replace(item("R10_idle_nat", status="new", missing=True), bill_only=True)
+    assert not open_item.gone
+    result = verification.default_check(open_item)
+    assert result == verification.UNCHANGED
+    assert verification.decide(open_item, result, NOW) is None
+
+    stopped = replace(open_item, stale=True)
+    result = verification.default_check(stopped)
+    assert (result.outcome, result.code) == ("implemented", "rule_no_longer_applies")
+    assert verification.decide(stopped, result, NOW) == "verified"
+
+    off = replace(stopped, suppressed=True)
+    assert verification.default_check(off) == verification.UNCHANGED
+
+    done = replace(open_item, status="done", done_at=NOW - timedelta(days=4))
+    assert verification.decide(done, verification.UNCHANGED, NOW) == "not_verified"
+
+
 def test_compare_before_and_after() -> None:
     change = date(2026, 10, 1)
     daily = {change - timedelta(days=d): 2.0 for d in range(1, 41)}

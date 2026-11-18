@@ -90,9 +90,14 @@ class Item:
     suppressed: bool
     resource: Observed | None
     baseline: dict[str, Any] = field(default_factory=dict)
+    # Found from the bill alone (R6b, R10) or not tied to one resource (R8): there is no
+    # inventory resource to watch, so only the rule no longer finding it shows the fix.
+    bill_only: bool = False
 
     @property
     def gone(self) -> bool:
+        if self.bill_only:
+            return False
         return self.resource is None or self.resource.deleted_at is not None
 
     @property
@@ -134,6 +139,9 @@ def default_check(item: Item) -> Check:
         return Check("implemented", "resource_gone", item.gone_at)
     if item.stale and not item.suppressed and item.resource is not None:
         return Check("implemented", "rule_no_longer_applies", item.resource.last_seen_at)
+    if item.stale and not item.suppressed and item.bill_only:
+        # The bills no longer show the charge (the rules treat it as already fixed).
+        return Check("implemented", "rule_no_longer_applies")
     return UNCHANGED
 
 
@@ -241,8 +249,9 @@ def decide(item: Item, result: Check, now: datetime) -> str | None:
     if item.status in CHECKED:
         if result.outcome in ("implemented", "gone"):
             return "verified"
-        scanned = item.resource is not None and (
-            item.done_at is None or item.resource.last_seen_at > item.done_at
+        scanned = item.bill_only or (
+            item.resource is not None
+            and (item.done_at is None or item.resource.last_seen_at > item.done_at)
         )
         if (
             item.status == "done"
@@ -280,8 +289,8 @@ def _changed_at(item: Item, result: Check, now: datetime) -> datetime:
 LOAD = text(
     "SELECT r.id, r.rule_id, r.status, r.account_id, r.resource_id, r.current_config, "
     "r.recommended_config, r.cost_now_usd_month, r.savings_usd_month, r.fix, r.baseline, "
-    "r.done_at, r.generation_id, s.id AS sid, s.resource_type, s.state, s.config, s.tags, "
-    "s.arn, s.state_since, s.last_seen_at, s.deleted_at FROM recommendation r "
+    "r.done_at, r.generation_id, r.resource_ref, s.id AS sid, s.resource_type, s.state, "
+    "s.config, s.tags, s.arn, s.state_since, s.last_seen_at, s.deleted_at FROM recommendation r "
     "LEFT JOIN resource s ON s.id = r.resource_ref WHERE r.status = ANY(:statuses) "
     "ORDER BY r.id"
 )
@@ -320,6 +329,7 @@ def _item(row: Any, generation: int | None, settings: RuleSettings) -> Item:
         suppressed=suppressed,
         resource=resource,
         baseline=baseline,
+        bill_only=row.resource_ref is None,
     )
 
 
