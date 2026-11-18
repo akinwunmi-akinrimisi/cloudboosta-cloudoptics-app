@@ -327,6 +327,134 @@ const DEMO_RECS: DemoRec[] = [
   },
 ]
 
+const SCHEDULER_TEMPLATE =
+  'https://raw.githubusercontent.com/akinwunmi-akinrimisi/cloudboosta-cloudoptics-app/main/infra/cloudformation/scheduler/cloudoptics-scheduler.yaml'
+
+/** R7 (PRD FR-ANA-07): non-production resources running 24/7, scheduled in the workspace's time zone. */
+function demoScheduleRecs(timeZone: string, settings: RuleSettings): DemoRec[] {
+  const { scheduleStart: start, scheduleEnd: end } = settings
+  const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5))
+  const onWeek = (5 * (minutes(end) - minutes(start))) / 60
+  const offMonth = ((168 - onWeek) * 730) / 168
+  const city = timeZone.split('/').pop()?.replace(/_/g, ' ') ?? timeZone
+  const window = `${start}-${end} weekdays, ${city} time`
+  const schedule = (rds: boolean) => ({
+    tagKey: 'cloudoptics:schedule',
+    tagValue: [`${start}-${end}`, 'MO-FR', timeZone].join(rds ? ' ' : ';'),
+    start,
+    end,
+    days: 'MO-FR',
+    timeZone,
+    hoursOnPerWeek: onWeek,
+    stackName: 'cloudoptics-scheduler',
+    templateUrl: SCHEDULER_TEMPLATE,
+    quickCreateUrl: null,
+    rdsAutoStart: rds,
+  })
+  const evidence = (by: string, hourly: number) => [
+    { kind: 'nonProduction', value: by },
+    { kind: 'runningHoursPercent', value: 100, days: 14 },
+    { kind: 'scheduledHoursPerWeek', value: onWeek },
+    { kind: 'hoursOffPerMonth', value: Math.round(offMonth * 10) / 10 },
+    { kind: 'hourlyRateUsd', value: hourly },
+  ]
+  const deploy =
+    'Once per account and region: deploy the cloudoptics-scheduler stack from the link above. It runs in your account; Cloudoptics stays read-only.'
+  const server = schedule(false)
+  const db = schedule(true)
+  const ec2Hourly = 0.0528
+  const rdsHourly = 0.088
+  return [
+    {
+      id: 'demo-rec-6',
+      ruleId: 'R7_schedule_ec2',
+      type: 'schedule_instance',
+      accountId: '333333333333',
+      regionId: 'af-south-1',
+      resourceId: 'i-0c4d5e6f7a8b9c0d1',
+      title: `Run non-production server staging-api (t3.medium) only in office hours: ${window}`,
+      costNowUsdMonth: Math.round(ec2Hourly * 730 * 100) / 100,
+      costAfterUsdMonth: Math.round(ec2Hourly * (730 - offMonth) * 100) / 100,
+      savingsBasis: 'list_price',
+      effort: 'M',
+      reversibility: 'reversible',
+      restartRequired: true,
+      riskScore: 15,
+      riskFactors: [{ factor: 'stops_out_of_hours', points: 15 }],
+      confidenceNotes: ['schedule_saves_compute_only'],
+      recommendedConfig: { tagKey: server.tagKey, schedule: server.tagValue },
+      evidence: evidence('tag Environment=staging', ec2Hourly),
+      fix: {
+        steps: [
+          `aws ec2 create-tags --resources i-0c4d5e6f7a8b9c0d1 --tags '[{"Key": "cloudoptics:schedule", "Value": "${server.tagValue}"}]' --region af-south-1`,
+        ],
+        rollback: [
+          'aws ec2 delete-tags --resources i-0c4d5e6f7a8b9c0d1 --tags Key=cloudoptics:schedule --region af-south-1',
+          'aws ec2 start-instances --instance-ids i-0c4d5e6f7a8b9c0d1 --region af-south-1',
+        ],
+        schedule: server,
+        notes:
+          'The scheduler stops the server at the end of the day and starts it in the morning; its disks stay, so nothing on them is lost.',
+        console: {
+          url: 'https://af-south-1.console.aws.amazon.com/ec2/home?region=af-south-1#InstanceDetails:instanceId=i-0c4d5e6f7a8b9c0d1',
+          steps: [
+            deploy,
+            'Open the server in the AWS console.',
+            'Choose the Tags tab, then Manage tags, then Add new tag.',
+            `Enter the key cloudoptics:schedule and the value ${server.tagValue}, then choose Save.`,
+          ],
+        },
+      },
+    },
+    {
+      id: 'demo-rec-7',
+      ruleId: 'R7_schedule_rds',
+      type: 'schedule_database',
+      accountId: '333333333333',
+      regionId: 'af-south-1',
+      resourceId: 'qa-orders-db',
+      title: `Run non-production database qa-orders-db (db.t3.medium) only in office hours: ${window}`,
+      costNowUsdMonth: Math.round(rdsHourly * 730 * 100) / 100,
+      costAfterUsdMonth: Math.round(rdsHourly * (730 - offMonth) * 100) / 100,
+      savingsBasis: 'list_price',
+      effort: 'M',
+      reversibility: 'reversible',
+      restartRequired: true,
+      riskScore: 45,
+      riskFactors: [
+        { factor: 'stops_out_of_hours', points: 15 },
+        { factor: 'environment_from_name', points: 20 },
+        { factor: 'database_stops_daily', points: 10 },
+      ],
+      confidence: 'medium',
+      confidenceNotes: ['storage_not_included', 'rds_restarts_after_7_days'],
+      recommendedConfig: { tagKey: db.tagKey, schedule: db.tagValue },
+      evidence: evidence('name qa-orders-db', rdsHourly),
+      fix: {
+        steps: [
+          `aws rds add-tags-to-resource --resource-name arn:aws:rds:af-south-1:333333333333:db:qa-orders-db --tags '[{"Key": "cloudoptics:schedule", "Value": "${db.tagValue}"}]' --region af-south-1`,
+        ],
+        rollback: [
+          'aws rds remove-tags-from-resource --resource-name arn:aws:rds:af-south-1:333333333333:db:qa-orders-db --tag-keys cloudoptics:schedule --region af-south-1',
+          'aws rds start-db-instance --db-instance-identifier qa-orders-db --region af-south-1',
+        ],
+        schedule: db,
+        notes:
+          'A stopped database keeps its data and settings but cannot be reached until it starts again; its storage and backups are still charged.',
+        console: {
+          url: 'https://af-south-1.console.aws.amazon.com/rds/home?region=af-south-1#database:id=qa-orders-db;is-cluster=false',
+          steps: [
+            deploy,
+            'Open the database in the AWS console.',
+            'Choose the Tags tab, then Add tags.',
+            `Enter the key cloudoptics:schedule and the value ${db.tagValue}, then choose Add.`,
+          ],
+        },
+      },
+    },
+  ]
+}
+
 function demoRecommendation(r: DemoRec, status: RecommendationStatus): Recommendation {
   const savings = Math.round((r.costNowUsdMonth - r.costAfterUsdMonth) * 100) / 100
   const riskScore = r.riskScore ?? 0
@@ -369,6 +497,8 @@ const DEMO_RULES = [
   'R5_rightsize_ec2',
   'R6_newer_generation',
   'R6_graviton',
+  'R7_schedule_ec2',
+  'R7_schedule_rds',
 ]
 
 const DEFAULT_RULE_SETTINGS: RuleSettings = {
@@ -376,6 +506,10 @@ const DEFAULT_RULE_SETTINGS: RuleSettings = {
   ignoreTag: 'cloudoptics:ignore',
   idleCpuPercent: 5,
   idleDays: 14,
+  nonprodPattern: '(^|[^a-z0-9])(dev|development|test|testing|staging|stage|qa|sandbox|uat)([^a-z]|$)',
+  nonprodTagKeys: ['env', 'environment', 'stage'],
+  scheduleStart: '07:00',
+  scheduleEnd: '20:00',
 }
 
 function load(): State {
@@ -1229,15 +1363,18 @@ export class DemoApi implements Api {
   private recommendations(tenantId: string): Recommendation[] {
     this.tenant(tenantId)
     if (!this.hasData(tenantId)) return []
-    const disabled = this.ruleSettings(tenantId).disabledRules
-    return DEMO_RECS.filter((r) => !disabled.includes(r.ruleId)).map((r) => ({
+    const settings = this.ruleSettings(tenantId)
+    const disabled = settings.disabledRules
+    const all = [...DEMO_RECS, ...demoScheduleRecs(this.tenant(tenantId).timeZone, settings)]
+    return all.filter((r) => !disabled.includes(r.ruleId)).map((r) => ({
       ...demoRecommendation(r, this.state.recommendationStatus[`${tenantId}:${r.id}`] ?? 'new'),
       assigneeId: this.state.recommendationAssignee?.[`${tenantId}:${r.id}`] ?? null,
     }))
   }
 
   private ruleSettings(tenantId: string): RuleSettings {
-    return this.state.ruleSettings?.[tenantId] ?? DEFAULT_RULE_SETTINGS
+    // Settings saved before a field existed take its default.
+    return { ...DEFAULT_RULE_SETTINGS, ...this.state.ruleSettings?.[tenantId] }
   }
 
   private addEvent(tenantId: string, id: string, event: Omit<RecommendationEvent, 'id' | 'createdAt' | 'actorId' | 'actorName'>): void {

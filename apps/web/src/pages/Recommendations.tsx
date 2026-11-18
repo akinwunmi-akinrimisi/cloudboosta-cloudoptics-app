@@ -10,6 +10,7 @@ import type {
   RecommendationChange,
   RecommendationEvent,
   RecommendationStatus,
+  ScheduleFix,
 } from '../api/types'
 import { ApiError } from '../api/types'
 import { UsageChart } from '../components/charts'
@@ -30,6 +31,9 @@ const FACTORS: Record<string, string> = {
   restart_needed: 'The server restarts',
   architecture_change: 'Needs software built for Arm',
   less_headroom: 'Less spare capacity after the change',
+  stops_out_of_hours: 'Stopped outside office hours, so not there for anyone working late',
+  environment_from_name: 'Judged non-production from its name only, not a tag',
+  database_stops_daily: 'The database stops every evening',
 }
 
 const NOTES: Record<string, string> = {
@@ -52,6 +56,10 @@ const NOTES: Record<string, string> = {
   short_history: 'Based on less than a month of usage; month-end peaks may not be included yet.',
   compute_optimizer_agrees: 'AWS Compute Optimizer also says this server is bigger than it needs to be.',
   arm64_build_needed: 'Your software needs an Arm version, so plan time to build and test it.',
+  schedule_saves_compute_only:
+    'Saves the server charge for the hours it is off; its disks and any Elastic IP are still charged.',
+  rds_restarts_after_7_days:
+    'AWS starts a stopped database again after 7 days; a weekday schedule never stops it that long.',
 }
 
 const REVERSIBILITY: Record<Recommendation['reversibility'], string> = {
@@ -384,12 +392,12 @@ export function Recommendations() {
   )
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, label = 'Copy command' }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   return (
     <button
       type="button"
-      aria-label="Copy command"
+      aria-label={label}
       className="shrink-0 rounded-sm p-1.5 text-secondary hover:bg-surface-2"
       onClick={() => {
         void navigator.clipboard?.writeText(text).then(() => {
@@ -414,6 +422,68 @@ function Commands({ steps }: { steps: string[] }) {
         </li>
       ))}
     </ol>
+  )
+}
+
+const DAY_NAMES: Record<string, string> = { 'MO-FR': 'Monday to Friday' }
+
+/** R7's fix: one tag to copy, and the scheduler stack (deployed by the customer) that acts on it. */
+function ScheduleSteps({ schedule: s }: { schedule: ScheduleFix }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-sm border border-border p-4">
+      <div>
+        <h3 className="text-sm font-semibold">
+          Run it {s.start} to {s.end}, {DAY_NAMES[s.days] ?? s.days} ({s.timeZone})
+        </h3>
+        <p className="mt-1 text-xs text-muted">
+          Add one tag. A scheduler stack you deploy in your own AWS account stops it at {s.end} and starts it at{' '}
+          {s.start}; Cloudoptics itself never changes your resources.
+        </p>
+      </div>
+      <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2 text-sm">
+        <dt className="text-secondary">Tag key</dt>
+        <dd className="flex min-w-0 items-center gap-1">
+          <code className="break-all rounded-sm bg-surface-2 px-2 py-1 font-mono text-xs">{s.tagKey}</code>
+          <CopyButton text={s.tagKey} label="Copy tag key" />
+        </dd>
+        <dt className="text-secondary">Tag value</dt>
+        <dd className="flex min-w-0 items-center gap-1">
+          <code className="break-all rounded-sm bg-surface-2 px-2 py-1 font-mono text-xs">{s.tagValue}</code>
+          <CopyButton text={s.tagValue} label="Copy tag value" />
+        </dd>
+      </dl>
+      <div className="flex flex-wrap items-center gap-3">
+        {s.quickCreateUrl && (
+          <a
+            href={s.quickCreateUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-9 items-center gap-1.5 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover"
+          >
+            Create the scheduler stack <ExternalLink size={14} />
+          </a>
+        )}
+        <a
+          href={s.templateUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-sm font-medium text-accent hover:underline"
+        >
+          Download the scheduler template <ExternalLink size={14} />
+        </a>
+      </div>
+      <p className="text-xs text-muted">
+        Once per AWS account and region: in CloudFormation choose Create stack, then Upload a template file, and name
+        it {s.stackName}. Every server and database with the tag in that region then follows its schedule.
+      </p>
+      {s.rdsAutoStart && (
+        <Alert tone="warning">
+          AWS starts a stopped database again by itself after 7 days. A weekday schedule never keeps it stopped that
+          long, but if you stop it by hand for longer, AWS starts it and the scheduler stops it again at the end of the
+          next working day.
+        </Alert>
+      )}
+    </div>
   )
 }
 
@@ -544,9 +614,20 @@ const EVIDENCE: Record<string, string> = {
   computeOptimizer: 'AWS Compute Optimizer says',
   previousGeneration: 'Server family',
   architecture: 'Processor type',
+  nonProduction: 'Non-production because it is',
+  runningHoursPercent: 'Hours it was running',
+  scheduledHoursPerWeek: 'Running on the schedule',
+  hoursOffPerMonth: 'Off on the schedule',
+  hourlyRateUsd: 'Costs per hour (USD)',
 }
 
-const PERCENT = new Set(['peakCpuPercent', 'cpuP95Percent', 'cpuPercentile', 'projectedCpuPercent'])
+const PERCENT = new Set([
+  'peakCpuPercent',
+  'cpuP95Percent',
+  'cpuPercentile',
+  'projectedCpuPercent',
+  'runningHoursPercent',
+])
 const MONEY = new Set(['stopSavesUsdMonth', 'volumesUsdMonth'])
 const DATES = new Set(['created', 'lastSnapshot', 'started'])
 
@@ -557,6 +638,11 @@ function evidenceValue(e: Recommendation['evidence'][number], money: (usd: numbe
   if (PERCENT.has(e.kind) && typeof v === 'number') return `${v}%${days}`
   if (MONEY.has(e.kind) && typeof v === 'number') return `${money(v)}/mo`
   if (e.kind === 'busiestDayNetworkMb' && typeof v === 'number') return `${v} MB${days}`
+  if (e.kind === 'scheduledHoursPerWeek' && typeof v === 'number') return `${v} hours a week`
+  if (e.kind === 'hoursOffPerMonth' && typeof v === 'number') return `${Math.round(v)} hours a month`
+  if (e.kind === 'hourlyRateUsd' && typeof v === 'number') return `$${v.toFixed(3)}`
+  if (e.kind === 'nonProduction' && typeof v === 'string')
+    return v.replace(/^tag /, 'tagged ').replace(/^name /, 'named ')
   if (DATES.has(e.kind) && typeof v === 'string') return new Date(v).toLocaleDateString('en-GB')
   if (e.kind === 'computeOptimizer') return String(v).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
   const since = typeof e.sinceDays === 'number' ? ` for ${Math.round(e.sinceDays)} days` : ''
@@ -731,6 +817,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
         <Card className="flex flex-col gap-5 p-5 lg:col-span-2">
           <div className="flex flex-col gap-3">
             <h2 className="text-base font-semibold">How to fix it</h2>
+            {r.fix.schedule && <ScheduleSteps schedule={r.fix.schedule} />}
             {r.fix.console && (
               <div className="flex flex-wrap items-center gap-3">
                 <a

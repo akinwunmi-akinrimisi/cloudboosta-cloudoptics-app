@@ -34,10 +34,12 @@ from cloudoptics.analysis.rules import (
     console_url,
     parse_time,
 )
+from cloudoptics.analysis.schedule import SCHEDULE_RULES, TEMPLATE_PATH
 from cloudoptics.analysis.settings import RuleSettings, load_rule_settings
 from cloudoptics.metrics.puller import load_usage
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
+from cloudoptics.platform.settings import get_settings
 
 ENGINE_VERSION = "2026.10.1"
 CONFIDENCE_WEIGHT = {"high": 1.0, "medium": 0.7, "low": 0.4}
@@ -128,7 +130,7 @@ def evaluate(ctx: Context, resources: list[Resource]) -> list[Scored]:
     considered = [r for r in resources if not ctx.settings.ignores(r.tags)]
     return [
         score(c)
-        for rule in [*RULES, *COMPUTE_RULES]
+        for rule in [*RULES, *COMPUTE_RULES, *SCHEDULE_RULES]
         for c in rule(ctx, considered)
         if c.rule_id not in ctx.settings.disabled_rules
     ]
@@ -254,11 +256,23 @@ async def run_analysis(
     async with get_sessionmaker()() as session, session.begin():
         await scope(session, tenant_id=tenant_id)
         resources = await _load(session)
+        tz = await session.execute(
+            text("SELECT time_zone FROM tenant WHERE id = :t"), {"t": tenant_id}
+        )
+        app = get_settings()
         ctx = Context(
             now=now or datetime.now(UTC),
             prices=await load_price_book(session),
             usage=await load_usage(session),
             settings=settings or await load_rule_settings(session),
+            time_zone=tz.scalar_one_or_none() or "UTC",
+            # The scheduler stack R7 offers: a download, and quick-create once it is in S3.
+            scheduler_template_url=f"{app.cfn_template_download_base}/{TEMPLATE_PATH}",
+            scheduler_quick_create_template_url=(
+                app.cfn_billing_template_url.rsplit("/", 1)[0] + "/cloudoptics-scheduler.yaml"
+                if app.cfn_quick_create_enabled
+                else None
+            ),
         )
         scored = evaluate(ctx, resources)
         return await store(session, tenant_id, scored, int(time.time() * 1000))
