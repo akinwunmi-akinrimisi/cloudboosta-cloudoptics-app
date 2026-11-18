@@ -360,35 +360,34 @@ const DEMO_RECS: DemoRec[] = [
     costNowUsdMonth: 43.8,
     costAfterUsdMonth: 0,
     reversibility: 'reversible',
-    riskScore: 15,
-    riskFactors: [{ factor: 'routes_unchecked', points: 15 }],
-    confidenceNotes: ['route_tables_not_checked'],
+    // Scanned with access template 2.0.4: no route table sends traffic to it.
+    riskScore: 0,
+    riskFactors: [],
+    confidenceNotes: ['no_routes_to_it'],
     currentConfig: { hourlyUsd: 0.06, bytesProcessed: 0 },
     evidence: [
       { kind: 'natBytes', value: 0, days: 30 },
       { kind: 'natHours', value: 720, days: 30 },
       { kind: 'billedDays', value: 30, days: 30 },
       { kind: 'usageType', value: 'AFS1-NatGateway-Hours' },
+      { kind: 'routeTables', value: 0 },
     ],
     fix: {
       steps: [
         'aws ec2 describe-nat-gateways --nat-gateway-ids nat-0d1e2f3a4b5c6d7e8 --region af-south-1 > nat-0d1e2f3a4b5c6d7e8.json',
         "aws ec2 describe-route-tables --filters Name=route.nat-gateway-id,Values=nat-0d1e2f3a4b5c6d7e8 --query 'RouteTables[].[RouteTableId,Routes[?NatGatewayId==`nat-0d1e2f3a4b5c6d7e8`].DestinationCidrBlock]' --region af-south-1",
-        "aws ec2 delete-route --route-table-id '<route-table-id>' --destination-cidr-block 0.0.0.0/0 --region af-south-1",
         'aws ec2 delete-nat-gateway --nat-gateway-id nat-0d1e2f3a4b5c6d7e8 --region af-south-1',
       ],
       rollback: [
         "aws ec2 create-nat-gateway --subnet-id '<subnet-id>' --allocation-id '<allocation-id>' --region af-south-1",
-        "aws ec2 create-route --route-table-id '<route-table-id>' --destination-cidr-block 0.0.0.0/0 --nat-gateway-id '<new-nat-gateway-id>' --region af-south-1",
       ],
       notes:
-        "The first command saves the gateway's configuration to nat-0d1e2f3a4b5c6d7e8.json; take the subnet and Elastic IP allocation from it to recreate the gateway. Wait a few days between removing the routes and deleting the gateway. Keep the Elastic IP if allow-lists use its address.",
+        "The first command saves the gateway's configuration to nat-0d1e2f3a4b5c6d7e8.json; take the subnet and Elastic IP allocation from it to recreate the gateway. Keep the Elastic IP if allow-lists use its address.",
       console: {
         url: 'https://af-south-1.console.aws.amazon.com/vpc/home?region=af-south-1#NatGatewayDetails:natGatewayId=nat-0d1e2f3a4b5c6d7e8',
         steps: [
           'Open the NAT gateway in the AWS console and note its subnet, Elastic IP allocation ID and tags.',
-          "Open Route tables, search for the gateway's ID and delete each route that points at it.",
-          'Wait a few days and check that nothing broke (no failed outbound calls).',
+          "No route tables send traffic to it (from the last resource scan). To be sure nothing was added since, open Route tables and search for the gateway's ID.",
           'Back on the NAT gateway, choose Actions, then Delete NAT gateway, and confirm. Keep its Elastic IP, or release it if you will not recreate the gateway.',
         ],
       },
@@ -1125,7 +1124,7 @@ export class DemoApi implements Api {
         lastValidatedAt: null,
         createdAt: new Date().toISOString(),
         stackName: 'cloudoptics-access',
-        stackVersion: '2.0.3',
+        stackVersion: '2.0.4',
       }
       ;(this.state.connections[tenantId] ??= []).push(conn)
       this.state.externalIds[conn.id] = this.state.externalIds[intentId] ?? externalId()
@@ -2402,8 +2401,8 @@ export class DemoApi implements Api {
       accessTemplateDownloadUrl: `${base}/cloudoptics-access.yaml`,
       callbackUrl: 'https://cloudoptics.example/api/v1/cfn/callback',
       connectionRef: `c:${conn.id}`,
-      latestStackVersion: '2.0.3',
-      updateAvailable: conn.stackName !== 'cloudoptics-access' || conn.stackVersion !== '2.0.3',
+      latestStackVersion: '2.0.4',
+      updateAvailable: conn.stackName !== 'cloudoptics-access' || conn.stackVersion !== '2.0.4',
       stackConsoleUrl:
         'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/stackinfo?stackId=' +
         (conn.stackName ?? 'cloudoptics-billing-access'),

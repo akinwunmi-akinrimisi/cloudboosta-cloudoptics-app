@@ -410,6 +410,27 @@ export interface RecommendationFix {
   console?: { url: string; steps: string[] }
   /** R7: the schedule tag to add and the scheduler stack that acts on it. */
   schedule?: ScheduleFix
+  /** R10: route tables that still send traffic to the NAT gateway (the customer changes them). */
+  routes?: NatRoutesFix
+}
+
+export interface NatRouteTable {
+  routeTableId: string
+  vpcId: string | null
+  /** IPv4 or IPv6 CIDRs, or prefix list IDs, routed to the gateway. */
+  destinations: string[]
+  subnetIds: string[]
+  /** The VPC's main route table, which also serves subnets without their own. */
+  main: boolean
+  consoleUrl: string
+  inspect: string
+  replace: string[]
+  delete: string[]
+}
+
+export interface NatRoutesFix {
+  natGatewayId: string
+  tables: NatRouteTable[]
 }
 
 /** R7 non-production schedule (PRD FR-ANA-07): one tag, read by a stack the customer deploys. */

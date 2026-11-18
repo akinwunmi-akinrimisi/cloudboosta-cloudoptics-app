@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Check, Copy, ExternalLink, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, ExternalLink, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi } from '../app/context'
@@ -15,6 +15,8 @@ import type {
 } from '../api/types'
 import { ApiError } from '../api/types'
 import { UsageChart } from '../components/charts'
+import { Commands, CopyButton } from '../components/commands'
+import { NatRoutes } from '../components/natRoutes'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { RULES } from '../lib/rules'
 import { Kpi, useMoney, useWorkspace } from './Workspace'
@@ -38,6 +40,7 @@ const FACTORS: Record<string, string> = {
   version_upgrade: 'A version upgrade, so test it on a copy first',
   no_downgrade: 'A Kubernetes upgrade cannot be rolled back in place',
   routes_unchecked: 'Route tables may still send traffic to it',
+  routes_point_here: 'Route tables still send traffic to it',
   one_year_commitment: 'Commits to paying for a year',
   paid_in_dollars: 'Paid in US dollars, so it costs more if your currency weakens',
   usage_may_fall: 'Little room if usage falls',
@@ -70,6 +73,10 @@ const NOTES: Record<string, string> = {
   short_billing_history: 'Based on less than 30 days of bills, so the monthly figure may change.',
   route_tables_not_checked:
     'Found from the bill alone: we cannot see your route tables, so check them before you delete it.',
+  route_tables_need_access_update:
+    'We could not read your route tables: update CloudOptics access to 2.0.4 (Connections) so we can check them. Until then, check them yourself before you delete it.',
+  no_routes_to_it: 'No route tables send traffic to it.',
+  routes_still_point_here: 'Route tables still send traffic to it: change those routes before you delete it.',
   hourly_from_daily_cur:
     'Sized from daily bills (each day as its average hour), at the cautious end of the range, so quiet hours stay covered.',
   advisory_only: 'Advisory only: Cloudoptics never buys anything for you.',
@@ -534,39 +541,6 @@ function Outcome({ rec, money }: { rec: Recommendation; money: (usd: number) => 
   )
 }
 
-function CopyButton({ text, label = 'Copy command' }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false)
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      className="shrink-0 rounded-sm p-1.5 text-secondary hover:bg-surface-2"
-      onClick={() => {
-        void navigator.clipboard?.writeText(text).then(() => {
-          setCopied(true)
-          setTimeout(() => setCopied(false), 1500)
-        })
-      }}
-    >
-      {copied ? <Check size={14} /> : <Copy size={14} />}
-    </button>
-  )
-}
-
-function Commands({ steps }: { steps: string[] }) {
-  return (
-    <ol className="flex flex-col gap-2">
-      {steps.map((step, i) => (
-        <li key={step} className="flex items-start gap-2 rounded-sm bg-surface-2 px-3 py-2">
-          <span className="pt-0.5 text-xs text-muted">{i + 1}</span>
-          <code className="min-w-0 flex-1 break-all font-mono text-xs">{step}</code>
-          <CopyButton text={step} />
-        </li>
-      ))}
-    </ol>
-  )
-}
-
 const DAY_NAMES: Record<string, string> = { 'MO-FR': 'Monday to Friday' }
 
 /** R7's fix: one tag to copy, and the scheduler stack (deployed by the customer) that acts on it. */
@@ -767,6 +741,7 @@ const EVIDENCE: Record<string, string> = {
   usageType: 'Billed as',
   natHours: 'Hours billed',
   natBytes: 'Data processed (GB)',
+  routeTables: 'Route tables sending traffic to it',
   eligibleOnDemandUsdHour: 'On-demand spend a Savings Plan could cover',
   baselineP10UsdHour: 'Quiet-hour level (10th percentile)',
   nettedSavingsUsdMonth: 'Other savings taken off first',
@@ -1020,6 +995,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
             ) : (
               r.fix.steps.length > 0 && <Commands steps={r.fix.steps} />
             )}
+            {r.fix.routes && r.fix.routes.tables.length > 0 && <NatRoutes routes={r.fix.routes} />}
             {r.fix.notes && <p className="text-xs text-muted">{r.fix.notes}</p>}
           </div>
           {r.fix.alternative && (

@@ -492,8 +492,10 @@ describe('Cloudoptics web app', () => {
     await user.selectOptions(await screen.findByLabelText('Type'), 'R10_idle_nat')
     expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(1)
     await user.click(screen.getByRole('link', { name: /Delete idle NAT gateway nat-0d1e2f3a4b5c6d7e8/ }))
-    expect(await screen.findByText('Route tables may still send traffic to it')).toBeTruthy()
-    expect(screen.getByText(/we cannot see your route tables/)).toBeTruthy()
+    // Scanned with access 2.0.4: no route table sends traffic to it, so no routes risk.
+    expect(await screen.findByText('No route tables send traffic to it.')).toBeTruthy()
+    expect(screen.queryByText('Route tables may still send traffic to it')).toBeNull()
+    expect(screen.getByText('Route tables sending traffic to it')).toBeTruthy()
     expect(screen.getByRole('link', { name: /Open in AWS console/ }).getAttribute('href')).toContain(
       '#NatGatewayDetails:natGatewayId=nat-0d1e2f3a4b5c6d7e8',
     )

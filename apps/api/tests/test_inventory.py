@@ -94,6 +94,19 @@ class FakeEc2:
             ]
         }
 
+    def describe_nat_gateways(self, **_: Any) -> dict[str, Any]:
+        return {"NatGateways": self.world.nat_gateways}
+
+    def describe_route_tables(self, **kw: Any) -> dict[str, Any]:
+        self.world.route_table_calls.append(self.region)
+        if self.world.route_tables_error:
+            raise client_error(self.world.route_tables_error, "DescribeRouteTables")
+        # Two pages, to exercise NextToken.
+        pages = self.world.route_tables
+        if "NextToken" not in kw:
+            return {"RouteTables": pages[:1], "NextToken": "2"}
+        return {"RouteTables": pages[1:]}
+
 
 class FakeElbv2:
     def describe_load_balancers(self, **_: Any) -> dict[str, Any]:
@@ -202,6 +215,10 @@ class World:
         self.metric_calls: list[dict[str, Any]] = []
         self.metric_values: dict[str, float] = {}
         self.optimizer: str | None = None
+        self.nat_gateways: list[dict[str, Any]] = []
+        self.route_tables: list[dict[str, Any]] = []
+        self.route_tables_error: str | None = None
+        self.route_table_calls: list[str] = []
 
 
 class FakeSession:
@@ -602,3 +619,136 @@ async def test_a_scan_that_never_finished_stops_showing_as_running(
         "AND job_type = 'inventory.scan' ORDER BY started_at",
         connection,
     ) == [("failed", "interrupted"), ("succeeded", None)]
+
+
+NAT_GATEWAYS = [
+    {
+        "NatGatewayId": "nat-routed",
+        "State": "available",
+        "VpcId": "vpc-1",
+        "SubnetId": "subnet-pub",
+        "CreateTime": LAUNCH,
+        "NatGatewayAddresses": [{"AllocationId": "eipalloc-nat", "PublicIp": "203.0.113.9"}],
+        "Tags": [{"Key": "Name", "Value": "egress"}],
+    },
+    {"NatGatewayId": "nat-unrouted", "State": "available", "VpcId": "vpc-1"},
+]
+ROUTE_TABLES = [
+    {
+        "RouteTableId": "rtb-private",
+        "VpcId": "vpc-1",
+        "Routes": [
+            {"DestinationCidrBlock": "10.0.0.0/16", "GatewayId": "local"},
+            {"DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-routed"},
+            {"DestinationIpv6CidrBlock": "64:ff9b::/96", "NatGatewayId": "nat-routed"},
+        ],
+        "Associations": [{"SubnetId": "subnet-b"}, {"SubnetId": "subnet-a"}],
+    },
+    {
+        "RouteTableId": "rtb-main",
+        "VpcId": "vpc-1",
+        "Routes": [{"DestinationPrefixListId": "pl-1", "NatGatewayId": "nat-routed"}],
+        "Associations": [{"Main": True}],
+    },
+    {"RouteTableId": "rtb-public", "VpcId": "vpc-1", "Routes": [{"GatewayId": "igw-1"}]},
+]
+
+
+def nat_configs(owner_sql, connection: str) -> dict[str, dict[str, Any]]:  # type: ignore[no-untyped-def]
+    return dict(
+        owner_sql(
+            "SELECT resource_id, config FROM resource WHERE resource_type = 'nat_gateway' "
+            "AND region_id = 'eu-west-1' AND connection_id = %s",
+            connection,
+        )
+    )
+
+
+async def test_scan_records_the_route_tables_that_send_traffic_to_each_nat_gateway(
+    client: AsyncClient, login, owner_sql, world
+) -> None:
+    tenant, connection, _, _ = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    world.nat_gateways, world.route_tables = NAT_GATEWAYS, ROUTE_TABLES
+
+    assert await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection)) == "succeeded"
+    configs = nat_configs(owner_sql, connection)
+    routed, unrouted = configs["nat-routed"], configs["nat-unrouted"]
+    assert routed["routeTablesStatus"] == "checked" and routed["routeTablesCheckedAt"]
+    assert routed["routeTables"] == [
+        {
+            "routeTableId": "rtb-private",
+            "vpcId": "vpc-1",
+            "destinations": ["0.0.0.0/0", "64:ff9b::/96"],
+            "subnetIds": ["subnet-a", "subnet-b"],
+            "main": False,
+        },
+        {
+            "routeTableId": "rtb-main",
+            "vpcId": "vpc-1",
+            "destinations": ["pl-1"],
+            "subnetIds": [],
+            "main": True,
+        },
+    ]
+    assert (routed["subnetId"], routed["allocationIds"]) == ("subnet-pub", ["eipalloc-nat"])
+    assert unrouted["routeTablesStatus"] == "checked" and unrouted["routeTables"] == []
+    name = owner_sql(
+        "SELECT name, state FROM resource WHERE resource_id = 'nat-routed' "
+        "AND region_id = 'eu-west-1' AND connection_id = %s",
+        connection,
+    )
+    assert name == [("egress", "available")]
+
+
+async def test_route_tables_are_only_read_where_there_are_nat_gateways(
+    client: AsyncClient, login, owner_sql, world
+) -> None:
+    tenant, connection, _, _ = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    world.route_tables = ROUTE_TABLES
+    assert await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection)) == "succeeded"
+    assert world.route_table_calls == []
+    assert nat_configs(owner_sql, connection) == {}
+
+
+async def test_route_tables_access_denied_keeps_the_scan_going(
+    client: AsyncClient, login, owner_sql, world
+) -> None:
+    """A connection still on template 2.0.3 cannot call DescribeRouteTables."""
+    tenant, connection, account, headers = await setup(client, login, owner_sql)
+    world.no_access = {"555555555555"}
+    world.nat_gateways, world.route_tables_error = NAT_GATEWAYS, "UnauthorizedOperation"
+
+    assert await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection)) == "partial"
+    configs = nat_configs(owner_sql, connection)
+    assert set(configs) == {"nat-routed", "nat-unrouted"}
+    assert all(
+        c["routeTablesStatus"] == "access_denied" and c["routeTables"] is None
+        for c in configs.values()
+    )
+    # Every other resource in the region is still there, and the region still counts.
+    assert owner_sql(
+        "SELECT count(*) FROM resource WHERE connection_id = %s AND region_id = 'eu-west-1' "
+        "AND deleted_at IS NULL",
+        connection,
+    ) == [(11,)]
+    summary = (await client.get(f"/v1/tenants/{tenant}/resources/summary", headers=headers)).json()
+    [last] = summary["scans"]
+    assert last["status"] == "partial" and last["regions"] == 2
+    assert sorted(last["errors"]) == [
+        f"{account} {region}: route tables UnauthorizedOperation (update CloudOptics access)"
+        for region in ("af-south-1", "eu-west-1")
+    ]
+
+    # Another error says so without asking for an update.
+    world.route_tables_error = "RequestLimitExceeded"
+    assert await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection)) == "partial"
+    assert {c["routeTablesStatus"] for c in nat_configs(owner_sql, connection).values()} == {
+        "error"
+    }
+
+    # After the update to 2.0.4 the next scan checks them.
+    world.route_tables_error, world.route_tables = None, ROUTE_TABLES
+    assert await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection)) == "succeeded"
+    assert nat_configs(owner_sql, connection)["nat-routed"]["routeTablesStatus"] == "checked"

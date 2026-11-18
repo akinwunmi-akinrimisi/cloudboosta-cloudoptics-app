@@ -8,7 +8,7 @@ Description: >-
 
 Metadata:
   cloudoptics:
-    templateVersion: "2.0.3"
+    templateVersion: "2.0.4"
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label: { default: Connection (pre-filled by Cloudoptics) }
@@ -763,6 +763,8 @@ Resources:
                   - ec2:DescribeImages
                   - ec2:DescribeAddresses
                   - ec2:DescribeNatGateways
+                  # Which route tables still send traffic to a NAT gateway (R10).
+                  - ec2:DescribeRouteTables
                   - ec2:DescribeReservedInstances
                   - ec2:DescribeTags
                   - rds:Describe*
@@ -846,7 +848,7 @@ Resources:
       ServiceTimeout: "960"
       Action: setup
       # A new version number makes every update run the setup step (and the callback) again.
-      TemplateVersion: "2.0.3"
+      TemplateVersion: "2.0.4"
       StackName: !Ref AWS::StackName
       AccountId: !Ref AWS::AccountId
       ExternalId: !Ref ExternalId
@@ -860,7 +862,7 @@ Resources:
 
 Outputs:
   TemplateVersion:
-    Value: "2.0.3"
+    Value: "2.0.4"
   BillingRoleArn:
     Value: !GetAtt BillingRole.Arn
   ResourceRoleArn:
