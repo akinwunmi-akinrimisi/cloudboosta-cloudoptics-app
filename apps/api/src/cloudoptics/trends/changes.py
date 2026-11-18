@@ -105,15 +105,30 @@ def contributors(rows: list[queries.ChangeRow]) -> list[Contributor]:
     return sorted(out, key=lambda c: -abs(c.change_usd))
 
 
+def whole_months(month: date) -> tuple[tuple[date, date], tuple[date, date]]:
+    """The whole month starting ``month`` and the whole month before it."""
+    start = month.replace(day=1)
+    end = (start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    prev_end = start - timedelta(days=1)
+    return (start, end), (prev_end.replace(day=1), prev_end)
+
+
 async def what_changed(
-    session: AsyncSession, through: date, limit: int = TOP
+    session: AsyncSession, through: date, limit: int = TOP, *, month: date | None = None
 ) -> WhatChanged | None:
     """Up to the latest day of bills on or before ``through``; ``None`` without bills.
+    ``month``: an ended month instead, the whole of it against the whole month before.
     Inside a tenant-scoped transaction."""
-    span = await queries.data_range(session, through)
-    if span is None:
-        return None
-    current, previous = periods(span[1])
+    if month is not None:
+        current, previous = whole_months(month)
+        span = await queries.data_range(session, current[1])
+        if span is None or span[1] < current[0]:  # no bills in the month
+            return None
+    else:
+        span = await queries.data_range(session, through)
+        if span is None:
+            return None
+        current, previous = periods(span[1])
     rows = await queries.change_rows(session, current, previous)
     found = contributors(rows)
     return WhatChanged(

@@ -32,6 +32,7 @@ import type {
   CostContributor,
   CostDimension,
   CostForecast,
+  CostMonths,
   CostSummary,
   CurrentRate,
   DailyCosts,
@@ -41,8 +42,11 @@ import type {
   Invite,
   LastScan,
   Member,
+  MonthState,
+  PeriodReload,
   PermissionCheck,
   Recommendation,
+  ReloadStatus,
   RecommendationChange,
   RecommendationEvent,
   RecommendationQuery,
@@ -123,8 +127,23 @@ interface State {
   invites?: Record<string, Invite[]>
   /** Connections whose accounts have the resource stack (after a demo scan). */
   resourceAccess?: Record<string, boolean>
+  /** connectionId -> the demo's latest reload of its bills. */
+  reloads?: Record<string, { requestedAt: string; period: string | null }>
   /** One-click links waiting for the (simulated) stack to report back. */
   intents?: Record<string, { tenantId: string; createdAt: number; connectionId: string | null }>
+}
+
+/** The demo's ended months, newest first: last month matches its monthly report. */
+const DEMO_MONTH_TOTALS = [1186.4, 1237.75, 1201.3]
+const RELOAD_EVERY_MS = 3_600_000
+
+/** As the API: final from the 6th of the month after. */
+function demoMonthState(month: string): MonthState {
+  const now = new Date()
+  const current = now.toISOString().slice(0, 7)
+  if (month >= current) return 'current'
+  const next = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 6))
+  return now.getTime() >= next.getTime() ? 'final' : 'changing'
 }
 
 const empty = (): State => ({
@@ -729,9 +748,13 @@ export class DemoApi implements Api {
   /** How long a demo resource scan runs, so the progress bar can be seen. */
   private readonly scanMs: number
 
+  /** How long a demo reload of the bills runs (it shows as running until then). */
+  private readonly reloadMs: number
+
   constructor(latencyMs = 250) {
     this.latencyMs = latencyMs
     this.scanMs = latencyMs * 32
+    this.reloadMs = latencyMs * 16
   }
 
   private save(): void {
@@ -1143,6 +1166,67 @@ export class DemoApi implements Api {
     }
   }
 
+  async reloadBills(tenantId: string, connectionId: string, period: string | null): Promise<ReloadStatus> {
+    await this.tick()
+    const conn = this.connection(tenantId, connectionId)
+    if ((conn.status !== 'healthy' && conn.status !== 'degraded') || !conn.curBucket) {
+      throw new ApiError(409, 'Check the connection first: bills are reloaded for a working connection with an export.')
+    }
+    const last = this.state.reloads?.[connectionId]
+    if (last && Date.now() - Date.parse(last.requestedAt) < RELOAD_EVERY_MS) {
+      const next = new Date(Date.parse(last.requestedAt) + RELOAD_EVERY_MS)
+      throw new ApiError(
+        429,
+        `Bills for this connection were reloaded less than an hour ago. Try again after ${next.toISOString().slice(11, 16)} UTC.`,
+      )
+    }
+    ;(this.state.reloads ??= {})[connectionId] = { requestedAt: new Date().toISOString(), period }
+    this.save()
+    // Like the worker: queued now, the result a few seconds later (reloadStatus).
+    const status = await this.reloadStatus(tenantId, connectionId)
+    return this.reloadMs ? { ...status, status: 'queued' } : status
+  }
+
+  async reloadStatus(tenantId: string, connectionId: string): Promise<ReloadStatus> {
+    await this.tick()
+    this.connection(tenantId, connectionId)
+    const none: ReloadStatus = {
+      connectionId, status: 'none', period: null, requestedAt: null, finishedAt: null, periods: [], error: null, nextAllowedAt: null,
+    }
+    const last = this.state.reloads?.[connectionId]
+    if (!last) return none
+    const requested = Date.parse(last.requestedAt)
+    const next = requested + RELOAD_EVERY_MS
+    const base = {
+      ...none,
+      period: last.period,
+      requestedAt: last.requestedAt,
+      nextAllowedAt: Date.now() < next ? new Date(next).toISOString() : null,
+    }
+    if (Date.now() - requested < this.reloadMs) return { ...base, status: 'running' }
+    // The demo bucket has the current month and the ended ones the Cost Explorer shows.
+    const inBucket = [new Date().toISOString().slice(0, 7), ...this.pastMonths().map((m) => m.month)]
+    const asked = last.period ? [last.period] : [...inBucket].reverse()
+    const periods: PeriodReload[] = asked.map((month, i) =>
+      inBucket.includes(month)
+        ? {
+            period: month,
+            // The months loaded before resource costs existed get them; the rest read the same.
+            outcome: i === 0 || last.period ? 'reloaded' : 'unchanged',
+            version: `${month}-demo`,
+            detail: null,
+          }
+        : { period: month, outcome: 'not_in_bucket', version: null, detail: null },
+    )
+    const good = periods.some((p) => p.outcome === 'reloaded' || p.outcome === 'unchanged')
+    return {
+      ...base,
+      status: good ? 'succeeded' : 'failed',
+      finishedAt: new Date(requested + this.reloadMs).toISOString(),
+      periods,
+    }
+  }
+
   async resourceSummary(tenantId: string): Promise<InventorySummary> {
     await this.tick()
     const scans: LastScan[] = []
@@ -1254,16 +1338,64 @@ export class DemoApi implements Api {
     return structuredClone(conn)
   }
 
-  async costSummary(tenantId: string): Promise<CostSummary> {
+  /** The demo's ended months with bills, newest first (the last one matches its monthly report). */
+  private pastMonths(): { month: string; total: number }[] {
+    const now = new Date()
+    return DEMO_MONTH_TOTALS.map((total, i) => ({
+      month: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1 - i, 1)).toISOString().slice(0, 7),
+      total,
+    }))
+  }
+
+  /** An ended month the demo has bills for, or null for the current month. */
+  private pastMonth(month: string | null | undefined): { month: string; total: number; index: number } | null {
+    if (!month || month >= new Date().toISOString().slice(0, 7)) return null
+    const index = this.pastMonths().findIndex((m) => m.month === month)
+    return { month, total: index >= 0 ? this.pastMonths()[index]!.total : 0, index }
+  }
+
+  async costMonths(tenantId: string): Promise<CostMonths> {
+    await this.tick()
+    this.tenant(tenantId)
+    if (!this.hasData(tenantId)) return { currency: 'USD', months: [] }
+    const summary = await this.costSummary(tenantId)
+    const made = this.state.reportsMade?.[tenantId] ?? {}
+    const lastDay = (month: string) =>
+      new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10)
+    return {
+      currency: 'USD',
+      months: [
+        {
+          month: summary.month,
+          source: 'cur',
+          total: summary.monthToDate?.effective ?? 0,
+          dataThrough: summary.dataThrough ?? lastDay(summary.month),
+          state: 'current',
+          report: null,
+        },
+        ...this.pastMonths().map(({ month, total }) => ({
+          month,
+          source: 'cur' as const,
+          total,
+          dataThrough: lastDay(month),
+          state: demoMonthState(month),
+          report: made[month] ? ('stored' as const) : ('draft' as const),
+        })),
+      ],
+    }
+  }
+
+  async costSummary(tenantId: string, month?: string | null): Promise<CostSummary> {
     await this.tick()
     this.tenant(tenantId)
     const now = new Date()
-    const month = now.toISOString().slice(0, 7)
+    const current = now.toISOString().slice(0, 7)
     const connected = (this.state.connections[tenantId] ?? []).filter((c) => c.status !== 'disconnected')
+    const past = this.pastMonth(month)
     const empty: CostSummary = {
       status: connected.length ? 'waiting' : 'no_connection',
       source: null,
-      month,
+      month: past?.month ?? current,
       currency: 'USD',
       dataThrough: null,
       lastLoadAt: null,
@@ -1271,6 +1403,22 @@ export class DemoApi implements Api {
       monthToDate: null,
       forecast: null,
       previousMonth: null,
+      monthState: past ? demoMonthState(past.month) : 'current',
+    }
+    if (past) {
+      if (!this.hasData(tenantId) || past.index < 0) return empty
+      const before = this.pastMonths()[past.index + 1]?.total ?? null
+      const lastDay = new Date(Date.UTC(Number(past.month.slice(0, 4)), Number(past.month.slice(5, 7)), 0))
+      return {
+        ...empty,
+        status: 'ready',
+        source: 'cur',
+        dataThrough: lastDay.toISOString().slice(0, 10),
+        lastLoadAt: now.toISOString(),
+        lastLoadStatus: 'succeeded',
+        monthToDate: { effective: past.total, billed: Math.round((past.total + 60) * 100) / 100, credits: -60 },
+        previousMonth: before,
+      }
     }
     if (!this.hasData(tenantId)) return empty
     // Illustrative figures in the shape of tools/cur-fixture: about USD 41 a day.
@@ -1300,14 +1448,35 @@ export class DemoApi implements Api {
         // AWS Support (Developer) is billed on the 1st, so it is already in the month so far.
         monthlyCharges: 0,
       },
-      previousMonth: 1237.75,
+      previousMonth: DEMO_MONTH_TOTALS[0]!,
     }
   }
 
-  async costDaily(tenantId: string, days = 30): Promise<DailyCosts> {
+  async costDaily(tenantId: string, days = 30, month?: string | null): Promise<DailyCosts> {
     await this.tick()
     this.tenant(tenantId)
     if (!this.hasData(tenantId)) return { source: null, currency: 'USD', points: [] }
+    const past = this.pastMonth(month)
+    if (past) {
+      if (past.index < 0) return { source: null, currency: 'USD', points: [] }
+      // Every day of the month, the same weekly shape, scaled to the month's total.
+      const year = Number(past.month.slice(0, 4))
+      const m = Number(past.month.slice(5, 7)) - 1
+      const count = new Date(Date.UTC(year, m + 1, 0)).getUTCDate()
+      const shape = Array.from({ length: count }, (_, i) => {
+        const weekday = new Date(Date.UTC(year, m, i + 1)).getUTCDay()
+        return (weekday === 0 || weekday === 6 ? 31.4 : 45.2) + ((i * 7) % 5) * 0.9
+      })
+      const scale = past.total / shape.reduce((sum, v) => sum + v, 0)
+      return {
+        source: 'cur',
+        currency: 'USD',
+        points: shape.map((v, i) => ({
+          date: new Date(Date.UTC(year, m, i + 1)).toISOString().slice(0, 10),
+          amount: Math.round(v * scale * 100) / 100,
+        })),
+      }
+    }
     const today = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate())
     const points = Array.from({ length: days }, (_, i) => {
       const day = new Date(today - (days - i) * 86_400_000)
@@ -1368,21 +1537,23 @@ export class DemoApi implements Api {
     }
   }
 
-  /** Month to date against the same days last month, for the demo estate. */
-  async costChanges(tenantId: string): Promise<CostChanges> {
+  /** Month to date against the same days last month (an ended month: whole months), for the demo estate. */
+  async costChanges(tenantId: string, month?: string | null): Promise<CostChanges> {
     await this.tick()
     this.tenant(tenantId)
     const empty: CostChanges = {
       status: 'no_data', month: null, current: null, previous: null, usd: 0, previousUsd: 0, changeUsd: 0, rises: [], falls: [],
     }
     if (!this.hasData(tenantId)) return empty
-    const summary = await this.costSummary(tenantId)
+    const past = this.pastMonth(month)
+    if (past && past.index < 0) return empty
+    const summary = await this.costSummary(tenantId, past?.month)
     const to = summary.dataThrough ?? isoDaysAgo(1)
     const from = `${to.slice(0, 8)}01`
     const prev = new Date(Date.UTC(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 2, 1))
     const prevEnd = new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() + 1, 0)).getUTCDate()
     const prevMonth = prev.toISOString().slice(0, 8)
-    const prevTo = `${prevMonth}${String(Math.min(Number(to.slice(8, 10)), prevEnd)).padStart(2, '0')}`
+    const prevTo = `${prevMonth}${String(past ? prevEnd : Math.min(Number(to.slice(8, 10)), prevEnd)).padStart(2, '0')}`
     const share = Math.max(Number(to.slice(8, 10)), 1) / 30
     const item = (
       serviceCode: string, serviceName: string, region: string | null, usd: number, previousUsd: number, usageType: string,
@@ -1423,11 +1594,12 @@ export class DemoApi implements Api {
   }
 
   // The demo estate has fewer items than any limit, so ``limit`` changes nothing here.
-  async costBreakdown(tenantId: string, dimension: CostDimension, _limit = 8): Promise<CostBreakdown> {
+  async costBreakdown(tenantId: string, dimension: CostDimension, _limit = 8, requested?: string | null): Promise<CostBreakdown> {
     await this.tick()
     this.tenant(tenantId)
-    const month = new Date().toISOString().slice(0, 7)
-    if (!this.hasData(tenantId))
+    const past = this.pastMonth(requested)
+    const month = past?.month ?? new Date().toISOString().slice(0, 7)
+    if (!this.hasData(tenantId) || (past && past.index < 0))
       return {
         source: null,
         month,
@@ -1454,6 +1626,9 @@ export class DemoApi implements Api {
         ['global', 'Global', 24.1],
       ],
     }
+    // An ended month: the same estate, scaled to the month's spend excluding tax (about 3%).
+    const scale = past ? (past.total * 0.97) / rows[dimension].reduce((sum, [, , amount]) => sum + amount, 0) : 1
+    if (scale !== 1) rows[dimension] = rows[dimension].map(([k, l, a]) => [k, l, Math.round(a * scale * 100) / 100])
     const total = rows[dimension].reduce((sum, [, , amount]) => sum + amount, 0)
     return {
       source: 'cur',

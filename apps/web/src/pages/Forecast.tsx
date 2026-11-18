@@ -159,10 +159,14 @@ export function changeSentence(c: CostContributor, money: (usd: number) => strin
 }
 
 /** What changed (PRD FR-ANA-12): month to date against the same days last month, biggest rises and falls. */
-export function WhatChanged({ tenantId }: { tenantId: string }) {
+/** Month to date against the same days last month; for an ended `month`, the whole month against the month before. */
+export function WhatChanged({ tenantId, month = null }: { tenantId: string; month?: string | null }) {
   const api = useApi()
   const { money } = useMoney()
-  const changes = useQuery({ queryKey: ['cost-changes', tenantId], queryFn: () => api.costChanges(tenantId) })
+  const changes = useQuery({
+    queryKey: ['cost-changes', tenantId, month],
+    queryFn: () => api.costChanges(tenantId, month),
+  })
   const w: CostChanges | undefined = changes.data
   if (!w || w.status === 'no_data' || !w.current || !w.previous) return null
   const pct = w.previousUsd > 0 ? ` (${w.changeUsd >= 0 ? '+' : ''}${Math.round((100 * w.changeUsd) / w.previousUsd)}%)` : ''

@@ -29,6 +29,7 @@ import type {
   CostChanges,
   CostDimension,
   CostForecast,
+  CostMonths,
   CostSummary,
   CurrentRate,
   DailyCosts,
@@ -47,6 +48,7 @@ import type {
   RuleSettingsView,
   TenantChange,
   UsageSeries,
+  ReloadStatus,
   ResourceScan,
   Role,
   Tenant,
@@ -247,24 +249,39 @@ export class HttpApi implements Api {
     return this.request('GET', `/v1/tenants/${tenantId}/connections/${connectionId}/setup`)
   }
 
-  costSummary(tenantId: string): Promise<CostSummary> {
-    return this.request('GET', `/v1/tenants/${tenantId}/costs/summary`)
+  costSummary(tenantId: string, month?: string | null): Promise<CostSummary> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/summary${month ? `?month=${month}` : ''}`)
   }
 
-  costDaily(tenantId: string, days = 30): Promise<DailyCosts> {
-    return this.request('GET', `/v1/tenants/${tenantId}/costs/daily?days=${days}`)
+  costDaily(tenantId: string, days = 30, month?: string | null): Promise<DailyCosts> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/daily?days=${days}${month ? `&month=${month}` : ''}`)
   }
 
-  costBreakdown(tenantId: string, dimension: CostDimension, limit = 8): Promise<CostBreakdown> {
-    return this.request('GET', `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}&limit=${limit}`)
+  costBreakdown(tenantId: string, dimension: CostDimension, limit = 8, month?: string | null): Promise<CostBreakdown> {
+    return this.request(
+      'GET',
+      `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}&limit=${limit}${month ? `&month=${month}` : ''}`,
+    )
+  }
+
+  costMonths(tenantId: string): Promise<CostMonths> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/months`)
+  }
+
+  reloadBills(tenantId: string, connectionId: string, period: string | null): Promise<ReloadStatus> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connections/${connectionId}/reload`, { period })
+  }
+
+  reloadStatus(tenantId: string, connectionId: string): Promise<ReloadStatus> {
+    return this.request('GET', `/v1/tenants/${tenantId}/connections/${connectionId}/reload`)
   }
 
   costForecast(tenantId: string): Promise<CostForecast> {
     return this.request('GET', `/v1/tenants/${tenantId}/costs/forecast`)
   }
 
-  costChanges(tenantId: string): Promise<CostChanges> {
-    return this.request('GET', `/v1/tenants/${tenantId}/costs/changes`)
+  costChanges(tenantId: string, month?: string | null): Promise<CostChanges> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/changes${month ? `?month=${month}` : ''}`)
   }
 
   listRecommendations(tenantId: string, query: RecommendationQuery = {}): Promise<Recommendation[]> {

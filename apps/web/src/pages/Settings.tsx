@@ -434,6 +434,7 @@ const ACTIONS: Record<string, string> = {
   'recommendation.assigned': 'Recommendation assigned',
   'recommendation.savings_measured': 'Realised savings measured',
   'rule_settings.updated': 'Changed recommendation rules',
+  'ingestion.reload_requested': 'Reloaded bills from the S3 bucket',
   'fx_rate.set': 'Exchange rate set',
   'invite.created': 'Invited someone',
   'invite.revoked': 'Cancelled an invite',

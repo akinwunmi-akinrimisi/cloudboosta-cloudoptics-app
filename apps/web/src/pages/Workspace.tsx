@@ -17,6 +17,7 @@ import { Alert, Button, Card, StatusPill, cx } from '../components/ui'
 import { ACCESS_STACK_NAME } from '../api/types'
 import { CopyValue } from './Onboarding'
 import { WhatChanged } from './Forecast'
+import { ReloadBills } from './ReloadBills'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
 
@@ -388,6 +389,9 @@ export function Connections() {
             tenantId !== null &&
             c.stackName === ACCESS_STACK_NAME &&
             (c.status === 'healthy' || c.status === 'degraded') && <ResourceAccess connection={c} tenantId={tenantId} />}
+          {isAdmin && tenantId !== null && c.curBucket && (c.status === 'healthy' || c.status === 'degraded') && (
+            <ReloadBills connection={c} tenantId={tenantId} />
+          )}
         </Card>
       ))}
       {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}

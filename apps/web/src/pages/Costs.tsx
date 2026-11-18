@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { useState, type FormEvent } from 'react'
 
 import { useApi } from '../app/context'
-import type { CostDimension, CreditsRunway } from '../api/types'
+import type { CostDimension, CostMonth, CreditsRunway } from '../api/types'
 import { DailySpendChart } from '../components/charts'
 import { Alert, Button, Card, Field, cx } from '../components/ui'
 import { ForecastPanel, WhatChanged } from './Forecast'
@@ -41,41 +42,70 @@ function Toggle<T extends string | number>({
   )
 }
 
-/** Cost Explorer (PRD US-2.x): daily trend and this month's spend by service, account or region. */
+/** "2026-10" as "October 2026". */
+export function monthLabel(month: string): string {
+  return new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
+
+/** Cost Explorer (PRD US-2.x): daily trend and a month's spend by service, account or region; this month by default. */
 export function Costs() {
   const api = useApi()
   const { tenantId } = useWorkspace()
   const { money } = useMoney()
   const [days, setDays] = useState<(typeof RANGES)[number]>(30)
   const [dimension, setDimension] = useState<CostDimension>('service')
+  // null: the current month.
+  const [chosen, setChosen] = useState<string | null>(null)
+  const months = useQuery({
+    queryKey: ['cost-months', tenantId],
+    queryFn: () => api.costMonths(tenantId as string),
+    enabled: tenantId !== null,
+  })
+  const ended = (months.data?.months ?? []).filter((m) => m.state !== 'current')
+  const past = ended.find((m) => m.month === chosen) ?? null
+  const month = past?.month ?? null
   const daily = useQuery({
-    queryKey: ['cost-daily', tenantId, days],
-    queryFn: () => api.costDaily(tenantId as string, days),
+    queryKey: ['cost-daily', tenantId, month ?? days],
+    queryFn: () => api.costDaily(tenantId as string, days, month),
     enabled: tenantId !== null,
   })
   const breakdown = useQuery({
-    queryKey: ['cost-breakdown', tenantId, dimension, 25],
-    queryFn: () => api.costBreakdown(tenantId as string, dimension, 25),
+    queryKey: ['cost-breakdown', tenantId, dimension, 25, month],
+    queryFn: () => api.costBreakdown(tenantId as string, dimension, 25, month),
     enabled: tenantId !== null,
   })
   const points = daily.data?.points ?? []
   const items = breakdown.data?.items ?? []
   const total = points.reduce((sum, p) => sum + p.amount, 0)
   const provisional = daily.data?.source === 'cost_explorer'
-  const month = breakdown.data
-    ? new Date(`${breakdown.data.month}-01T00:00:00Z`).toLocaleDateString('en-GB', {
-        month: 'long',
-        year: 'numeric',
-        timeZone: 'UTC',
-      })
-    : ''
+  const breakdownMonth = breakdown.data ? monthLabel(breakdown.data.month) : ''
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Cost Explorer</h1>
-        <p className="text-sm text-secondary">Amortised cost after credits, from your AWS Cost and Usage Report.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Cost Explorer</h1>
+          <p className="text-sm text-secondary">Amortised cost after credits, from your AWS Cost and Usage Report.</p>
+        </div>
+        {ended.length > 0 && (
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-secondary">Month</span>
+            <select
+              className="h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm"
+              value={month ?? ''}
+              onChange={(e) => setChosen(e.target.value || null)}
+            >
+              <option value="">This month</option>
+              {ended.map((m) => (
+                <option key={m.month} value={m.month}>
+                  {monthLabel(m.month)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
+      {past && <PastMonth month={past} money={money} />}
       {daily.data && daily.data.source === null && (
         <Alert tone="info">Costs appear here once the first report from AWS is loaded.</Alert>
       )}
@@ -87,12 +117,12 @@ export function Costs() {
       <Card className="p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-base font-semibold">Daily spend</h2>
+            <h2 className="text-base font-semibold">Daily spend{past && ` · ${monthLabel(past.month)}`}</h2>
             <p className="text-xs text-muted">
               {points.length > 0 ? `${money(total)} over ${points.length} days` : 'No daily data yet'}
             </p>
           </div>
-          {!provisional && (
+          {!provisional && !past && (
             <Toggle
               label="Range"
               options={RANGES.map((r) => ({ id: r, label: `${r} days` }))}
@@ -108,7 +138,7 @@ export function Costs() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-base font-semibold">
-              Spend by {dimension} · {month}
+              Spend by {dimension} · {breakdownMonth}
             </h2>
             <p className="text-xs text-muted">
               {breakdown.data && breakdown.data.total > 0 ? `${money(breakdown.data.total)} excluding tax` : ''}
@@ -121,7 +151,9 @@ export function Costs() {
           <p className="text-sm text-secondary">
             {breakdown.data.source === 'cost_explorer'
               ? 'Available once the first Cost and Usage Report is loaded.'
-              : 'No spend this month yet.'}
+              : past
+                ? 'No spend in this month.'
+                : 'No spend this month yet.'}
           </p>
         )}
         {items.length > 0 && (
@@ -161,10 +193,36 @@ export function Costs() {
           </table>
         )}
       </Card>
-      {tenantId !== null && <ForecastPanel tenantId={tenantId} />}
-      {tenantId !== null && <WhatChanged tenantId={tenantId} />}
-      {tenantId !== null && <CreditsCard tenantId={tenantId} />}
+      {/* The forecast and the credits runway are about the current month only. */}
+      {tenantId !== null && !past && <ForecastPanel tenantId={tenantId} />}
+      {tenantId !== null && <WhatChanged tenantId={tenantId} month={month} />}
+      {tenantId !== null && !past && <CreditsCard tenantId={tenantId} />}
     </div>
+  )
+}
+
+/** Which ended month is shown, whether its figures are final, and its monthly report. */
+function PastMonth({ month: m, money }: { month: CostMonth; money: (usd: number) => string }) {
+  const name = monthLabel(m.month)
+  return (
+    <Alert tone={m.state === 'final' ? 'info' : 'warning'}>
+      <p>
+        <strong>{name}</strong>: {money(m.total)} after credits,{' '}
+        {m.source === 'cur' ? 'from the AWS bills' : 'provisional figures from AWS Cost Explorer'}.{' '}
+        {m.state === 'final'
+          ? 'The bill for this month is final.'
+          : 'Still changing: AWS may restate this month until its bill is final, usually by the 6th of the next month.'}{' '}
+        The forecast and AWS credits cover the current month only.
+      </p>
+      {m.report && (
+        <p className="mt-1">
+          <Link to="/reports" search={{ month: m.month }} className="font-medium underline">
+            Open the {name} report
+          </Link>
+          {m.report === 'draft' && ' (a draft from the latest data)'}
+        </p>
+      )}
+    </Alert>
   )
 }
 
