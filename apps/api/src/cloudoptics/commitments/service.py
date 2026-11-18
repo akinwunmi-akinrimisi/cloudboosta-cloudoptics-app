@@ -55,25 +55,6 @@ PURCHASE_URL = "https://console.aws.amazon.com/costmanagement/home#/savings-plan
 
 RefreshStatus = Literal["skipped", "succeeded", "partial", "failed"]
 
-# Savings-Plan-eligible usage: EC2 instance hours, Fargate, Lambda duration. ``billed``
-# (unblended) cost of covered usage is cancelled by its SavingsPlanNegation and reserved
-# usage is billed at zero, so the sum is the on-demand spend not yet covered.
-ELIGIBLE = (
-    "charge_category = 'Usage' AND coalesce(usage_type, '') !~* 'spot' AND ("
-    "(service_code = 'AmazonEC2' AND usage_type ~* '(BoxUsage|DedicatedUsage|HostUsage)') "
-    "OR (service_code IN ('AmazonECS', 'AmazonEKS') AND usage_type ~* 'Fargate') "
-    "OR (service_code = 'AWSLambda' AND usage_type ~* '(Lambda-GB-Second|Lambda-Provisioned)'))"
-)
-
-
-# A constant: no request value is ever formatted into it.
-ELIGIBLE_DAILY = (
-    "SELECT usage_date, sum(billed_cost_usd) AS usd FROM cost_daily "  # noqa: S608
-    f"WHERE connection_id = :c AND usage_date BETWEEN :first AND :last AND {ELIGIBLE} "
-    "GROUP BY usage_date"
-)
-
-
 # --- Refresh ------------------------------------------------------------------------------
 
 
@@ -462,7 +443,20 @@ async def eligible_daily(
         return [], None
     first = max(span.first, span.last - timedelta(days=advisor.BASELINE_DAYS - 1))
     rows = await session.execute(
-        text(ELIGIBLE_DAILY),
+        # Savings-Plan-eligible usage: EC2 instance hours, Fargate, Lambda duration. The
+        # billed (unblended) cost of covered usage is cancelled by its SavingsPlanNegation
+        # and reserved usage is billed at zero, so the sum is the on-demand spend not yet
+        # covered.
+        text(
+            "SELECT usage_date, sum(billed_cost_usd) AS usd FROM cost_daily "
+            "WHERE connection_id = :c AND usage_date BETWEEN :first AND :last "
+            "AND charge_category = 'Usage' AND coalesce(usage_type, '') !~* 'spot' AND ("
+            "(service_code = 'AmazonEC2' AND usage_type ~* '(BoxUsage|DedicatedUsage|HostUsage)') "
+            "OR (service_code IN ('AmazonECS', 'AmazonEKS') AND usage_type ~* 'Fargate') "
+            "OR (service_code = 'AWSLambda' "
+            "AND usage_type ~* '(Lambda-GB-Second|Lambda-Provisioned)')) "
+            "GROUP BY usage_date"
+        ),
         {"c": connection_id, "first": first, "last": span.last},
     )
     by_day = {r.usage_date: float(r.usd) for r in rows}
