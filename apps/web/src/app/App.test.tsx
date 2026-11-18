@@ -566,6 +566,46 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByRole('cell', { name: /af-south-1/ })).toBeTruthy()
   })
 
+  it('reviews a previous month on the Cost Explorer', async () => {
+    const { api, tenant, user } = await connectedWorkspace('wanjiru@example.com')
+    await user.click(screen.getByRole('link', { name: 'Cost Explorer' }))
+    expect(await screen.findByRole('heading', { name: 'Forecast' })).toBeTruthy()
+    const [, last] = (await api.costMonths(tenant.id)).months
+    if (!last) throw new Error('the demo has ended months')
+    const name = new Date(`${last.month}-01T00:00:00Z`).toLocaleDateString('en-GB', {
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    })
+
+    await user.selectOptions(await screen.findByLabelText('Month'), last.month)
+    expect(await screen.findByText(name, { selector: 'strong' })).toBeTruthy()
+    expect(screen.getByText(/The forecast and AWS credits cover the current month only/)).toBeTruthy()
+    expect(screen.getByRole('heading', { name: `Daily spend · ${name}` })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: new RegExp(`Spend by service · ${name}`) })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '90 days' })).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Forecast' })).toBeNull())
+    const report = screen.getByRole('link', { name: `Open the ${name} report` })
+    expect(report.getAttribute('href')).toBe(`/reports?month=${last.month}`)
+    // Back to this month: the forecast returns.
+    await user.selectOptions(screen.getByLabelText('Month'), '')
+    expect(await screen.findByRole('heading', { name: 'Forecast' })).toBeTruthy()
+  })
+
+  it('lets admins reload a connection’s bills, once an hour', async () => {
+    const { user } = await connectedWorkspace('baraka@example.com')
+    await user.click(screen.getByRole('link', { name: 'Connections' }))
+    await user.click(await screen.findByRole('button', { name: 'Reload bills…' }))
+    expect(screen.getByText(/open a support case/)).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'All months in the export' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Reload' }))
+    expect(await screen.findByText(/Bills reloaded: all months in the export/)).toBeTruthy()
+    expect(screen.getAllByText(/: Reloaded$/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/: Unchanged/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/You can reload again after/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Reload' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('forecasts with a currency scenario and says what changed', async () => {
     const { api } = renderApp('/sign-in')
     await api.signIn('kemi@example.com')

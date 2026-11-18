@@ -239,6 +239,48 @@ export interface CostSummary {
     accountsMismatched: number
     checkedAt: string
   } | null
+  /** current: this month so far; changing: an ended month AWS may still restate; final: the bill is final. */
+  monthState?: MonthState
+}
+
+export type MonthState = 'current' | 'changing' | 'final'
+
+/** A month with spend, newest first. report: its executive report is stored, or can be made as a draft. */
+export interface CostMonth {
+  month: string
+  source: CostSource
+  /** Amortised, after credits, with tax. */
+  total: number
+  dataThrough: string
+  state: MonthState
+  report: 'stored' | 'draft' | null
+}
+
+export interface CostMonths {
+  currency: 'USD'
+  months: CostMonth[]
+}
+
+/** One month of a reload: reloaded (stored again), unchanged (same figures), failed, or not_in_bucket. */
+export interface PeriodReload {
+  period: string
+  outcome: 'reloaded' | 'unchanged' | 'failed' | 'not_in_bucket'
+  version: string | null
+  detail: string | null
+}
+
+/** A connection's latest reload of its bills. queued and running: still working; none: never reloaded. */
+export interface ReloadStatus {
+  connectionId: string
+  status: 'none' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'partial' | 'failed'
+  /** YYYY-MM, or null for every month in the export. */
+  period: string | null
+  requestedAt: string | null
+  finishedAt: string | null
+  periods: PeriodReload[]
+  error: string | null
+  /** When another reload may start (one an hour per connection). */
+  nextAllowedAt: string | null
 }
 
 export interface DailyCosts {
@@ -929,12 +971,21 @@ export interface Api {
   scanResources(tenantId: string, connectionId: string): Promise<ResourceScan>
   /** What the scans found, and each connection's latest scan. */
   resourceSummary(tenantId: string): Promise<InventorySummary>
-  costSummary(tenantId: string): Promise<CostSummary>
-  costDaily(tenantId: string, days?: number): Promise<DailyCosts>
-  costBreakdown(tenantId: string, dimension: CostDimension, limit?: number): Promise<CostBreakdown>
+  /** month (YYYY-MM): an ended month instead of the current one. */
+  costSummary(tenantId: string, month?: string | null): Promise<CostSummary>
+  /** month: every day of that ended month instead of the last `days` days. */
+  costDaily(tenantId: string, days?: number, month?: string | null): Promise<DailyCosts>
+  costBreakdown(tenantId: string, dimension: CostDimension, limit?: number, month?: string | null): Promise<CostBreakdown>
+  /** The months with cost data, newest first. */
+  costMonths(tenantId: string): Promise<CostMonths>
   fxCurrent(tenantId: string): Promise<CurrentRate>
   costForecast(tenantId: string): Promise<CostForecast>
-  costChanges(tenantId: string): Promise<CostChanges>
+  /** month: that whole ended month against the whole month before. */
+  costChanges(tenantId: string, month?: string | null): Promise<CostChanges>
+  /** Admins only: read the bills again from the export bucket (period YYYY-MM, or null for every month). Once an hour. */
+  reloadBills(tenantId: string, connectionId: string, period: string | null): Promise<ReloadStatus>
+  /** Admins only: the connection's latest reload. */
+  reloadStatus(tenantId: string, connectionId: string): Promise<ReloadStatus>
   listAccounts(tenantId: string): Promise<AccountList>
   listRecommendations(tenantId: string, query?: RecommendationQuery): Promise<Recommendation[]>
   recommendationSummary(tenantId: string): Promise<RecommendationSummary>
