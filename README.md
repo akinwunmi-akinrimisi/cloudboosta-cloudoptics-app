@@ -14,18 +14,18 @@ The demo is the real web app running on in-browser demo data: sign in with any e
 
 Sign-in uses WorkOS AuthKit (ADR-006). **Actions → Staging setup** (run from `main`) sets up Cloudoptics' AWS account (template bucket, broker role and user) and pushes the broker key and WorkOS settings to App Platform; see `docs/handoff/staging-next-steps.md` for the one-time WorkOS dashboard settings.
 
-## What works today (17 Nov 2026)
+## What works today (18 Nov 2026)
 
 | Area | What you can do |
 |---|---|
 | Sign-in and workspaces | Sign in with WorkOS, create a workspace, invite people and change or remove members |
 | Connecting AWS | One CloudFormation stack with a one-click link: billing access, resource access and member-account rollout together. Later permission changes are one-click in-place updates ("Update CloudOptics access"). CloudOptics only reads |
-| Costs | Month-to-date spend and forecast, daily trend, top spend, Costs Explorer, every figure in USD and local currency |
-| Recommendations | Unattached volumes, old snapshots, idle IPs and load balancers, gp2 to gp3, idle servers and databases, rightsizing, older and x86 server types; each with a risk score, usage charts, an "Open in AWS console" fix and rollback steps. Assign, comment and act in bulk |
-| Planning and alerts | Budgets with alerts, credits runway (how long AWS credits will last), anomaly detection, connection-failure emails, notification preferences and a weekly digest |
+| Costs | Month-to-date spend, month-end and 3-month forecast with a currency scenario, "what changed" since last month, daily trend, top spend, Costs Explorer, every figure in USD and local currency |
+| Recommendations | Unattached volumes, old snapshots, idle IPs and load balancers, gp2 to gp3, idle servers and databases, rightsizing, older and x86 server types, office-hours schedules for non-production, Extended Support charges, idle NAT gateways, Savings Plan advice; each with a risk score, usage charts, an "Open in AWS console" fix and rollback steps. Assign, comment and act in bulk; Cloudoptics checks AWS for the change and measures the realised savings from the bills |
+| Planning and alerts | Budgets with alerts, credits runway (how long AWS credits will last), anomaly detection, Commitments page (Savings Plans and Reserved Instances, with expiry alerts at 60/30/15 days), connection-failure and assignment emails, notification preferences and a weekly digest. Email is the only channel (ADR-014) |
 | Reports | Monthly executive report; audit log under Settings |
 
-Progress against the sprint plan is in [docs/11d](docs/11d_implementation_roadmap_and_sprint_plan.md) (Sprints 2 to 4 complete, Sprint 5 in progress).
+Progress against the sprint plan is in [docs/11d](docs/11d_implementation_roadmap_and_sprint_plan.md) (Sprints 2 to 5 complete; Sprint 6 next).
 
 ## Run the full stack
 

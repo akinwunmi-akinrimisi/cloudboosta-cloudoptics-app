@@ -212,7 +212,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - CloudWatch cost → candidate-only pulls; budget enforcement.
 
 ### Sprint 5 (Weeks 10–11) — Plan it: budgets, anomalies, FX, credits
-- **Status (17 Nov 2026): in progress.** Merged: budgets and budget alerts (#46), anomaly detection and alerts (#47), notification preferences and weekly digest (#48); credits runway (#50); the Sprint 6 monthly executive report also landed early (#49). Not started: R7 scheduling, R8 Savings Plans advice, R6b Extended Support, R10 idle NAT, FX scenario, what-changed, Commitments page, verification of realised savings. The Slack app was removed from scope on 18 Nov 2026 (ADR-014).
+- **Status (18 Nov 2026): complete.** Budgets and budget alerts (#46), anomaly detection and alerts (#47), notification preferences and weekly digest (#48), credits runway (#50); the Sprint 6 monthly executive report landed early (#49). Then: R6b Extended Support and R10 idle NAT (#66), forecast with FX scenario and what-changed (#67), R7 scheduling with a customer-deployed scheduler stack (#68), lifecycle, verification and realised savings (#71), R8 Savings Plans advice and the Commitments page (#69). The Slack app was removed from scope (ADR-014, #70). Still open before customers use them: deploy the R7 scheduler stack once in a sandbox account and host it in the template bucket; R10 cannot check route tables (needs `ec2:DescribeRouteTables` in the access template); billing months loaded before 18 Nov have no per-resource costs until they are loaded again.
 - **Goals:** finance persona value and proactive alerts.
 - **Deliverables:**
   - R7 scheduling, R8 SP advisory (AN-9, AN-10); R6b Extended Support and R10 idle NAT (AN-18, AN-19).
