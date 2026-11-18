@@ -267,8 +267,12 @@ async def test_from_the_bill_to_the_api(
     tenant, connection, headers = await connected(client, login, owner_sql)
     write_export(generate(SEPT), bucket / "cloudoptics")
     assert (await ingest(client, tenant, connection, headers))["status"] == "succeeded"
+    # Every resource line is kept; five of them a day are the ones the billing rules read.
     assert owner_sql(
-        "SELECT count(*) FROM cost_resource_daily WHERE connection_id = %s", connection
+        "SELECT count(*) FROM cost_resource_daily WHERE connection_id = %s "
+        "AND usage_type ~* %s",
+        connection,
+        billing.BILLED_USAGE_TYPES,
     ) == [(5 * SEPT.days,)]
 
     result = await engine.run_analysis(uuid.UUID(tenant), now=NOW)
