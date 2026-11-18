@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Check, Copy, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Check, Copy, ExternalLink, ShieldCheck } from 'lucide-react'
 import { useState } from 'react'
 
 import { useApi } from '../app/context'
@@ -11,6 +11,7 @@ import type {
   RecommendationEvent,
   RecommendationStatus,
   ScheduleFix,
+  RecommendationSummary,
 } from '../api/types'
 import { ApiError } from '../api/types'
 import { UsageChart } from '../components/charts'
@@ -78,8 +79,9 @@ const STATUS: Record<RecommendationStatus, string> = {
   new: 'New',
   assigned: 'Assigned',
   in_progress: 'In progress',
-  done: 'Done, waiting for the next scan',
+  done: 'Done, waiting for verification',
   verified: 'Verified',
+  not_verified: 'Not verified',
   dismissed: 'Dismissed',
   snoozed: 'Snoozed',
   resolved_externally: 'Resolved outside Cloudoptics',
@@ -206,7 +208,7 @@ export function Recommendations() {
           scan.
         </Alert>
       )}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
           label="Monthly savings identified"
           value={summary.data ? money(summary.data.savingsUsdMonth) : '—'}
@@ -217,6 +219,7 @@ export function Recommendations() {
           value={summary.data ? String(summary.data.openCount) : '—'}
           note={summary.data?.byRule.map((r) => `${r.count} ${RULES[r.ruleId] ?? r.ruleId}`).join(' · ') || ' '}
         />
+        <Kpi {...realisedTile(summary.data, money)} />
         <Kpi
           label="Last analysed"
           value={
@@ -378,11 +381,12 @@ export function Recommendations() {
                   <p className="truncate text-sm font-medium">{r.title}</p>
                   <p className="text-xs text-muted">
                     {RULES[r.ruleId] ?? r.ruleId} · {r.accountId} · {r.regionId}
-                    {r.status !== 'new' && ` · ${STATUS[r.status]}`}
+                    {r.status !== 'new' && r.status !== 'verified' && ` · ${STATUS[r.status]}`}
                     {r.assigneeId && ` · ${r.assigneeId === me?.id ? 'You' : (names.get(r.assigneeId) ?? 'A teammate')}`}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  {r.status === 'verified' && <VerifiedBadge />}
                   <Pill tone={r.riskLevel}>{`${capitalise(r.riskLevel)} risk`}</Pill>
                   <Pill tone="neutral">{`${capitalise(r.confidence)} confidence`}</Pill>
                   <span className="w-28 text-right text-sm font-semibold tabular-nums">
@@ -395,6 +399,131 @@ export function Recommendations() {
         </ul>
       </Card>
     </div>
+  )
+}
+
+/** Realised savings (PRD US-5.2): measured from the bills, or estimated until they are. */
+function realisedTile(
+  summary: RecommendationSummary | undefined,
+  money: (usd: number) => string,
+): { label: string; value: string; note: string } {
+  const label = 'Realised savings'
+  if (!summary) return { label, value: '—', note: ' ' }
+  const measured = summary.realisedSavingsUsdMonth ?? 0
+  const estimated = summary.estimatedRealisedUsdMonth ?? 0
+  const verified = summary.verifiedCount ?? 0
+  const waiting = summary.awaitingVerificationCount ?? 0
+  const notVerified = summary.notVerifiedCount ?? 0
+  const parts = [
+    verified > 0 ? `${verified} verified` : 'None verified yet',
+    estimated > 0 ? `${money(estimated)} estimated` : '',
+    waiting > 0 ? `${waiting} waiting for a scan` : '',
+    notVerified > 0 ? `${notVerified} not verified` : '',
+  ].filter(Boolean)
+  return { label, value: `${money(measured + estimated)}/mo`, note: parts.join(' · ') }
+}
+
+function VerifiedBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-good-soft px-2.5 py-0.5 text-xs font-medium text-good-ink">
+      <ShieldCheck size={12} aria-hidden /> Verified
+    </span>
+  )
+}
+
+const CHECKS: Record<string, string> = {
+  volume_deleted: 'The volume is deleted.',
+  snapshot_deleted: 'The snapshot is deleted.',
+  snapshot_archived: 'The snapshot is in the archive tier.',
+  address_released: 'The address is released.',
+  load_balancer_deleted: 'The load balancer is deleted.',
+  volume_type_gp3: 'The volume is gp3 now.',
+  instance_stopped: 'The server is stopped.',
+  instance_terminated: 'The server is terminated.',
+  database_stopped: 'The database is stopped.',
+  database_deleted: 'The database is deleted.',
+  instance_type_changed: 'The server has the recommended type now.',
+  resource_gone: 'The resource no longer exists.',
+  rule_no_longer_applies: 'The rule no longer finds anything to change.',
+  unchanged: 'The latest scan shows no change yet.',
+}
+
+function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function realisedNote(rec: Recommendation, money: (usd: number) => string): { label: string; value: string; note: string } {
+  const v = rec.verification
+  const m = v?.measurement
+  const realised = rec.realisedSavingsUsdMonth
+  if (realised !== null && realised !== undefined) {
+    return {
+      label: 'Realised savings',
+      value: `${money(realised)}/mo`,
+      note:
+        rec.realisedBasis === 'cur' && m
+          ? `From your bills: ${money(m.beforeUsdDay ?? 0)} a day over ${m.beforeDays} days before the change, ${money(m.afterUsdDay ?? 0)} a day over ${m.afterDays} days after, normalised to 30 days.`
+          : 'Estimated: your bills do not show this resource on its own, so the estimate is counted.',
+    }
+  }
+  if (rec.status === 'verified') {
+    return {
+      label: 'Estimated realised savings',
+      value: `${money(v?.estimateUsdMonth ?? rec.savingsUsdMonth)}/mo`,
+      note: 'Measured from your bills once they cover 7 days after the change.',
+    }
+  }
+  return {
+    label: 'Realised savings',
+    value: '—',
+    note: m
+      ? 'Your bills do not show a cost drop for this resource, so no saving is counted.'
+      : 'Counted only if your bills show the cost drop, once they cover 7 days after the change.',
+  }
+}
+
+/** After the fix (PRD US-5.1/5.2): what the scans saw and the saving it made. */
+function Outcome({ rec, money }: { rec: Recommendation; money: (usd: number) => string }) {
+  const v = rec.verification
+  const seen = v ? (CHECKS[v.check] ?? v.check) : null
+  if (rec.status === 'done') {
+    return (
+      <Alert tone="info">
+        Marked done{rec.doneAt ? ` on ${shortDate(rec.doneAt)}` : ''}. Cloudoptics checks the resource after each scan
+        and marks it verified when it sees the change, within 72 hours.
+        {seen && v?.outcome === 'not_implemented' ? ` ${seen}` : ''}
+      </Alert>
+    )
+  }
+  if (rec.status === 'not_verified') {
+    return (
+      <Alert tone="warning">
+        Marked done, but 72 hours later the scans still do not show the change. Check it was made in AWS account{' '}
+        {rec.accountId}; it is verified as soon as a scan sees it.
+      </Alert>
+    )
+  }
+  if (rec.status !== 'verified' && rec.status !== 'resolved_externally') return null
+  const tile = realisedNote(rec, money)
+  return (
+    <Card className="flex flex-col gap-3 p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="text-base font-semibold">
+          {rec.status === 'verified' ? 'Change verified' : 'Resolved outside Cloudoptics'}
+        </h2>
+        {rec.status === 'verified' && <VerifiedBadge />}
+      </div>
+      <p className="text-sm text-secondary">
+        {seen}
+        {rec.verifiedAt && ` Verified ${new Date(rec.verifiedAt).toLocaleString('en-GB')}.`}
+        {rec.changedAt && ` Changed around ${shortDate(rec.changedAt)}.`}
+      </p>
+      <div>
+        <p className="text-sm text-secondary">{tile.label}</p>
+        <p className="mt-1 text-2xl font-semibold tabular-nums">{tile.value}</p>
+        <p className="mt-1 text-xs text-muted">{tile.note}</p>
+      </div>
+    </Card>
   )
 }
 
@@ -708,9 +837,13 @@ const DID: Partial<Record<RecommendationStatus, string>> = {
   in_progress: 'started work on it',
   done: 'marked it as fixed',
   dismissed: 'dismissed it',
+  verified: 'verified the change in AWS',
+  not_verified: 'could not see the change in AWS yet',
+  resolved_externally: 'closed it as resolved outside Cloudoptics',
 }
 
 function describe(e: RecommendationEvent): string {
+  if (e.kind === 'savings_measured') return 'measured the realised savings from your bills'
   if (e.kind === 'assigned') return e.assigneeId ? `assigned it to ${e.assigneeName ?? 'a teammate'}` : 'unassigned it'
   if (e.kind === 'status_changed') return e.toStatus ? (DID[e.toStatus] ?? 'changed its status') : 'changed its status'
   return 'commented'
@@ -740,7 +873,7 @@ function History({ rec, tenantId, canComment }: { rec: Recommendation; tenantId:
         {(events.data ?? []).map((e) => (
           <li key={e.id} className="text-sm">
             <p>
-              <span className="font-medium">{e.actorName ?? 'Someone'}</span> {describe(e)}
+              <span className="font-medium">{e.actorName ?? (e.actorId ? 'Someone' : 'Cloudoptics')}</span> {describe(e)}
               <span className="text-xs text-muted"> · {new Date(e.createdAt).toLocaleString('en-GB')}</span>
             </p>
             {e.body && <p className="mt-1 whitespace-pre-wrap rounded-sm bg-surface-2 px-3 py-2">{e.body}</p>}
@@ -811,7 +944,13 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
           {RULES[r.ruleId] ?? r.ruleId} · account {r.accountId} · {r.regionId} · <code>{r.resourceId}</code> ·{' '}
           {STATUS[r.status]}
         </p>
+        {r.status === 'verified' && (
+          <div className="mt-2">
+            <VerifiedBadge />
+          </div>
+        )}
       </div>
+      <Outcome rec={r} money={money} />
       <div className="grid gap-4 sm:grid-cols-3">
         <Kpi
           label="Monthly saving"

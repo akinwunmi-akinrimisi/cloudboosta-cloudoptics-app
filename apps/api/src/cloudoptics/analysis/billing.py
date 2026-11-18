@@ -41,6 +41,8 @@ from cloudoptics.analysis.rules import (
 )
 
 WINDOW_DAYS = 30
+# Usage types these rules read (EKS writes "extendedSupport").
+BILLED_USAGE_TYPES = r"NatGateway-(Hours|Bytes)$|ExtendedSupport"
 # A charge that stopped this many days before the bill's last day is gone (upgraded or
 # deleted): no recommendation.
 STILL_BILLED_DAYS = 2
@@ -72,9 +74,10 @@ async def load_billing(session: AsyncSession) -> list[BilledUsage]:
             "FROM cost_resource_daily c CROSS JOIN last "
             "JOIN cloud_connection k ON k.id = c.connection_id "
             "LEFT JOIN tag_set t ON t.hash = c.tag_set_hash "
-            "WHERE c.usage_date > last.d - :days AND k.status <> 'disconnected'"
+            "WHERE c.usage_date > last.d - :days AND k.status <> 'disconnected' "
+            "AND c.usage_type ~* :usage_types"
         ),
-        {"days": WINDOW_DAYS},
+        {"days": WINDOW_DAYS, "usage_types": BILLED_USAGE_TYPES},
     )
     return [
         BilledUsage(

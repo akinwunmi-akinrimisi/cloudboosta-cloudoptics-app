@@ -432,6 +432,7 @@ const ACTIONS: Record<string, string> = {
   'connection.status_changed': 'Connection status changed',
   'recommendation.status_changed': 'Recommendation status changed',
   'recommendation.assigned': 'Recommendation assigned',
+  'recommendation.savings_measured': 'Realised savings measured',
   'rule_settings.updated': 'Changed recommendation rules',
   'fx_rate.set': 'Exchange rate set',
   'invite.created': 'Invited someone',

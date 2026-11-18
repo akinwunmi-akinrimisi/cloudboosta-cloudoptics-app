@@ -83,22 +83,25 @@ def days(n: int, end: date = date(2026, 9, 30)) -> list[date]:
     return [end - timedelta(days=i) for i in range(n)]
 
 
-def test_aggregates_keep_only_the_lines_the_billing_rules_need() -> None:
+def test_aggregates_keep_every_resource_line() -> None:
     rows = resource_rows(generate(SEPT).table)
     kept = {(r.resource_id, r.usage_type) for r in rows}
-    assert kept == {
+    # Every usage line with a resource ID is kept (verification compares them before and
+    # after a change); the billing rules filter to their usage types when they read.
+    assert all(r.resource_id for r in rows)
+    assert kept >= {
         ("nat-0idle00000000001", "AFS1-NatGateway-Hours"),
         ("nat-0busy00000000001", "AFS1-NatGateway-Hours"),
         ("nat-0busy00000000001", "AFS1-NatGateway-Bytes"),
         (RDS_ARN, "AFS1-ExtendedSupport:Yr1-Yr2:PostgreSQL11"),
         (EKS_ARN, "AFS1-AmazonEKS-Hours:extendedSupport"),
     }
-    assert len(rows) == 5 * SEPT.days  # one row per resource, usage type and day
     idle = [r for r in rows if r.resource_id == "nat-0idle00000000001"]
     assert sum(float(r.usage_quantity) for r in idle) == pytest.approx(24 * 30)
     assert all(r.tag_set_hash is not None and r.region_id == "af-south-1" for r in idle)
     # Batches are merged: the same day split over two batches is one row.
-    assert len({(r.usage_date, r.resource_id, r.usage_type) for r in rows}) == len(rows)
+    keys = {(r.usage_date, r.account_id, r.region_id, r.resource_id, r.usage_type) for r in rows}
+    assert len(keys) == len(rows)
 
 
 def test_idle_nat_gateway() -> None:
@@ -264,8 +267,11 @@ async def test_from_the_bill_to_the_api(
     tenant, connection, headers = await connected(client, login, owner_sql)
     write_export(generate(SEPT), bucket / "cloudoptics")
     assert (await ingest(client, tenant, connection, headers))["status"] == "succeeded"
+    # Every resource line is kept; five of them a day are the ones the billing rules read.
     assert owner_sql(
-        "SELECT count(*) FROM cost_resource_daily WHERE connection_id = %s", connection
+        "SELECT count(*) FROM cost_resource_daily WHERE connection_id = %s AND usage_type ~* %s",
+        connection,
+        billing.BILLED_USAGE_TYPES,
     ) == [(5 * SEPT.days,)]
 
     result = await engine.run_analysis(uuid.UUID(tenant), now=NOW)

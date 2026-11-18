@@ -30,6 +30,10 @@ class RecommendationPeriod:
     done_count: int
     done_savings_usd_month: float
     top: list[TopRecommendation]
+    # Confirmed by a scan in the window (PRD US-5.2), and what they save a month: measured
+    # from the bills where already measured, otherwise estimated.
+    verified_count: int = 0
+    realised_usd_month: float = 0.0
 
 
 async def period(
@@ -63,6 +67,17 @@ async def period(
             params,
         )
     ).one()
+    verified = (
+        await session.execute(
+            text(
+                "SELECT count(*) AS n, coalesce(sum(coalesce(realised_savings_usd_month, "
+                "(verification->>'estimateUsdMonth')::numeric, savings_usd_month)), 0) AS savings "
+                "FROM recommendation WHERE status = 'verified' AND verified_at >= :start "
+                "AND verified_at < :end"
+            ),
+            params,
+        )
+    ).one()
     top = await session.execute(
         text(
             "SELECT id, title, savings_usd_month, risk_level, effort, "
@@ -84,4 +99,6 @@ async def period(
             )
             for r in top
         ],
+        verified_count=verified.n,
+        realised_usd_month=round(float(verified.savings), 2),
     )

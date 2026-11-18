@@ -96,6 +96,8 @@ interface State {
   /** tenantId:recommendationId -> assignee and history in the demo. */
   recommendationAssignee?: Record<string, string | null>
   recommendationEvents?: Record<string, RecommendationEvent[]>
+  /** tenantId:recommendationId -> when it was marked done in the demo (verified a few seconds later). */
+  recommendationDoneAt?: Record<string, string>
   ruleSettings?: Record<string, RuleSettings>
   /** connectionId -> when the demo last "scanned" it. */
   scannedAt?: Record<string, string>
@@ -547,6 +549,90 @@ function demoScheduleRecs(timeZone: string, settings: RuleSettings): DemoRec[] {
     },
   ]
 }
+
+const DAY_MS = 86_400_000
+
+// Already verified in the demo (PRD US-5.2): one measured from the bills, one still estimated.
+const DEMO_VERIFIED: DemoRec[] = [
+  {
+    id: 'demo-rec-10',
+    ruleId: 'R3_gp2_gp3',
+    type: 'modify_volume_gp3',
+    accountId: '222222222222',
+    regionId: 'eu-west-1',
+    resourceId: 'vol-0c4d5e6f7a8b9c0d1',
+    title: 'Change volume analytics-scratch from gp2 to gp3 (800 GiB)',
+    costNowUsdMonth: 88,
+    costAfterUsdMonth: 70.4,
+    reversibility: 'reversible',
+    riskScore: 15,
+    riskFactors: [{ factor: 'environment_unknown', points: 15 }],
+    recommendedConfig: { volumeType: 'gp3', iops: 3000, throughput: 125 },
+    evidence: [{ kind: 'volumeType', value: 'gp2', sizeGiB: 800 }],
+    status: 'verified',
+    doneAt: new Date(Date.now() - 24 * DAY_MS).toISOString(),
+    changedAt: new Date(Date.now() - 24 * DAY_MS).toISOString(),
+    verifiedAt: new Date(Date.now() - 24 * DAY_MS + 9 * 3_600_000).toISOString(),
+    verification: {
+      check: 'volume_type_gp3',
+      outcome: 'implemented',
+      checkedAt: new Date(Date.now() - 24 * DAY_MS + 9 * 3_600_000).toISOString(),
+      estimateUsdMonth: 17.6,
+      measurement: {
+        beforeDays: 30,
+        afterDays: 22,
+        beforeUsdDay: 2.93,
+        afterUsdDay: 2.35,
+        measuredAt: new Date(Date.now() - DAY_MS).toISOString(),
+      },
+    },
+    realisedSavingsUsdMonth: 17.4,
+    realisedBasis: 'cur',
+    realisedAt: new Date(Date.now() - 16 * DAY_MS).toISOString(),
+    fix: {
+      steps: [
+        'aws ec2 modify-volume --volume-id vol-0c4d5e6f7a8b9c0d1 --volume-type gp3 --iops 3000 --throughput 125 --region eu-west-1',
+      ],
+      rollback: ['aws ec2 modify-volume --volume-id vol-0c4d5e6f7a8b9c0d1 --volume-type gp2 --region eu-west-1'],
+    },
+  },
+  {
+    id: 'demo-rec-11',
+    ruleId: 'R2_idle_eip',
+    type: 'release_idle_ip',
+    accountId: '111111111111',
+    regionId: 'eu-west-1',
+    resourceId: 'eipalloc-0f1e2d3c4b5a69788',
+    title: 'Release idle Elastic IP 198.51.100.7 (not attached to anything)',
+    costNowUsdMonth: 3.65,
+    costAfterUsdMonth: 0,
+    evidence: [{ kind: 'state', value: 'unassociated', sinceDays: 30 }],
+    status: 'verified',
+    changedAt: new Date(Date.now() - 3 * DAY_MS).toISOString(),
+    verifiedAt: new Date(Date.now() - 3 * DAY_MS + 5 * 3_600_000).toISOString(),
+    verification: {
+      check: 'address_released',
+      outcome: 'implemented',
+      checkedAt: new Date(Date.now() - 3 * DAY_MS + 5 * 3_600_000).toISOString(),
+      estimateUsdMonth: 3.65,
+    },
+    realisedSavingsUsdMonth: null,
+    realisedBasis: null,
+    fix: { steps: ['aws ec2 release-address --allocation-id eipalloc-0f1e2d3c4b5a69788 --region eu-west-1'], rollback: [] },
+  },
+]
+
+/** What the demo's verification "sees" for each rule once a recommendation is marked done. */
+const DEMO_CHECKS: Record<string, string> = {
+  R1_unattached_ebs: 'volume_deleted',
+  R1_old_snapshot: 'snapshot_deleted',
+  R2_idle_eip: 'address_released',
+  R2_idle_lb: 'load_balancer_deleted',
+  R3_gp2_gp3: 'volume_type_gp3',
+}
+
+/** Marked done in the demo: "verified" after this long, as if a scan had run. */
+const DEMO_VERIFY_MS = 4000
 
 function demoRecommendation(r: DemoRec, status: RecommendationStatus): Recommendation {
   const savings = Math.round((r.costNowUsdMonth - r.costAfterUsdMonth) * 100) / 100
@@ -1460,11 +1546,62 @@ export class DemoApi implements Api {
     if (!this.hasData(tenantId)) return []
     const settings = this.ruleSettings(tenantId)
     const disabled = settings.disabledRules
-    const all = [...DEMO_RECS, ...demoScheduleRecs(this.tenant(tenantId).timeZone, settings)]
-    return all.filter((r) => !disabled.includes(r.ruleId)).map((r) => ({
-      ...demoRecommendation(r, this.state.recommendationStatus[`${tenantId}:${r.id}`] ?? 'new'),
-      assigneeId: this.state.recommendationAssignee?.[`${tenantId}:${r.id}`] ?? null,
-    }))
+    this.settleVerifications(tenantId)
+    return [...DEMO_RECS, ...demoScheduleRecs(this.tenant(tenantId).timeZone, settings), ...DEMO_VERIFIED]
+      .filter((r) => !disabled.includes(r.ruleId) || r.status === 'verified')
+      .map((r) => {
+        const key = `${tenantId}:${r.id}`
+        const status = this.state.recommendationStatus[key] ?? r.status ?? 'new'
+        const rec = { ...demoRecommendation(r, status), assigneeId: this.state.recommendationAssignee?.[key] ?? null }
+        const doneAt = this.state.recommendationDoneAt?.[key]
+        if (!doneAt || (status !== 'done' && status !== 'verified') || r.status === 'verified') return rec
+        const verifiedAt = new Date(Date.parse(doneAt) + DEMO_VERIFY_MS).toISOString()
+        return {
+          ...rec,
+          doneAt,
+          ...(status === 'verified'
+            ? {
+                verifiedAt,
+                changedAt: doneAt,
+                verification: {
+                  check: DEMO_CHECKS[r.ruleId] ?? 'rule_no_longer_applies',
+                  outcome: 'implemented' as const,
+                  checkedAt: verifiedAt,
+                  estimateUsdMonth: rec.savingsUsdMonth,
+                },
+                realisedSavingsUsdMonth: null,
+                realisedBasis: null,
+              }
+            : {}),
+        }
+      })
+  }
+
+  /** The demo's stand-in for the verification job: done for a few seconds means verified. */
+  private settleVerifications(tenantId: string): void {
+    const prefix = `${tenantId}:`
+    for (const [key, at] of Object.entries(this.state.recommendationDoneAt ?? {})) {
+      if (!key.startsWith(prefix) || this.state.recommendationStatus[key] !== 'done') continue
+      if (Date.now() - Date.parse(at) < DEMO_VERIFY_MS) continue
+      this.state.recommendationStatus[key] = 'verified'
+      const events = (this.state.recommendationEvents ??= {})
+      events[key] = [
+        ...(events[key] ?? []),
+        {
+          id: randomId(),
+          createdAt: new Date(Date.parse(at) + DEMO_VERIFY_MS).toISOString(),
+          actorId: null,
+          actorName: null,
+          kind: 'status_changed',
+          fromStatus: 'done',
+          toStatus: 'verified',
+          assigneeId: null,
+          assigneeName: null,
+          body: 'Checked in AWS. The change is in place.',
+        },
+      ]
+      this.save()
+    }
   }
 
   private ruleSettings(tenantId: string): RuleSettings {
@@ -1503,11 +1640,25 @@ export class DemoApi implements Api {
       row.savingsUsdMonth += r.savingsUsdMonth
       byRule.set(r.ruleId, row)
     }
+    const all = this.recommendations(tenantId)
+    const verified = all.filter((r) => r.status === 'verified')
+    const round = (n: number) => Math.round(n * 100) / 100
     return {
       openCount: open.length,
       savingsUsdMonth: Math.round(open.reduce((sum, r) => sum + r.savingsUsdMonth, 0) * 100) / 100,
       byRule: [...byRule.values()].sort((a, b) => b.savingsUsdMonth - a.savingsUsdMonth),
       lastEvaluatedAt: open[0]?.lastEvaluatedAt ?? null,
+      verifiedCount: verified.length,
+      awaitingVerificationCount: all.filter((r) => r.status === 'done').length,
+      notVerifiedCount: 0,
+      realisedSavingsUsdMonth: round(
+        verified.filter((r) => r.realisedBasis === 'cur').reduce((sum, r) => sum + (r.realisedSavingsUsdMonth ?? 0), 0),
+      ),
+      estimatedRealisedUsdMonth: round(
+        verified
+          .filter((r) => r.realisedBasis !== 'cur')
+          .reduce((sum, r) => sum + (r.realisedSavingsUsdMonth ?? r.verification?.estimateUsdMonth ?? r.savingsUsdMonth), 0),
+      ),
     }
   }
 
@@ -1541,6 +1692,9 @@ export class DemoApi implements Api {
     }
     if (status && status !== before.status) {
       this.state.recommendationStatus[key] = status
+      const doneAt = (this.state.recommendationDoneAt ??= {})
+      if (status === 'done') doneAt[key] = new Date().toISOString()
+      else delete doneAt[key]
       this.addEvent(tenantId, id, {
         kind: 'status_changed',
         fromStatus: before.status,

@@ -350,6 +350,7 @@ export type RecommendationStatus =
   | 'in_progress'
   | 'done'
   | 'verified'
+  | 'not_verified'
   | 'dismissed'
   | 'snoozed'
   | 'resolved_externally'
@@ -426,6 +427,34 @@ export interface Recommendation {
   assigneeId: string | null
   firstDetectedAt: string
   lastEvaluatedAt: string
+  /** When a member marked it done. */
+  doneAt?: string | null
+  /** When a scan confirmed the change (PRD US-5.2). */
+  verifiedAt?: string | null
+  /** When the change happened, as near as the scans and the done date tell. */
+  changedAt?: string | null
+  verification?: RecommendationVerification | null
+  /** Normalised to 30 days; null until 7 days of bills after the change are in. */
+  realisedSavingsUsdMonth?: number | null
+  /** cur: from the resource's own costs in the bills; estimate: the bills do not show it. */
+  realisedBasis?: 'cur' | 'estimate' | null
+  realisedAt?: string | null
+}
+
+export interface RecommendationVerification {
+  /** What the last check saw, for example volume_deleted or instance_type_changed. */
+  check: string
+  outcome: 'implemented' | 'gone' | 'not_implemented'
+  checkedAt: string
+  /** The saving credited until the bills measure it. */
+  estimateUsdMonth?: number
+  measurement?: {
+    beforeDays: number
+    afterDays: number
+    beforeUsdDay: number | null
+    afterUsdDay: number | null
+    measuredAt: string
+  }
 }
 
 export interface RecommendationSummary {
@@ -433,6 +462,15 @@ export interface RecommendationSummary {
   savingsUsdMonth: number
   byRule: { ruleId: string; count: number; savingsUsdMonth: number }[]
   lastEvaluatedAt: string | null
+  verifiedCount?: number
+  /** Marked done, waiting for a scan to confirm it. */
+  awaitingVerificationCount?: number
+  /** Marked done, but the change was not seen 72 hours later. */
+  notVerifiedCount?: number
+  /** Realised savings a month measured from the bills, once per resource. */
+  realisedSavingsUsdMonth?: number
+  /** Verified, but not measured from the bills (yet): the estimate. */
+  estimatedRealisedUsdMonth?: number
 }
 
 export interface RecommendationQuery {
@@ -450,7 +488,8 @@ export type StatusChange = RecommendationChange
 
 export interface RecommendationEvent {
   id: string
-  kind: 'status_changed' | 'assigned' | 'commented'
+  /** A status change without an actor was made by Cloudoptics (a verification check). */
+  kind: 'status_changed' | 'assigned' | 'commented' | 'savings_measured'
   actorId: string | null
   actorName: string | null
   fromStatus: RecommendationStatus | null
@@ -597,7 +636,16 @@ export interface MonthlyReport {
   /** The biggest change by service and region against the same days of the month before. */
   whatChanged?: string | null
   budgets: { name: string; currency: string; amount: number; status: string; actual: number | null; actualPercent: number | null }[]
-  savings: { openCount: number; openUsdMonth: number; newCount: number; doneCount: number; doneUsdMonth: number }
+  savings: {
+    openCount: number
+    openUsdMonth: number
+    newCount: number
+    doneCount: number
+    doneUsdMonth: number
+    /** Confirmed in AWS this month (absent from reports made before verification). */
+    verifiedCount?: number
+    realisedUsdMonth?: number
+  }
   topRecommendations: { title: string; savingsUsdMonth: number; riskLevel: string; effort: string }[]
   anomalies: { count: number; impactUsd: number }
   accuracy: {

@@ -241,6 +241,12 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
             <li>
               Marked done this month: {r.savings.doneCount}, saving {usd(r.savings.doneUsdMonth)} a month.
             </li>
+            {(r.savings.verifiedCount ?? 0) > 0 && (
+              <li>
+                Verified in AWS this month: {r.savings.verifiedCount}, saving {usd(r.savings.realisedUsdMonth ?? 0)} a
+                month.
+              </li>
+            )}
             <li>
               {r.anomalies.count
                 ? `${r.anomalies.count} unusual day${r.anomalies.count === 1 ? '' : 's'}, ${usd(r.anomalies.impactUsd)} above normal.`
