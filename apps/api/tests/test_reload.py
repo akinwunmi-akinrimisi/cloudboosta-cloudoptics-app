@@ -1,3 +1,4 @@
+# ruff: noqa: F811 - pytest fixtures imported from other test modules
 """Reload bills: read a connection's export again (admins)."""
 
 from __future__ import annotations
@@ -48,7 +49,7 @@ def resource_rows(owner_sql, connection: str) -> int:  # type: ignore[no-untyped
 
 
 @pytest.fixture
-def ce(aws):  # type: ignore[no-untyped-def]  # noqa: F811
+def ce(aws):  # type: ignore[no-untyped-def]
     """Cost Explorer for the reconciliation that follows an inline reload."""
     fake = FakeCostExplorer({})
     aws.clients["ce"] = fake
@@ -60,7 +61,7 @@ async def test_reload_fills_a_month_loaded_before_resource_costs(
     login,
     owner_sql,
     bucket,
-    ce,  # noqa: F811
+    ce,
 ) -> None:
     tenant, connection, headers = await connected(client, login, owner_sql)
     write_export(generate(SEPT), bucket / "cloudoptics")
@@ -128,7 +129,7 @@ async def test_unchanged_not_in_bucket_and_failed(
     login,
     owner_sql,
     bucket,
-    ce,  # noqa: F811
+    ce,
 ) -> None:
     tenant, connection, headers = await connected(client, login, owner_sql)
     manifest_path = write_export(generate(SEPT), bucket / "cloudoptics")
@@ -188,7 +189,7 @@ async def test_a_new_version_is_loaded_as_a_first_load(
     login,
     owner_sql,
     bucket,
-    ce,  # noqa: F811
+    ce,
 ) -> None:
     tenant, connection, headers = await connected(client, login, owner_sql)
     write_export(generate(SEPT), bucket / "cloudoptics")
@@ -210,7 +211,7 @@ async def test_once_an_hour_per_connection(
     login,
     owner_sql,
     bucket,
-    ce,  # noqa: F811
+    ce,
 ) -> None:
     tenant, connection, headers = await connected(client, login, owner_sql)
     write_export(generate(SEPT), bucket / "cloudoptics")
@@ -244,7 +245,7 @@ async def test_unreadable_bucket(client: AsyncClient, login, owner_sql) -> None:
     assert status["nextAllowedAt"] is None
 
 
-async def test_who_may_reload(client: AsyncClient, login, owner_sql, bucket) -> None:  # noqa: F811
+async def test_who_may_reload(client: AsyncClient, login, owner_sql, bucket) -> None:
     tenant, connection, headers = await connected(client, login, owner_sql)
     base = f"/v1/tenants/{tenant}/connections/{connection}/reload"
     assert (await client.get(base, headers=headers)).json()["status"] == "none"
@@ -272,7 +273,7 @@ async def test_a_running_reload_blocks_another(
     client: AsyncClient,
     login,
     owner_sql,
-    bucket,  # noqa: F811
+    bucket,
 ) -> None:
     from cloudoptics.platform.db import get_sessionmaker
 
@@ -294,7 +295,7 @@ async def test_queue_mode_defers_the_reload(
     login,
     owner_sql,
     bucket,
-    monkeypatch,  # noqa: F811
+    monkeypatch,
 ) -> None:
     import cloudoptics.platform.jobs as platform_jobs
     from cloudoptics.analysis import jobs as analysis_jobs
