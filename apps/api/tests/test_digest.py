@@ -132,6 +132,7 @@ async def test_each_member_gets_one_digest_about_last_week(
         "weeklyDigest": False,
         "anomalyAlert": True,
         "monthlyReport": True,
+        "commitmentExpiry": True,
     }
 
     assert await run(tid, MONDAY - timedelta(hours=1)) == 0  # 06:30 in Lagos: not yet
@@ -163,6 +164,7 @@ async def test_each_member_gets_one_digest_about_last_week(
         "weeklyDigest": False,
         "anomalyAlert": True,
         "monthlyReport": True,
+        "commitmentExpiry": True,
     }
     assert r.json()["mine"]["weeklyDigest"] is False
     await client.put(f"{prefs}/me", json={"weeklyDigest": True}, headers=quiet)

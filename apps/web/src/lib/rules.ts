@@ -14,4 +14,5 @@ export const RULES: Record<string, string> = {
   R7_schedule_rds: 'Office-hours schedule (database)',
   R6b_extended_support: 'Extended Support charge',
   R10_idle_nat: 'Idle NAT gateway',
+  R8_savings_plan: 'Savings Plan',
 }

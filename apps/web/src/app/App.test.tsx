@@ -186,7 +186,12 @@ describe('Cloudoptics web app', () => {
     await waitFor(async () => expect((await api.getNotificationPreferences(tenant.id)).mine.weeklyDigest).toBe(false))
     await user.click(screen.getByLabelText('Anomaly alerts by default'))
     await waitFor(async () =>
-      expect((await api.getNotificationPreferences(tenant.id)).defaults).toEqual({ weeklyDigest: true, anomalyAlert: false, monthlyReport: true }),
+      expect((await api.getNotificationPreferences(tenant.id)).defaults).toEqual({
+        weeklyDigest: true,
+        anomalyAlert: false,
+        monthlyReport: true,
+        commitmentExpiry: true,
+      }),
     )
     await user.click(screen.getByRole('button', { name: 'Preview last week’s digest' }))
     expect(await screen.findByText(/^Your AWS week: USD/)).toBeTruthy()
@@ -363,15 +368,48 @@ describe('Cloudoptics web app', () => {
     return { api, tenant, user }
   }
 
-  it('lists recommendations best first and walks one to done', async () => {
-    const { user } = await connectedWorkspace('wanjiru@example.com')
-    expect(await screen.findByText(/^9 open recommendations · .+\/mo realised$/)).toBeTruthy()
+  it('shows the Savings Plan advisory, the commitments held and R8 on the list', async () => {
+    const { api, tenant, user } = await connectedWorkspace('kofi@example.com')
+    await user.click(screen.getByRole('link', { name: 'Commitments' }))
+    expect(await screen.findByRole('heading', { name: /Our option: Compute Savings Plan, 1 year, No Upfront/ })).toBeTruthy()
+    expect(screen.getByText('Advisory only')).toBeTruthy()
+    expect(screen.getByRole('meter', { name: 'Savings Plan coverage' })).toBeTruthy()
+    expect(screen.getAllByText(/AWS recommends: 1 year/)).toHaveLength(4)
+    expect(screen.getByRole('heading', { name: 'Buy it in steps' })).toBeTruthy()
+    expect(screen.getAllByText(/within 7 days of buying it/).length).toBeGreaterThan(0)
+    // GBP workspace: the commitment in pounds now and if sterling weakens 20% / 40%.
+    expect(screen.getByRole('heading', { name: 'In GBP, if the currency weakens' })).toBeTruthy()
+    expect(screen.getByText('GBP weakens 40%')).toBeTruthy()
+    expect(screen.getByText('2 x m5.large Linux/UNIX')).toBeTruthy()
+    expect(screen.getByText('28 days left')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Refresh now/ })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /Refresh now/ }))
+    expect(await screen.findByText(/Read again from AWS just now/)).toBeTruthy()
+
+    const advisory = await api.savingsPlanAdvisory(tenant.id)
+    const [advice] = advisory.advice
+    expect(advice?.status).toBe('ok')
+    expect(advice?.default?.discountFromAws).toBe(true)
+    expect(advice?.ladder[0]?.sharePercent).toBe(25)
+    expect(advice?.options.filter((o) => o.source === 'ours')).toHaveLength(12)
 
     await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    await user.click(await screen.findByRole('link', { name: /1-year Compute Savings Plan/ }))
+    expect(await screen.findByText('Commits to paying for a year')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Commitments page' })).toBeTruthy()
+  })
+
+  it('lists recommendations best first and walks one to done', async () => {
+    const { user } = await connectedWorkspace('wanjiru@example.com')
+    expect(await screen.findByText(/^10 open recommendations · .+\/mo realised$/)).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    // Most saved first: the Extended Support upgrade, then R8 (the Savings Plan advisory).
     const first = await screen.findByRole('link', { name: /Upgrade database reports-db off PostgreSQL 12/ })
     const links = screen.getAllByRole('link', { name: /\/mo$/ })
     expect(links[0]).toBe(first)
-    expect(links[1]).toBe(screen.getByRole('link', { name: /Delete unattached gp2 volume build-cache/ }))
+    expect(links[1]).toBe(screen.getByRole('link', { name: /1-year Compute Savings Plan/ }))
+    expect(links[2]).toBe(screen.getByRole('link', { name: /Delete unattached gp2 volume build-cache/ }))
 
     await user.selectOptions(screen.getByLabelText('Type'), 'R2_idle_eip')
     expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(1)
@@ -400,7 +438,7 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('link', { name: /All recommendations/ }))
     await screen.findByRole('link', { name: /Change volume db-data/ })
     expect(screen.queryByRole('link', { name: /build-cache/ })).toBeNull()
-    expect(screen.getByText('8')).toBeTruthy()
+    expect(screen.getByText('9')).toBeTruthy()
   })
 
   it('shows a non-production schedule: the tag to copy, the template and the database caveat', async () => {
@@ -502,7 +540,7 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('button', { name: 'Dismiss…' }))
     await user.type(screen.getByLabelText(/Why are you dismissing them/), 'Kept on purpose')
     await user.click(screen.getByRole('button', { name: 'Dismiss' }))
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(7))
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(8))
     expect(screen.getByRole('link', { name: /Release idle Elastic IP/ })).toBeTruthy()
 
     await user.click(screen.getByRole('link', { name: 'Settings' }))

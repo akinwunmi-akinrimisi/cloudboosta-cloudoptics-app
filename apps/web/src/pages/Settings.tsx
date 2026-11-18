@@ -552,6 +552,12 @@ const NOTIFICATION_KINDS: { key: keyof NotificationChoices; label: string; detai
     detail: 'On the 3rd working day of each month: the month before, in USD and the workspace currency.',
     roles: ['admin', 'member', 'viewer'],
   },
+  {
+    key: 'commitmentExpiry',
+    label: 'Commitment expiry',
+    detail: 'When a Savings Plan or Reserved Instance ends in 60, 30 and 15 days.',
+    roles: ['admin', 'member'],
+  },
 ]
 
 function NotificationsCard({ tenantId, role }: { tenantId: string; role: Role }) {

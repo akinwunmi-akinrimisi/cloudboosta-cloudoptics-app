@@ -45,6 +45,8 @@ class Resource:
     arn: str | None = None
     # False for a resource known only from the bill (R6b, R10): nothing to link it to.
     in_inventory: bool = True
+    # Not a row in ``resource`` (e.g. R8's payer-wide Savings Plan scope).
+    virtual: bool = False
 
 
 @dataclass(frozen=True)

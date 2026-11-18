@@ -160,7 +160,9 @@ def _row(s: Scored, generation: int) -> dict[str, Any]:
         "rule_version": c.rule_version,
         "rule_config": json.dumps(c.rule_config),
         "generation": generation,
-        "resource_ref": c.resource.id if c.resource.in_inventory else None,
+        "resource_ref": (
+            None if c.resource.virtual or not c.resource.in_inventory else c.resource.id
+        ),
         "account_id": c.resource.account_id,
         "region_id": c.resource.region_id,
         "resource_id": c.resource.resource_id,
@@ -272,6 +274,11 @@ async def run_analysis(
             ),
         )
         scored = evaluate(ctx, resources)
+        # R8 is payer-wide (no resource): sized from the bills, after the open R4-R7 savings.
+        from cloudoptics.commitments.service import R8_RULE, r8_candidates
+
+        if R8_RULE not in ctx.settings.disabled_rules:
+            scored += [score(c) for c in await r8_candidates(session, ctx.now)]
         generation = int(time.time() * 1000)
         result = await store(session, tenant_id, scored, generation)
         # Rows this run did not produce are checked: fixed, gone or changed elsewhere.

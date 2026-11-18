@@ -38,6 +38,9 @@ const FACTORS: Record<string, string> = {
   version_upgrade: 'A version upgrade, so test it on a copy first',
   no_downgrade: 'A Kubernetes upgrade cannot be rolled back in place',
   routes_unchecked: 'Route tables may still send traffic to it',
+  one_year_commitment: 'Commits to paying for a year',
+  paid_in_dollars: 'Paid in US dollars, so it costs more if your currency weakens',
+  usage_may_fall: 'Little room if usage falls',
 }
 
 const NOTES: Record<string, string> = {
@@ -67,6 +70,10 @@ const NOTES: Record<string, string> = {
   short_billing_history: 'Based on less than 30 days of bills, so the monthly figure may change.',
   route_tables_not_checked:
     'Found from the bill alone: we cannot see your route tables, so check them before you delete it.',
+  hourly_from_daily_cur:
+    'Sized from daily bills (each day as its average hour), at the cautious end of the range, so quiet hours stay covered.',
+  advisory_only: 'Advisory only: Cloudoptics never buys anything for you.',
+  other_savings_netted: 'Savings from other open recommendations on servers are taken off first, so nothing is counted twice.',
 }
 
 const REVERSIBILITY: Record<Recommendation['reversibility'], string> = {
@@ -760,6 +767,12 @@ const EVIDENCE: Record<string, string> = {
   usageType: 'Billed as',
   natHours: 'Hours billed',
   natBytes: 'Data processed (GB)',
+  eligibleOnDemandUsdHour: 'On-demand spend a Savings Plan could cover',
+  baselineP10UsdHour: 'Quiet-hour level (10th percentile)',
+  nettedSavingsUsdMonth: 'Other savings taken off first',
+  awsHourlyCommitmentUsd: 'AWS recommends (an hour)',
+  coveragePercent: 'Covered by Savings Plans now',
+  usageDeclineTolerancePercent: 'Usage can fall before any goes unused',
 }
 
 const PERCENT = new Set([
@@ -768,8 +781,11 @@ const PERCENT = new Set([
   'cpuPercentile',
   'projectedCpuPercent',
   'runningHoursPercent',
+  'coveragePercent',
+  'usageDeclineTolerancePercent',
 ])
-const MONEY = new Set(['stopSavesUsdMonth', 'volumesUsdMonth'])
+const MONEY = new Set(['stopSavesUsdMonth', 'volumesUsdMonth', 'nettedSavingsUsdMonth'])
+const MONEY_HOUR = new Set(['eligibleOnDemandUsdHour', 'baselineP10UsdHour', 'awsHourlyCommitmentUsd'])
 const DATES = new Set(['created', 'lastSnapshot', 'started', 'billedThrough'])
 
 function evidenceValue(e: Recommendation['evidence'][number], money: (usd: number) => string): string {
@@ -780,6 +796,7 @@ function evidenceValue(e: Recommendation['evidence'][number], money: (usd: numbe
   if (MONEY.has(e.kind) && typeof v === 'number') return `${money(v)}/mo`
   if (e.kind === 'extendedSupportUsd' && typeof v === 'number') return `${money(v)}${days}`
   if (e.kind === 'billedDays' && typeof e.days === 'number') return `${String(v)} of the last ${e.days}`
+  if (MONEY_HOUR.has(e.kind) && typeof v === 'number') return `USD ${v.toFixed(3)}/h${days}`
   if (e.kind === 'busiestDayNetworkMb' && typeof v === 'number') return `${v} MB${days}`
   if (e.kind === 'scheduledHoursPerWeek' && typeof v === 'number') return `${v} hours a week`
   if (e.kind === 'hoursOffPerMonth' && typeof v === 'number') return `${Math.round(v)} hours a month`
@@ -951,6 +968,16 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
         )}
       </div>
       <Outcome rec={r} money={money} />
+      {r.ruleId === 'R8_savings_plan' && (
+        <Alert tone="info">
+          Advisory only. The{' '}
+          <Link to="/commitments" className="font-medium underline">
+            Commitments page
+          </Link>{' '}
+          compares our option with AWS&apos;s (Savings Plans and Reserved Instances, 1 or 3 years, each payment option),
+          with the buying ladder and the cost in your currency if it weakens.
+        </Alert>
+      )}
       <div className="grid gap-4 sm:grid-cols-3">
         <Kpi
           label="Monthly saving"

@@ -7,6 +7,7 @@ import type {
   Anomaly,
   AnomalyDetail,
   AnomalyStatus,
+  CommitmentList,
   CreditBalanceInput,
   CreditsRunway,
   DigestPreview,
@@ -51,11 +52,13 @@ import type {
   Role,
   RuleSettings,
   RuleSettingsView,
+  SavingsPlanAdvisory,
   Tenant,
   TenantChange,
   UsageSeries,
 } from './types'
 import { ApiError } from './types'
+import { demoAdvisory, demoCommitments, demoR8 } from './demoCommitments'
 
 // In-browser stand-in for the API, used by the public GitHub Pages build. Nothing leaves
 // the browser and no AWS call is made; state lives in this viewer's localStorage only.
@@ -680,6 +683,7 @@ const DEMO_RULES = [
   'R7_schedule_rds',
   'R6b_extended_support',
   'R10_idle_nat',
+  'R8_savings_plan',
 ]
 
 const DEFAULT_RULE_SETTINGS: RuleSettings = {
@@ -1547,7 +1551,10 @@ export class DemoApi implements Api {
     const settings = this.ruleSettings(tenantId)
     const disabled = settings.disabledRules
     this.settleVerifications(tenantId)
-    return [...DEMO_RECS, ...demoScheduleRecs(this.tenant(tenantId).timeZone, settings), ...DEMO_VERIFIED]
+    const payer = this.payer(tenantId)
+    const base = [...DEMO_RECS, ...demoScheduleRecs(this.tenant(tenantId).timeZone, settings), ...DEMO_VERIFIED]
+    const all = payer ? [...base, demoR8(this.advisory(tenantId, payer))] : base
+    return all
       .filter((r) => !disabled.includes(r.ruleId) || r.status === 'verified')
       .map((r) => {
         const key = `${tenantId}:${r.id}`
@@ -1815,7 +1822,13 @@ export class DemoApi implements Api {
   async getNotificationPreferences(tenantId: string): Promise<NotificationPreferences> {
     await this.tick()
     this.tenant(tenantId)
-    const defaults = { weeklyDigest: true, anomalyAlert: true, monthlyReport: true, ...this.state.notificationDefaults?.[tenantId] }
+    const defaults = {
+      weeklyDigest: true,
+      anomalyAlert: true,
+      monthlyReport: true,
+      commitmentExpiry: true,
+      ...this.state.notificationDefaults?.[tenantId],
+    }
     return { mine: { ...defaults, ...this.state.notificationsMine?.[tenantId] }, defaults }
   }
 
@@ -2147,6 +2160,39 @@ export class DemoApi implements Api {
     }
     entries.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))
     return { entries: entries.map((e, i) => ({ ...e, id: entries.length - i })), nextBefore: null, verified: true }
+  }
+
+  /** The first connection with data stands in as the payer. */
+  private payer(tenantId: string): Connection | undefined {
+    return (this.state.connections[tenantId] ?? []).find((c) => c.status === 'healthy' || c.status === 'degraded')
+  }
+
+  private advisory(tenantId: string, payer: Connection): SavingsPlanAdvisory {
+    const currency = this.tenant(tenantId).displayCurrency
+    const rate = currency === 'USD' ? 1 : (DEMO_RATES[currency] ?? null)
+    return demoAdvisory(payer.awsAccountId, payer.id, currency, rate)
+  }
+
+  async listCommitments(tenantId: string): Promise<CommitmentList> {
+    await this.tick()
+    this.tenant(tenantId)
+    const payer = this.payer(tenantId)
+    return payer ? demoCommitments(payer.awsAccountId, payer.id) : { commitments: [], coverage: [], expiryAlertDays: [60, 30, 15] }
+  }
+
+  async savingsPlanAdvisory(tenantId: string): Promise<SavingsPlanAdvisory> {
+    await this.tick()
+    this.tenant(tenantId)
+    const payer = this.payer(tenantId)
+    if (!payer) return { advice: [], returnWindowDays: 7, ladderFirstPercent: 25, ladderStepPercent: 10, fxStressPercent: [20, 40] }
+    return this.advisory(tenantId, payer)
+  }
+
+  async refreshCommitments(tenantId: string): Promise<{ status: string; connections: number }> {
+    await this.tick()
+    this.tenant(tenantId)
+    const payer = this.payer(tenantId)
+    return payer ? { status: 'succeeded', connections: 1 } : { status: 'skipped', connections: 0 }
   }
 
   private hasData(tenantId: string): boolean {

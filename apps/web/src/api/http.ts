@@ -7,6 +7,8 @@ import type {
   Anomaly,
   AnomalyDetail,
   AnomalyStatus,
+  CommitmentList,
+  SavingsPlanAdvisory,
   CreditBalanceInput,
   CreditsRunway,
   DigestPreview,
@@ -155,6 +157,18 @@ export class HttpApi implements Api {
 
   digestPreview(tenantId: string): Promise<DigestPreview> {
     return this.request('GET', `/v1/tenants/${tenantId}/digest/preview`)
+  }
+
+  listCommitments(tenantId: string): Promise<CommitmentList> {
+    return this.request('GET', `/v1/tenants/${tenantId}/commitments`)
+  }
+
+  savingsPlanAdvisory(tenantId: string): Promise<SavingsPlanAdvisory> {
+    return this.request('GET', `/v1/tenants/${tenantId}/commitments/savings-plans`)
+  }
+
+  refreshCommitments(tenantId: string): Promise<{ status: string; connections: number }> {
+    return this.request('POST', `/v1/tenants/${tenantId}/commitments/refresh`)
   }
 
   getCredits(tenantId: string): Promise<CreditsRunway> {

@@ -11,6 +11,7 @@ from cloudoptics import __version__
 from cloudoptics.anomalies import routes as anomaly_routes
 from cloudoptics.audit import routes as audit_routes
 from cloudoptics.budgets import routes as budget_routes
+from cloudoptics.commitments import routes as commitment_routes
 from cloudoptics.connectors import access as connector_access
 from cloudoptics.connectors import routes as connector_routes
 from cloudoptics.credits import routes as credit_routes
@@ -104,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(budget_routes.router)
     app.include_router(credit_routes.router)
     app.include_router(trend_routes.router)
+    app.include_router(commitment_routes.router)
     app.include_router(anomaly_routes.router)
     app.include_router(anomaly_routes.settings_router)
     app.include_router(notification_routes.router)
