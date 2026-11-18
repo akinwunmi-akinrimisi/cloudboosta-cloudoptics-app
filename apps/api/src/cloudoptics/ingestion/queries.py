@@ -4,7 +4,7 @@ inside a tenant-scoped transaction; row-level security limits every query to tha
 from __future__ import annotations
 
 import calendar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 SummaryStatus = Literal["no_connection", "waiting", "provisional", "ready"]
 Source = Literal["cur", "cost_explorer"]
 Dimension = Literal["service", "account", "region"]
+MonthState = Literal["current", "changing", "final"]
 TOP_ITEMS = 8
+#: AWS issues the invoice in the first days of the month after; from the 6th an ended
+#: month's bill counts as final (a later restatement is still loaded).
+FINAL_AFTER_DAYS = 5
 RUN_RATE_DAYS = 7
 MONTHLY_CHARGE_MIN_USD = 1.0
 
@@ -65,6 +69,9 @@ class CostSummary:
     forecast: Forecast | None
     previous_month: float | None
     reconciliation: Reconciliation | None = None
+    #: ``current``: this month, so far; ``changing``: an ended month AWS may still restate;
+    #: ``final``: an ended month whose bill is final.
+    month_state: MonthState = "current"
 
 
 @dataclass(frozen=True)
@@ -101,6 +108,83 @@ class Breakdown:
 def _month_bounds(day: date) -> tuple[date, date]:
     start = day.replace(day=1)
     return start, (start + timedelta(days=32)).replace(day=1)
+
+
+def month_state(start: date, today: date) -> MonthState:
+    """Whether the month starting ``start`` is the current one, ended but possibly still
+    restated by AWS, or final."""
+    _, end = _month_bounds(start)
+    if today < end:
+        return "current"
+    return "final" if today >= end + timedelta(days=FINAL_AFTER_DAYS) else "changing"
+
+
+def past_month(month: date | None, today: date) -> date | None:
+    """``month``'s first day when it ended before ``today``'s month, else ``None`` (the
+    current month, the default)."""
+    if month is None or month.replace(day=1) >= today.replace(day=1):
+        return None
+    return month.replace(day=1)
+
+
+@dataclass(frozen=True)
+class MonthItem:
+    """A month with spend: from the bills (CUR), or provisional (Cost Explorer) while the
+    month has no bills yet."""
+
+    month: date
+    source: Source
+    total: float  # amortised, after credits, with tax (as the month to date)
+    data_through: date
+    state: MonthState
+    report: Literal["stored", "draft"] | None  # the month's executive report
+
+
+async def months(session: AsyncSession, today: date) -> list[MonthItem]:
+    """Every month with cost data up to ``today``'s, newest first."""
+    current, end = _month_bounds(today)
+    rows = await session.execute(
+        text(
+            "SELECT CAST(date_trunc('month', usage_date) AS date) AS month, "
+            "sum(effective_cost_usd) AS total, max(usage_date) AS through "
+            "FROM cost_daily WHERE usage_date < :end GROUP BY 1"
+        ),
+        {"end": end},
+    )
+    found = {r.month: (r.total, r.through) for r in rows}
+    stored = set((await session.execute(text("SELECT month FROM monthly_report"))).scalars())
+    items = [
+        MonthItem(
+            month=m,
+            source="cur",
+            total=round(float(total), 2),
+            data_through=through,
+            state=month_state(m, today),
+            report="stored" if m in stored else ("draft" if m < current else None),
+        )
+        for m, (total, through) in found.items()
+    ]
+    snapshots = await session.execute(
+        text(
+            "SELECT period_start, sum(effective_cost_usd) AS total, "
+            "max(through_date) AS through FROM cost_snapshot_ce "
+            "WHERE period_start <= :current GROUP BY period_start"
+        ),
+        {"current": current},
+    )
+    items.extend(
+        MonthItem(
+            month=r.period_start,
+            source="cost_explorer",
+            total=round(float(r.total), 2),
+            data_through=r.through,
+            state=month_state(r.period_start, today),
+            report=None,
+        )
+        for r in snapshots
+        if r.period_start not in found
+    )
+    return sorted(items, key=lambda i: i.month, reverse=True)
 
 
 async def _reconciliation(
@@ -340,13 +424,18 @@ async def month_spend(
     return MonthSpend(round(effective, 2), forecast.amount, last_day)
 
 
-async def summary(session: AsyncSession, today: date) -> CostSummary:
+async def summary(session: AsyncSession, today: date, month: date | None = None) -> CostSummary:
     """Month-to-date spend (amortised, after credits) and the month-end forecast
     (``month_end_forecast``; while the month has only Cost Explorer figures, the average
-    over its days so far)."""
-    start, end = _month_bounds(today)
+    over its days so far).
+
+    ``month``: an ended month instead: its whole spend and whether its bill is final; no
+    forecast (that is the current month's)."""
+    past = past_month(month, today)
+    start, end = _month_bounds(past or today)
+    state = month_state(start, today)
     prev_start, _ = _month_bounds(start - timedelta(days=1))
-    month = f"{start:%Y-%m}"
+    label = f"{start:%Y-%m}"
 
     connections = (
         await session.execute(
@@ -359,15 +448,22 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
         )
     ).one_or_none()
     data_through = (
-        await session.execute(text("SELECT max(usage_date) FROM cost_daily"))
+        await session.execute(
+            text("SELECT max(usage_date) FROM cost_daily WHERE usage_date < :end"),
+            {"end": end if past else date.max},
+        )
     ).scalar_one()
     if not await _has_cur_month(session, start, end):
         snapshots = await _snapshots(session, start)
         if snapshots:
-            return _provisional(snapshots, start, month, data_through, last)
+            provisional = _provisional(
+                snapshots, start, label, data_through, last, forecast=past is None
+            )
+            return replace(provisional, month_state=state)
     base = {
         "source": "cur" if data_through is not None else None,
-        "month": month,
+        "month": label,
+        "month_state": state,
         "currency": "USD",
         "data_through": data_through,
         "last_load_at": last.created_at if last else None,
@@ -405,7 +501,7 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
     ).scalar_one()
 
     forecast = None
-    if totals.last_day is not None:
+    if totals.last_day is not None and past is None:
         forecast = await month_end_forecast(
             session, start, totals.last_day, float(totals.effective)
         )
@@ -424,7 +520,13 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
 
 
 def _provisional(
-    snapshots: list[Any], start: date, month: str, data_through: date | None, last: Any
+    snapshots: list[Any],
+    start: date,
+    month: str,
+    data_through: date | None,
+    last: Any,
+    *,
+    forecast: bool = True,
 ) -> CostSummary:
     effective = sum(float(r.effective_cost_usd) for r in snapshots)
     through = max(r.through_date for r in snapshots)
@@ -442,18 +544,21 @@ def _provisional(
             credits=round(sum(float(r.credits_usd) for r in snapshots), 2),
         ),
         # Cost Explorer's daily series has no tax split, so tax counts towards the run rate.
-        forecast=_run_rate(effective, effective, start, through),
+        forecast=_run_rate(effective, effective, start, through) if forecast else None,
         previous_month=None,
     )
 
 
-async def daily(session: AsyncSession, today: date, days: int = 30) -> DailyCosts:
+async def daily(
+    session: AsyncSession, today: date, days: int = 30, month: date | None = None
+) -> DailyCosts:
     """Daily effective cost for the ``days`` days up to the latest data (or ``today``).
 
     Uses CUR data; while the current month has none, the month so far comes from the Cost
-    Explorer snapshot instead.
+    Explorer snapshot instead. ``month``: every day of that ended month instead.
     """
-    start, end = _month_bounds(today)
+    past = past_month(month, today)
+    start, end = _month_bounds(past or today)
     if not await _has_cur_month(session, start, end):
         snapshots = await _snapshots(session, start)
         if snapshots:
@@ -466,11 +571,18 @@ async def daily(session: AsyncSession, today: date, days: int = 30) -> DailyCost
                     for d, v in sorted(series.items())
                 ],
             )
-    last = (
-        await session.execute(
-            text("SELECT max(usage_date) FROM cost_daily WHERE usage_date <= :t"), {"t": today}
-        )
-    ).scalar_one()
+    if past is not None:
+        if not await _has_cur_month(session, start, end):
+            return DailyCosts(source=None, currency="USD", points=[])
+        last: date | None = end - timedelta(days=1)
+        days = (end - start).days
+    else:
+        last = (
+            await session.execute(
+                text("SELECT max(usage_date) FROM cost_daily WHERE usage_date <= :t"),
+                {"t": today},
+            )
+        ).scalar_one()
     if last is None:
         return DailyCosts(source=None, currency="USD", points=[])
     first = last - timedelta(days=days - 1)

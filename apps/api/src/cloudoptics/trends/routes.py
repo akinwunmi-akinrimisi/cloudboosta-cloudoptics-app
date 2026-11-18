@@ -10,7 +10,8 @@ from pydantic import Field
 
 from cloudoptics.fx.routes import Quote
 from cloudoptics.identity.deps import Session, ViewerAccess
-from cloudoptics.ingestion.routes import Forecast
+from cloudoptics.ingestion import queries
+from cloudoptics.ingestion.routes import Forecast, MonthParam, chosen_month
 from cloudoptics.platform.api import ApiModel
 from cloudoptics.trends import changes, forecast
 
@@ -141,7 +142,8 @@ class Period(ApiModel):
 
 
 class Changes(ApiModel):
-    """Month to date against the same days last month (usage and purchases)."""
+    """Month to date against the same days last month (usage and purchases); for an ended
+    month, the whole month against the whole month before."""
 
     status: Literal["no_data", "ready"]
     month: str | None
@@ -179,9 +181,14 @@ async def get_changes(
     session: Session,
     today: date | None = None,
     limit: int = Query(changes.TOP, ge=1, le=10),
+    month: MonthParam = None,
 ) -> Changes:
-    """The biggest rises and falls by service and region (``limit`` each way)."""
-    w = await changes.what_changed(session, today or datetime.now(UTC).date(), limit)
+    """The biggest rises and falls by service and region (``limit`` each way). ``month``
+    (YYYY-MM, an ended month): that whole month against the whole month before; by
+    default the month to date against the same days last month."""
+    day = today or datetime.now(UTC).date()
+    past = queries.past_month(chosen_month(month, day), day)
+    w = await changes.what_changed(session, day, limit, month=past)
     if w is None:
         return Changes(
             status="no_data", month=None, current=None, previous=None, usd=0.0,

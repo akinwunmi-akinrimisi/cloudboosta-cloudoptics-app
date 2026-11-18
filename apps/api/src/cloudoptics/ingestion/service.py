@@ -158,8 +158,17 @@ async def ingest_connection(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> I
 
 
 async def _store(
-    session: AsyncSession, tenant_id: uuid.UUID, conn: Any, loaded: LoadedExport
+    session: AsyncSession,
+    tenant_id: uuid.UUID,
+    conn: Any,
+    loaded: LoadedExport,
+    *,
+    reload: bool = False,
 ) -> None:
+    """Record the batch and, when it passed the checks, replace the period's aggregates.
+
+    ``reload``: the version was loaded before; the batch gets a row of its own and the
+    version's files point at it."""
     m = loaded.manifest
     batch_id = uuid7()
     period: date = m.billing_period
@@ -167,8 +176,8 @@ async def _store(
         text(
             "INSERT INTO ingest_batch (id, tenant_id, connection_id, billing_period, "
             "export_version, manifest_key, mapping_version, status, row_count, checks, "
-            "error_code) VALUES (:id, :t, :c, :p, :v, :key, :mv, :status, :rows, "
-            "CAST(:checks AS jsonb), :code)"
+            "error_code, reload) VALUES (:id, :t, :c, :p, :v, :key, :mv, :status, :rows, "
+            "CAST(:checks AS jsonb), :code, :reload)"
         ),
         {
             "id": batch_id,
@@ -182,6 +191,7 @@ async def _store(
             "rows": loaded.row_count,
             "checks": json.dumps([c.as_json() for c in loaded.checks]),
             "code": None if loaded.ok else "quality_check_failed",
+            "reload": reload,
         },
     )
     if loaded.ok:
@@ -309,7 +319,12 @@ async def _store(
                 "INSERT INTO billing_file (id, tenant_id, connection_id, batch_id, "
                 "billing_period, export_version, object_key, sha256, size_bytes, row_count, "
                 "status) VALUES (:id, :t, :c, :b, :p, :v, :key, :sha, :size, :rows, :status) "
-                "ON CONFLICT DO NOTHING"
+                # A reload of a version takes its files over when it passes the checks.
+                "ON CONFLICT (tenant_id, connection_id, billing_period, export_version, "
+                "object_key) DO UPDATE SET batch_id = EXCLUDED.batch_id, "
+                "sha256 = EXCLUDED.sha256, size_bytes = EXCLUDED.size_bytes, "
+                "row_count = EXCLUDED.row_count, status = EXCLUDED.status "
+                "WHERE EXCLUDED.status = 'aggregated'"
             ),
             [
                 {
