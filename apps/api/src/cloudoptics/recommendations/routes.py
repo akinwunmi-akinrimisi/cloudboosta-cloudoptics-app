@@ -40,7 +40,9 @@ LIST_RECOMMENDATIONS = text(
     "recommended_config, cost_now_usd_month, cost_after_usd_month, savings_usd_month, "
     "savings_basis, effort, reversibility, restart_required, risk_score, risk_level, "
     "risk_factors, confidence, confidence_notes, priority_score, evidence, fix, primary_of, "
-    "status, assignee_id, first_detected_at, last_evaluated_at FROM recommendation "
+    "status, assignee_id, first_detected_at, last_evaluated_at, done_at, verified_at, "
+    "changed_at, verification, realised_savings_usd_month, realised_basis, realised_at "
+    "FROM recommendation "
     "WHERE (NOT :open_only OR status = ANY(:open)) "
     "AND (CAST(:rule AS text) IS NULL OR rule_id = :rule) "
     "AND (CAST(:account AS text) IS NULL OR account_id = :account) "
@@ -54,7 +56,9 @@ GET_RECOMMENDATION = text(
     "recommended_config, cost_now_usd_month, cost_after_usd_month, savings_usd_month, "
     "savings_basis, effort, reversibility, restart_required, risk_score, risk_level, "
     "risk_factors, confidence, confidence_notes, priority_score, evidence, fix, primary_of, "
-    "status, assignee_id, first_detected_at, last_evaluated_at FROM recommendation "
+    "status, assignee_id, first_detected_at, last_evaluated_at, done_at, verified_at, "
+    "changed_at, verification, realised_savings_usd_month, realised_basis, realised_at "
+    "FROM recommendation "
     "WHERE id = :id"
 )
 
@@ -89,6 +93,18 @@ class Recommendation(ApiModel):
     assignee_id: uuid.UUID | None
     first_detected_at: datetime
     last_evaluated_at: datetime
+    done_at: datetime | None = None
+    # When a scan confirmed the change (PRD US-5.2), and when the change happened.
+    verified_at: datetime | None = None
+    changed_at: datetime | None = None
+    # The last check: ``check`` (what was seen), ``outcome``, ``estimateUsdMonth`` and the
+    # last ``measurement`` of the bills before and after the change.
+    verification: dict[str, Any] | None = None
+    # Normalised to 30 days; null until 7 days of bills after the change are in.
+    realised_savings_usd_month: float | None = None
+    # cur: from the resource's own costs in the bills; estimate: the bills do not show it.
+    realised_basis: Literal["cur", "estimate"] | None = None
+    realised_at: datetime | None = None
 
 
 class RuleTotal(ApiModel):
@@ -104,6 +120,15 @@ class RecommendationSummary(ApiModel):
     savings_usd_month: float
     by_rule: list[RuleTotal]
     last_evaluated_at: datetime | None
+    verified_count: int = 0
+    # Marked done, waiting for a scan to confirm it; and done but not seen 72 hours on.
+    awaiting_verification_count: int = 0
+    not_verified_count: int = 0
+    # Savings credited a month (PRD US-5.2), once per resource: measured from the bills,
+    # and estimated (verified, before 7 days of bills or when the bills do not show the
+    # resource). Resolved outside Cloudoptics counts only when the bills show the drop.
+    realised_savings_usd_month: float = 0.0
+    estimated_realised_usd_month: float = 0.0
 
 
 def _model(row: Any) -> Recommendation:
@@ -146,6 +171,22 @@ async def list_recommendations(
     return [_model(r) for r in rows]
 
 
+OUTCOMES = text(
+    "SELECT (SELECT count(*) FROM recommendation WHERE status = 'verified') AS verified, "
+    "(SELECT count(*) FROM recommendation WHERE status = 'done') AS awaiting, "
+    "(SELECT count(*) FROM recommendation WHERE status = 'not_verified') AS not_verified, "
+    "coalesce(sum(realised) FILTER (WHERE basis = 'cur'), 0) AS realised, "
+    "coalesce(sum(coalesce(realised, estimate)) FILTER (WHERE basis IS DISTINCT FROM 'cur'), 0) "
+    "AS estimated FROM (SELECT DISTINCT ON (coalesce(resource_ref::text, id::text)) "
+    "realised_savings_usd_month AS realised, realised_basis AS basis, "
+    "coalesce((verification->>'estimateUsdMonth')::numeric, savings_usd_month) AS estimate "
+    "FROM recommendation WHERE status = 'verified' OR (status = 'resolved_externally' "
+    "AND realised_basis = 'cur' AND realised_savings_usd_month > 0) "
+    "ORDER BY coalesce(resource_ref::text, id::text), status = 'verified' DESC, "
+    "verified_at DESC NULLS LAST) credited"
+)
+
+
 @router.get("/summary", response_model=RecommendationSummary)
 async def recommendation_summary(access: ViewerAccess, session: Session) -> RecommendationSummary:
     rows = (
@@ -161,12 +202,18 @@ async def recommendation_summary(access: ViewerAccess, session: Session) -> Reco
     last = (
         await session.execute(text("SELECT max(last_evaluated_at) FROM recommendation"))
     ).scalar_one()
+    outcome = (await session.execute(OUTCOMES)).one()
     return RecommendationSummary(
         open_count=sum(r.n for r in rows),
         savings_usd_month=round(sum(float(r.savings) for r in rows), 2),
         by_rule=[RuleTotal(rule_id=r.rule_id, count=r.n, savings_usd_month=float(r.savings))
                  for r in rows],
         last_evaluated_at=last,
+        verified_count=outcome.verified,
+        awaiting_verification_count=outcome.awaiting,
+        not_verified_count=outcome.not_verified,
+        realised_savings_usd_month=round(float(outcome.realised), 2),
+        estimated_realised_usd_month=round(float(outcome.estimated), 2),
     )  # fmt: skip
 
 
@@ -180,10 +227,29 @@ async def get_recommendation(
     return _model(row)
 
 
+# Marking done starts the verification clock and keeps what the change is checked against;
+# moving back to open (reopening) forgets any earlier verification and realised savings.
+SET_STATUS = text(
+    "UPDATE recommendation SET status = :s, "
+    "done_at = CASE WHEN :done THEN now() WHEN :reset THEN NULL ELSE done_at END, "
+    "baseline = CASE WHEN :done THEN jsonb_build_object('currentConfig', current_config, "
+    "'recommendedConfig', recommended_config, 'costNowUsdMonth', cost_now_usd_month, "
+    "'savingsUsdMonth', savings_usd_month) WHEN :reset THEN NULL ELSE baseline END, "
+    "verification = CASE WHEN :reset THEN NULL ELSE verification END, "
+    "verified_at = CASE WHEN :reset THEN NULL ELSE verified_at END, "
+    "changed_at = CASE WHEN :reset THEN NULL ELSE changed_at END, "
+    "realised_savings_usd_month = CASE WHEN :reset THEN NULL "
+    "ELSE realised_savings_usd_month END, "
+    "realised_basis = CASE WHEN :reset THEN NULL ELSE realised_basis END, "
+    "realised_at = CASE WHEN :reset THEN NULL ELSE realised_at END WHERE id = :id"
+)
+
+
 class RecommendationChange(ApiModel):
     """Members move a recommendation through its lifecycle (PRD FR-REC-07) and assign it.
 
-    ``done`` means the fix was applied; the next analysis run confirms it. Dismissing needs
+    ``done`` means the fix was applied; a scan confirms it within 72 hours (``verified``)
+    or finds it unchanged (``not_verified``, PRD US-5.1/5.2). Dismissing needs
     a reason, which is kept for the audit trail and for tuning the rules. Assigning a new
     recommendation makes it ``assigned``; ``assigneeId: null`` unassigns it.
     """
@@ -207,8 +273,10 @@ async def _apply(
     access: Any,
     recommendation_id: uuid.UUID,
     change: RecommendationChange,
+    assigned: list[uuid.UUID] | None = None,
 ) -> bool:
-    """Apply one change with its history and audit entries; False when not found."""
+    """Apply one change with its history and audit entries; False when not found. Newly
+    assigned recommendations are added to ``assigned``, for the email."""
     row = (
         await session.execute(
             text("SELECT status, assignee_id FROM recommendation WHERE id = :id FOR UPDATE"),
@@ -225,6 +293,8 @@ async def _apply(
             {"a": change.assignee_id, "id": recommendation_id},
         )
         await _event(session, access, recommendation_id, "assigned", assignee=change.assignee_id)
+        if change.assignee_id is not None and assigned is not None:
+            assigned.append(recommendation_id)
         await audit.record(
             session,
             tenant_id=access.tenant_id,
@@ -241,8 +311,13 @@ async def _apply(
             new_status = "new"
     if new_status is not None and new_status != row.status:
         await session.execute(
-            text("UPDATE recommendation SET status = :s WHERE id = :id"),
-            {"s": new_status, "id": recommendation_id},
+            SET_STATUS,
+            {
+                "s": new_status,
+                "done": new_status == "done",
+                "reset": new_status in ("done", *OPEN),
+                "id": recommendation_id,
+            },
         )
         await _event(
             session,
@@ -321,9 +396,38 @@ async def change_recommendation(
     session: Session,
 ) -> Recommendation:
     await _check_assignee(session, access, body)
-    if not await _apply(session, request, access, recommendation_id, body):
+    assigned: list[uuid.UUID] = []
+    if not await _apply(session, request, access, recommendation_id, body, assigned):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "recommendation_not_found")
+    await _email_assignee(session, access, body.assignee_id, assigned)
     return await get_recommendation(recommendation_id, access, session)
+
+
+async def _email_assignee(
+    session: Any, access: Any, assignee_id: uuid.UUID | None, ids: list[uuid.UUID]
+) -> None:
+    """Tell the assignee (PRD US-5.1), unless they assigned it to themselves."""
+    if assignee_id is None or not ids or assignee_id == access.user.id:
+        return
+    key = str(uuid7())
+    if get_settings().jobs_mode == "inline":
+        from cloudoptics.recommendations.notify import send_assignment_email
+
+        await send_assignment_email(
+            session, access.tenant_id, assignee_id, access.user.id, ids, key
+        )
+    else:
+        from cloudoptics.platform.jobs import get_job_app
+        from cloudoptics.recommendations.jobs import defer_assignment_email
+
+        await defer_assignment_email(
+            get_job_app(),
+            str(access.tenant_id),
+            str(assignee_id),
+            str(access.user.id),
+            [str(i) for i in ids],
+            key,
+        )
 
 
 class BulkChange(RecommendationChange):
@@ -344,8 +448,10 @@ async def change_many(
         body.model_dump(include=body.model_fields_set - {"ids"})
     )
     updated = 0
+    assigned: list[uuid.UUID] = []
     for rid in dict.fromkeys(body.ids):
-        updated += await _apply(session, request, access, rid, change)
+        updated += await _apply(session, request, access, rid, change, assigned)
+    await _email_assignee(session, access, body.assignee_id, assigned)
     return BulkResult(updated=updated)
 
 
@@ -355,7 +461,8 @@ class Comment(ApiModel):
 
 class RecommendationEvent(ApiModel):
     id: uuid.UUID
-    kind: Literal["status_changed", "assigned", "commented"]
+    # A status change without an actor was made by Cloudoptics (a verification check).
+    kind: Literal["status_changed", "assigned", "commented", "savings_measured"]
     actor_id: uuid.UUID | None
     actor_name: str | None
     from_status: str | None
@@ -499,16 +606,6 @@ async def put_rule_settings(
         ),
         {"t": access.tenant_id, "s": json.dumps(after), "u": access.user.id},
     )
-    await audit.record(
-        session,
-        tenant_id=access.tenant_id,
-        actor=user_actor(request, access.user.id),
-        action="rule_settings.updated",
-        target_type="tenant",
-        target_id=str(access.tenant_id),
-        before=before,
-        after=after,
-    )
     saved = RuleSettings.from_json(after)
     if get_settings().jobs_mode == "inline":
         from cloudoptics.analysis.engine import run_analysis
@@ -520,4 +617,16 @@ async def put_rule_settings(
         from cloudoptics.platform.jobs import get_job_app
 
         await defer_analysis(get_job_app(), str(access.tenant_id))
+    # After the inline run: its verification writes audit entries in its own transaction,
+    # and this one would hold the tenant's audit chain lock until it commits.
+    await audit.record(
+        session,
+        tenant_id=access.tenant_id,
+        actor=user_actor(request, access.user.id),
+        action="rule_settings.updated",
+        target_type="tenant",
+        target_id=str(access.tenant_id),
+        before=before,
+        after=after,
+    )
     return RuleSettingsView(rules=RULE_IDS, settings=RuleSettingsBody.model_validate(after))

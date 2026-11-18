@@ -2,6 +2,9 @@
 
 Grain: day x account x service x region x usage type x charge category x tag set. Batches
 are aggregated as they stream in and merged, so a period never has to fit in memory.
+
+Usage cost per resource and day (``cost_resource_daily``) is kept alongside, for the
+before and after comparison of realised savings (PRD US-5.2).
 """
 
 from __future__ import annotations
@@ -32,8 +35,8 @@ KEY_COLUMNS = (
 SUM_COLUMNS = ("BilledCost", "EffectiveCost", "x_NetCost", "ListCost", "ConsumedQuantity")
 _KIND = KEY_COLUMNS.index("x_CommitmentKind")
 
-# Usage types kept per resource (PRD FR-ANA-06b, FR-ANA-14). EKS writes "extendedSupport".
-RESOURCE_USAGE_TYPES = r"NatGateway-(Hours|Bytes)$|ExtendedSupport"
+# Usage cost per resource, day and usage type: read by the billing-only rules (R6b, R10)
+# and by verification's before/after comparison (realised savings).
 RESOURCE_KEY_COLUMNS = (
     "ChargeDate",
     "SubAccountId",
@@ -155,12 +158,10 @@ class DailyAggregator:
 
     def _update_resources(self, table: pa.Table) -> None:
         no: Any = pa.scalar(False)
-        usage: Any = pc.match_substring_regex(
-            table["x_UsageType"], RESOURCE_USAGE_TYPES, ignore_case=True
-        )
         named: Any = pc.not_equal(table["ResourceId"], pa.scalar(""))
+        account: Any = pc.is_valid(table["SubAccountId"])
         wanted = pc.and_(
-            pc.and_(pc.fill_null(usage, no), pc.fill_null(named, no)),
+            pc.and_(pc.fill_null(named, no), account),
             pc.equal(table["ChargeCategory"], pa.scalar("Usage")),
         )
         rows = table.filter(wanted)

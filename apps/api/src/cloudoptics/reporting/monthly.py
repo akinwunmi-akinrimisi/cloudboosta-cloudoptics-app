@@ -119,6 +119,9 @@ class Savings(ApiModel):
     new_count: int
     done_count: int
     done_usd_month: float
+    # Confirmed in AWS this month, and the realised (or estimated) monthly saving.
+    verified_count: int = 0
+    realised_usd_month: float = 0.0
 
 
 class TopRecommendation(ApiModel):
@@ -272,6 +275,8 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, month: date) -> Mon
             new_count=recs.new_count,
             done_count=recs.done_count,
             done_usd_month=recs.done_savings_usd_month,
+            verified_count=recs.verified_count,
+            realised_usd_month=recs.realised_usd_month,
         ),
         top_recommendations=[
             TopRecommendation(
@@ -382,6 +387,14 @@ def render(r: MonthlyReport, app_url: str) -> tuple[str, str, str]:
         f"{sv.open_count} open recommendations worth USD {sv.open_usd_month:,.2f} a month"
         + (f" ({sv.new_count} found this month)." if sv.new_count else "."),
         f"Marked done this month: {sv.done_count}, saving USD {sv.done_usd_month:,.2f} a month.",
+        *(
+            [
+                f"Verified in AWS this month: {sv.verified_count}, saving USD "
+                f"{sv.realised_usd_month:,.2f} a month."
+            ]
+            if sv.verified_count
+            else []
+        ),
         *[
             f"{t.title}: USD {t.savings_usd_month:,.2f} a month, {t.risk_level} risk, effort "
             f"{t.effort}"

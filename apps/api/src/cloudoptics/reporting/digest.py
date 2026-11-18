@@ -200,6 +200,11 @@ def render(d: Digest, app_url: str) -> tuple[str, str, str]:
             f"Marked done this week: {r.done_count}, saving {d.money(r.done_savings_usd_month)}"
             " a month."
         )
+    if r.verified_count:
+        recs.append(
+            f"Verified in AWS this week: {r.verified_count}, saving "
+            f"{d.money(r.realised_usd_month)} a month."
+        )
     sections.append(("Recommendations", recs, f"{app}/recommendations"))
 
     if d.budgets:

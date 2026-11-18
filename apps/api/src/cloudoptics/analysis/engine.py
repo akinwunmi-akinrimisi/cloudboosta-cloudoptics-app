@@ -7,9 +7,10 @@ candidates for one resource are deduplicated (FR-REC-06): the highest priority i
 primary and the rest point at it with ``primary_of`` (an alternative, not extra savings).
 
 Rows are keyed by a fingerprint (rule, account, region, resource), so a re-run updates a
-recommendation in place and keeps its status. An open recommendation no rule produces any
-more (the resource changed or went away) becomes ``resolved_externally``, and one a member
-marked ``done`` becomes ``verified``; a resolved one that comes back is reopened.
+recommendation in place and keeps its status. After each run the verification
+(``recommendations.verification``) checks the rows the run did not produce and the ones
+marked done: verified, not verified or resolved outside Cloudoptics. A resolved one that
+comes back is reopened.
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from cloudoptics.metrics.puller import load_usage
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.recommendations.verification import verify
 
 ENGINE_VERSION = "2026.10.1"
 CONFIDENCE_WEIGHT = {"high": 1.0, "medium": 0.7, "low": 0.4}
@@ -208,7 +210,11 @@ UPSERT = text(
     "confidence_notes = EXCLUDED.confidence_notes, priority_score = EXCLUDED.priority_score, "
     "evidence = EXCLUDED.evidence, fix = EXCLUDED.fix, engine_version = EXCLUDED.engine_version, "
     "last_evaluated_at = now(), status = CASE WHEN recommendation.status IN "
-    "('resolved_externally', 'expired') THEN 'new' ELSE recommendation.status END "
+    "('resolved_externally', 'expired') THEN 'new' ELSE recommendation.status END, "
+    "changed_at = CASE WHEN recommendation.status IN ('resolved_externally', 'expired') "
+    "THEN NULL ELSE recommendation.changed_at END, "
+    "realised_savings_usd_month = CASE WHEN recommendation.status IN ('resolved_externally', "
+    "'expired') THEN NULL ELSE recommendation.realised_savings_usd_month END "
     "RETURNING id"
 )
 
@@ -236,22 +242,7 @@ async def store(
                 {"p": primary, "ids": [ids[s.fingerprint] for s in group[1:]]},
             )
 
-    resolved = await session.execute(
-        text(
-            "UPDATE recommendation SET status = 'resolved_externally', last_evaluated_at = now() "
-            "WHERE generation_id < :g AND status = ANY(:open) RETURNING id"
-        ),
-        {"g": generation, "open": list(OPEN)},
-    )
-    # Marked done and no longer found: the fix is confirmed.
-    await session.execute(
-        text(
-            "UPDATE recommendation SET status = 'verified', last_evaluated_at = now() "
-            "WHERE generation_id < :g AND status = 'done'"
-        ),
-        {"g": generation},
-    )
-    return {"recommendations": len(scored), "resolved": len(resolved.all())}
+    return {"recommendations": len(scored)}
 
 
 async def run_analysis(
@@ -281,4 +272,10 @@ async def run_analysis(
             ),
         )
         scored = evaluate(ctx, resources)
-        return await store(session, tenant_id, scored, int(time.time() * 1000))
+        generation = int(time.time() * 1000)
+        result = await store(session, tenant_id, scored, generation)
+        # Rows this run did not produce are checked: fixed, gone or changed elsewhere.
+        checked = await verify(
+            session, tenant_id, datetime.now(UTC), generation=generation, settings=ctx.settings
+        )
+        return {**result, **checked}

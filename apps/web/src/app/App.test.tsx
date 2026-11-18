@@ -365,7 +365,7 @@ describe('Cloudoptics web app', () => {
 
   it('lists recommendations best first and walks one to done', async () => {
     const { user } = await connectedWorkspace('wanjiru@example.com')
-    expect(await screen.findByText('9 open recommendations')).toBeTruthy()
+    expect(await screen.findByText(/^9 open recommendations · .+\/mo realised$/)).toBeTruthy()
 
     await user.click(screen.getByRole('link', { name: 'Recommendations' }))
     const first = await screen.findByRole('link', { name: /Upgrade database reports-db off PostgreSQL 12/ })
@@ -394,7 +394,8 @@ describe('Cloudoptics web app', () => {
     expect((screen.getByRole('button', { name: 'Dismiss' }) as HTMLButtonElement).disabled).toBe(true)
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     await user.click(screen.getByRole('button', { name: 'Mark as done' }))
-    expect(await screen.findByText(/Done, waiting for the next scan/)).toBeTruthy()
+    expect(await screen.findByText(/Done, waiting for verification/)).toBeTruthy()
+    expect(screen.getByText(/marks it verified when it sees the change/)).toBeTruthy()
 
     await user.click(screen.getByRole('link', { name: /All recommendations/ }))
     await screen.findByRole('link', { name: /Change volume db-data/ })
@@ -458,6 +459,25 @@ describe('Cloudoptics web app', () => {
     expect(screen.getByRole('link', { name: /Open in AWS console/ }).getAttribute('href')).toContain(
       '#NatGatewayDetails:natGatewayId=nat-0d1e2f3a4b5c6d7e8',
     )
+  })
+
+  it('shows verified recommendations and their realised savings', async () => {
+    const { user } = await connectedWorkspace('ngozi@example.com')
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    expect(await screen.findByText('Realised savings')).toBeTruthy()
+    expect(await screen.findByText(/^2 verified · .+ estimated$/)).toBeTruthy()
+
+    await user.click(screen.getByLabelText('Show done and dismissed'))
+    await user.click(await screen.findByRole('link', { name: /analytics-scratch/ }))
+    expect(await screen.findByRole('heading', { name: 'Change verified' })).toBeTruthy()
+    expect(screen.getAllByText('Verified').length).toBeGreaterThan(0)
+    expect(screen.getByText(/The volume is gp3 now\./)).toBeTruthy()
+    expect(screen.getByText(/From your bills: .+ a day over 30 days before the change/)).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: /All recommendations/ }))
+    await user.click(await screen.findByLabelText('Show done and dismissed'))
+    await user.click(await screen.findByRole('link', { name: /198\.51\.100\.7/ }))
+    expect(await screen.findByText('Estimated realised savings')).toBeTruthy()
   })
 
   it('assigns, comments, acts on several at once and changes the rules', async () => {

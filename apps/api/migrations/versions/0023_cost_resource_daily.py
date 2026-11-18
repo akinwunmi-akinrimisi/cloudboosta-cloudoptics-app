@@ -2,9 +2,10 @@
 
 - ``cost_resource_daily``: day x account x service x region x usage type x resource x tag
   set, only for the usage types those rules read (NAT gateway hours and bytes, RDS and EKS
-  Extended Support; ``ingestion.aggregate.RESOURCE_USAGE_TYPES``). ``cost_daily`` drops the
-  resource, so it cannot say which gateway or database a charge is for. Replaced with
-  ``cost_daily`` per connection and billing period; under tenant row-level security.
+  Extended Support; ``analysis.billing.BILLED_USAGE_TYPES``; from 0024 every resource line
+  is kept). ``cost_daily`` drops the resource, so it cannot say which gateway or database
+  a charge is for. Replaced with ``cost_daily`` per connection and billing period; under
+  tenant row-level security.
 
 Revision ID: 0023
 Revises: 0022

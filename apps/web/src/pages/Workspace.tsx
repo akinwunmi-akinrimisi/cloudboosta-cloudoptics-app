@@ -289,12 +289,14 @@ function savingsTile(
       note: 'Appears after the first resource scan (see Connections)',
     }
   }
-  if (summary.openCount === 0) return { label, value: money(0), note: 'No open recommendations' }
+  const realised = (summary.realisedSavingsUsdMonth ?? 0) + (summary.estimatedRealisedUsdMonth ?? 0)
+  const saved = realised > 0 ? ` · ${money(realised)}/mo realised` : ''
+  if (summary.openCount === 0) return { label, value: money(0), note: `No open recommendations${saved}` }
   const n = summary.openCount
   return {
     label,
     value: `${money(summary.savingsUsdMonth)}/mo`,
-    note: `${n} open recommendation${n === 1 ? '' : 's'}`,
+    note: `${n} open recommendation${n === 1 ? '' : 's'}${saved}`,
   }
 }
 
