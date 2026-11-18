@@ -26,10 +26,17 @@ class MonthToDate(ApiModel):
 
 
 class Forecast(ApiModel):
+    """Month to date + ``dailyRunRate`` (the average over the last ``runRateDays`` days of
+    bills, before tax and monthly charges) x the days left + ``monthlyCharges`` (known
+    once-a-month charges, such as AWS Support, not billed yet this month)."""
+
     amount: float
     method: Literal["run_rate"]
     days_covered: int
     days_in_month: int
+    run_rate_days: int
+    daily_run_rate: float
+    monthly_charges: float
 
 
 Source = Literal["cur", "cost_explorer"]

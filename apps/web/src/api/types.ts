@@ -143,6 +143,76 @@ export interface AuthProvider {
 /** cur: the Cost and Usage Report; cost_explorer: provisional figures until it arrives. */
 export type CostSource = 'cur' | 'cost_explorer'
 
+/**
+ * Month to date + dailyRunRate (the last runRateDays days of bills, before tax and monthly
+ * charges) x the days left + monthlyCharges (once-a-month charges such as AWS Support not billed yet).
+ */
+export interface MonthEndForecast {
+  amount: number
+  method: 'run_rate'
+  daysCovered: number
+  daysInMonth: number
+  runRateDays: number
+  dailyRunRate: number
+  monthlyCharges: number
+}
+
+/** USD forecasts; quote is today's rate for the workspace currency, which a scenario moves. */
+export interface CostForecast {
+  status: 'no_data' | 'ready'
+  currency: string
+  basis: 'official' | 'market'
+  dataThrough: string | null
+  quote: FxQuote | null
+  monthEnd: { month: string; forecast: MonthEndForecast; low: number; high: number } | null
+  /** The next three months: a bounded straight line through the last 90 days (run_rate under 28 days). */
+  months: { month: string; amount: number; low: number; high: number; method: 'trend' | 'run_rate' }[]
+  monthlyChargesUsd: number
+  taxShare: number
+  trendDays: number
+  /** Last month against the month before, each day at its own rate: change = usage + FX effect. */
+  decomposition: {
+    month: string
+    previousMonth: string
+    usd: number
+    previousUsd: number
+    local: number | null
+    previousLocal: number | null
+    rate: number | null
+    previousRate: number | null
+    usageEffect: number | null
+    fxEffect: number | null
+  } | null
+}
+
+export interface CostContributor {
+  serviceCode: string
+  serviceName: string
+  region: string | null
+  usd: number
+  previousUsd: number
+  changeUsd: number
+  /** null: nothing on the same days last month. */
+  changePercent: number | null
+  usageType: string | null
+  usageTypeChangeUsd: number
+  /** In USD; the page words it in the viewer's currency. */
+  sentence: string
+}
+
+/** Month to date against the same days last month, by service and region (usage and purchases). */
+export interface CostChanges {
+  status: 'no_data' | 'ready'
+  month: string | null
+  current: { from: string; to: string } | null
+  previous: { from: string; to: string } | null
+  usd: number
+  previousUsd: number
+  changeUsd: number
+  rises: CostContributor[]
+  falls: CostContributor[]
+}
+
 export interface CostSummary {
   /**
    * no_connection: nothing connected; waiting: connected, nothing loaded yet;
@@ -159,12 +229,7 @@ export interface CostSummary {
   lastLoadStatus: 'succeeded' | 'failed' | 'superseded' | null
   /** Amortised (effective) cost after credits, plus the invoiced (billed) view. */
   monthToDate: { effective: number; billed: number; credits: number } | null
-  forecast: {
-    amount: number
-    method: 'run_rate'
-    daysCovered: number
-    daysInMonth: number
-  } | null
+  forecast: MonthEndForecast | null
   previousMonth: number | null
   /** The latest check of this or last month's totals against AWS Cost Explorer. */
   reconciliation?: {
@@ -508,6 +573,8 @@ export interface MonthlyReport {
     creditsUsd: number
   }
   drivers: { serviceName: string; usd: number; previousUsd: number; changeUsd: number }[]
+  /** The biggest change by service and region against the same days of the month before. */
+  whatChanged?: string | null
   budgets: { name: string; currency: string; amount: number; status: string; actual: number | null; actualPercent: number | null }[]
   savings: { openCount: number; openUsdMonth: number; newCount: number; doneCount: number; doneUsdMonth: number }
   topRecommendations: { title: string; savingsUsdMonth: number; riskLevel: string; effort: string }[]
@@ -680,6 +747,8 @@ export interface Api {
   costDaily(tenantId: string, days?: number): Promise<DailyCosts>
   costBreakdown(tenantId: string, dimension: CostDimension, limit?: number): Promise<CostBreakdown>
   fxCurrent(tenantId: string): Promise<CurrentRate>
+  costForecast(tenantId: string): Promise<CostForecast>
+  costChanges(tenantId: string): Promise<CostChanges>
   listAccounts(tenantId: string): Promise<AccountList>
   listRecommendations(tenantId: string, query?: RecommendationQuery): Promise<Recommendation[]>
   recommendationSummary(tenantId: string): Promise<RecommendationSummary>

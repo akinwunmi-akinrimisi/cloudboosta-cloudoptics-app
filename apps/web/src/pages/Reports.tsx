@@ -194,6 +194,7 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
       )}
       {r.drivers.length > 0 && (
         <Section title="What changed most">
+          {r.whatChanged && <p className="text-sm">{r.whatChanged}</p>}
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-muted">
               <tr>
