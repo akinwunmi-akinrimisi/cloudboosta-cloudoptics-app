@@ -40,6 +40,7 @@ from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.recommendations import queries as recommendations
 from cloudoptics.reporting.digest import BUDGET_STATUS, zone
+from cloudoptics.trends import changes as what_changed
 
 log = logging.getLogger(__name__)
 
@@ -147,6 +148,8 @@ class MonthlyReport(ApiModel):
     generated_at: datetime
     spend: Spend
     drivers: list[Driver]
+    #: The biggest change by service and region, against the same days of the month before.
+    what_changed: str | None = None
     budgets: list[BudgetRow]
     savings: Savings
     top_recommendations: list[TopRecommendation]
@@ -249,6 +252,9 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, month: date) -> Mon
             credits_usd=this.credits,
         ),
         drivers=drivers[:TOP],
+        what_changed=what_changed.headline(
+            await what_changed.what_changed(session, end), lambda usd: _money(usd, None, currency)
+        ),
         budgets=[
             BudgetRow(
                 name=b.name,
@@ -351,7 +357,8 @@ def render(r: MonthlyReport, app_url: str) -> tuple[str, str, str]:
         sections.append(
             (
                 "What changed most",
-                [
+                ([r.what_changed] if r.what_changed else [])
+                + [
                     f"{d.service_name}: {'+' if d.change_usd >= 0 else '-'}USD "
                     f"{abs(d.change_usd):,.2f} (USD {d.usd:,.2f} this month)"
                     for d in r.drivers

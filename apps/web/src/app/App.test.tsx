@@ -306,7 +306,7 @@ describe('Cloudoptics web app', () => {
     await user.click(await screen.findByRole('link', { name: 'Connections' }))
     await user.click(await screen.findByRole('link', { name: 'Overview' }))
     expect(await screen.findByText(/Amortised, after credits · data to/)).toBeTruthy()
-    expect(screen.getByText(/Estimate from the daily run rate/)).toBeTruthy()
+    expect(screen.getByText(/days' run rate \(\d+ of \d+ days\)/)).toBeTruthy()
     expect(await screen.findByRole('img', { name: /Daily spend, 30 days/ })).toBeTruthy()
     expect(await screen.findByText('Amazon Elastic Compute Cloud')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Account' }))
@@ -447,6 +447,46 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByRole('img', { name: /Daily spend, 90 days/ })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Region' }))
     expect(await screen.findByRole('cell', { name: /af-south-1/ })).toBeTruthy()
+  })
+
+  it('forecasts with a currency scenario and says what changed', async () => {
+    const { api } = renderApp('/sign-in')
+    await api.signIn('kemi@example.com')
+    const tenant = await api.createTenant({ name: 'Abuja Apps', countryCode: 'NG' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '565656565656',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    const user = userEvent.setup()
+    await user.type(await screen.findByLabelText('Work email'), 'kemi@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    // The Overview says what changed most this month.
+    expect(await screen.findByRole('heading', { name: 'What changed' })).toBeTruthy()
+    expect(
+      await screen.findByText(/^Amazon Elastic Compute Cloud in eu-west-1 rose \$[\d,.]+ · ₦[\d,.]+ \(\+\d+%\) mainly due to EU-BoxUsage:m5\.xlarge\.$/),
+    ).toBeTruthy()
+    expect(screen.getByText(/^Amazon Simple Storage Service in eu-west-1 fell/)).toBeTruthy()
+
+    await user.click(screen.getByRole('link', { name: /Cost Explorer/ }))
+    expect(await screen.findByRole('heading', { name: 'Forecast' })).toBeTruthy()
+    const forecast = await api.costForecast(tenant.id)
+    expect(forecast.months).toHaveLength(3)
+    const nextMonth = forecast.months[0] ?? { amount: 0 }
+    // Today's rate, then 10% weaker: 1,530.25 x 1.1.
+    expect(screen.getByText('Currency scenario: NGN unchanged')).toBeTruthy()
+    const amountToday = `₦${(nextMonth.amount * 1530.25).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    expect(screen.getAllByText(amountToday)).toHaveLength(2)
+    const percent = screen.getByLabelText('Movement in percent')
+    await user.clear(percent)
+    await user.type(percent, '10')
+    expect(await screen.findByText('Currency scenario: NGN 10% weaker')).toBeTruthy()
+    expect(screen.getByText(/scenario 1 USD = ₦1,683\.28/)).toBeTruthy()
+    const amountScenario = `₦${(nextMonth.amount * 1530.25 * 1.1).toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    expect(screen.getByText(amountScenario)).toBeTruthy()
+    expect(screen.getByText(/from usage change and .* from FX change/)).toBeTruthy()
+    expect(screen.getAllByRole('heading', { name: 'What changed' })).toHaveLength(1)
   })
 
   it('lets admins invite people and cancel invites in settings', async () => {

@@ -15,14 +15,23 @@ SummaryStatus = Literal["no_connection", "waiting", "provisional", "ready"]
 Source = Literal["cur", "cost_explorer"]
 Dimension = Literal["service", "account", "region"]
 TOP_ITEMS = 8
+RUN_RATE_DAYS = 7
+MONTHLY_CHARGE_MIN_USD = 1.0
 
 
 @dataclass(frozen=True)
 class Forecast:
+    """Month-end forecast (PRD FR-ANA-09): month to date, plus the average daily spend over
+    the last ``run_rate_days`` days of bills for the days left, plus the known monthly
+    charges not billed yet this month (``monthly_charges``, at last month's amounts)."""
+
     amount: float
     method: Literal["run_rate"]
     days_covered: int
     days_in_month: int
+    run_rate_days: int = 0
+    daily_run_rate: float = 0.0
+    monthly_charges: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -121,6 +130,8 @@ async def _reconciliation(
 
 
 def _run_rate(effective: float, run_rate_base: float, start: date, last_day: date) -> Forecast:
+    """The Cost Explorer (provisional) forecast: the average over the month's days so far,
+    as that series has no charge detail to tell monthly fees apart."""
     days_in_month = calendar.monthrange(start.year, start.month)[1]
     covered = (last_day - start).days + 1
     daily = run_rate_base / covered
@@ -129,6 +140,122 @@ def _run_rate(effective: float, run_rate_base: float, start: date, last_day: dat
         method="run_rate",
         days_covered=covered,
         days_in_month=days_in_month,
+        run_rate_days=covered,
+        daily_run_rate=round(daily, 2),
+    )
+
+
+@dataclass(frozen=True)
+class MonthlyCharge:
+    """A charge AWS bills once a month, on the 1st (AWS Support, monthly fees and
+    subscriptions, Route 53 hosted zones), seen that way last month."""
+
+    service_name: str
+    usage_type: str
+    expected: float  # last month's amount
+    billed: bool  # already on this month's bills
+    in_window: float  # this month's amount inside the run-rate window
+
+
+_MONTHLY_CHARGES = """
+WITH monthly AS (
+    SELECT account_id, service_code, max(service_name) AS service_name,
+           coalesce(usage_type, '') AS usage_type, charge_category,
+           sum(effective_cost_usd) AS amount
+    FROM cost_daily
+    WHERE usage_date >= :prev AND usage_date < :start
+      AND charge_category NOT IN ('Tax', 'Credit')
+      AND (CAST(:accounts AS text[]) IS NULL OR account_id = ANY(CAST(:accounts AS text[])))
+    GROUP BY account_id, service_code, coalesce(usage_type, ''), charge_category
+    HAVING count(DISTINCT usage_date) = 1 AND min(usage_date) = :prev
+       AND abs(sum(effective_cost_usd)) >= :min
+), cur AS (
+    SELECT account_id, service_code, coalesce(usage_type, '') AS usage_type, charge_category,
+           sum(effective_cost_usd) AS amount,
+           coalesce(sum(effective_cost_usd) FILTER (WHERE usage_date >= :window), 0)
+               AS in_window
+    FROM cost_daily
+    WHERE usage_date >= :start AND usage_date <= :last
+      AND (CAST(:accounts AS text[]) IS NULL OR account_id = ANY(CAST(:accounts AS text[])))
+    GROUP BY account_id, service_code, coalesce(usage_type, ''), charge_category
+)
+SELECT m.service_name, m.usage_type, m.amount AS expected, c.amount IS NOT NULL AS billed,
+       coalesce(c.in_window, 0) AS in_window
+FROM monthly m LEFT JOIN cur c
+  ON c.account_id = m.account_id AND c.service_code = m.service_code
+ AND c.usage_type = m.usage_type AND c.charge_category = m.charge_category
+ORDER BY m.amount DESC
+"""
+
+
+async def monthly_charges(
+    session: AsyncSession,
+    start: date,
+    last_day: date,
+    window_start: date,
+    accounts: list[str] | None = None,
+) -> list[MonthlyCharge]:
+    """Last month's once-a-month charges (billed on the 1st only, at least USD 1), and
+    whether this month's bills up to ``last_day`` have them yet."""
+    prev, _ = _month_bounds(start - timedelta(days=1))
+    rows = await session.execute(
+        text(_MONTHLY_CHARGES),
+        {
+            "prev": prev,
+            "start": start,
+            "last": last_day,
+            "window": window_start,
+            "accounts": accounts,
+            "min": MONTHLY_CHARGE_MIN_USD,
+        },
+    )
+    return [
+        MonthlyCharge(
+            r.service_name, r.usage_type, float(r.expected), bool(r.billed), float(r.in_window)
+        )
+        for r in rows
+    ]
+
+
+async def month_end_forecast(
+    session: AsyncSession,
+    start: date,
+    last_day: date,
+    effective: float,
+    accounts: list[str] | None = None,
+) -> Forecast:
+    """FR-ANA-09: ``effective`` (month to date) + the average daily spend over the last 7
+    days of bills (fewer when the bills start later; tax and the monthly charges left out)
+    x the days left + the monthly charges not billed yet this month."""
+    first_day = (
+        await session.execute(text("SELECT min(usage_date) FROM cost_daily"))
+    ).scalar_one() or start
+    window_start = max(last_day - timedelta(days=RUN_RATE_DAYS - 1), first_day)
+    window_days = (last_day - window_start).days + 1
+    window_total = (
+        await session.execute(
+            text(
+                "SELECT coalesce(sum(effective_cost_usd), 0) FROM cost_daily "
+                "WHERE usage_date BETWEEN :first AND :last AND charge_category <> 'Tax' "
+                "AND (CAST(:accounts AS text[]) IS NULL "
+                "OR account_id = ANY(CAST(:accounts AS text[])))"
+            ),
+            {"first": window_start, "last": last_day, "accounts": accounts},
+        )
+    ).scalar_one()
+    charges = await monthly_charges(session, start, last_day, window_start, accounts)
+    daily = (float(window_total) - sum(c.in_window for c in charges)) / window_days
+    to_come = sum(c.expected for c in charges if not c.billed)
+    days_in_month = calendar.monthrange(start.year, start.month)[1]
+    covered = (last_day - start).days + 1
+    return Forecast(
+        amount=round(effective + daily * (days_in_month - covered) + to_come, 2),
+        method="run_rate",
+        days_covered=covered,
+        days_in_month=days_in_month,
+        run_rate_days=window_days,
+        daily_run_rate=round(daily, 2),
+        monthly_charges=round(to_come, 2),
     )
 
 
@@ -200,26 +327,23 @@ async def month_spend(
     totals = (
         await session.execute(
             text(
-                "SELECT coalesce(sum(effective_cost_usd), 0) AS effective, "
-                "coalesce(sum(effective_cost_usd) FILTER (WHERE charge_category <> 'Tax'), 0) "
-                "AS run_rate_base FROM cost_daily WHERE usage_date >= :start "
-                "AND usage_date < :end AND (CAST(:accounts AS text[]) IS NULL "
+                "SELECT coalesce(sum(effective_cost_usd), 0) FROM cost_daily "
+                "WHERE usage_date >= :start AND usage_date < :end "
+                "AND (CAST(:accounts AS text[]) IS NULL "
                 "OR account_id = ANY(CAST(:accounts AS text[])))"
             ),
             {"start": start, "end": end, "accounts": accounts},
         )
-    ).one()
-    effective = float(totals.effective)
-    forecast = _run_rate(effective, float(totals.run_rate_base), start, last_day)
+    ).scalar_one()
+    effective = float(totals)
+    forecast = await month_end_forecast(session, start, last_day, effective, accounts)
     return MonthSpend(round(effective, 2), forecast.amount, last_day)
 
 
 async def summary(session: AsyncSession, today: date) -> CostSummary:
-    """Month-to-date spend (amortised, after credits) and a run-rate month-end forecast.
-
-    The forecast is the month-to-date total plus the average daily non-tax spend over the
-    days with data, times the days left. Proper forecasting arrives with AN-12 (Sprint 5).
-    """
+    """Month-to-date spend (amortised, after credits) and the month-end forecast
+    (``month_end_forecast``; while the month has only Cost Explorer figures, the average
+    over its days so far)."""
     start, end = _month_bounds(today)
     prev_start, _ = _month_bounds(start - timedelta(days=1))
     month = f"{start:%Y-%m}"
@@ -264,9 +388,7 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
                 "SELECT coalesce(sum(effective_cost_usd), 0) AS effective, "
                 "coalesce(sum(billed_cost_usd), 0) AS billed, "
                 "coalesce(sum(effective_cost_usd) FILTER (WHERE charge_category = 'Credit'), 0) "
-                "AS credits, "
-                "coalesce(sum(effective_cost_usd) FILTER (WHERE charge_category <> 'Tax'), 0) "
-                "AS run_rate_base, max(usage_date) AS last_day "
+                "AS credits, max(usage_date) AS last_day "
                 "FROM cost_daily WHERE usage_date >= :start AND usage_date < :end"
             ),
             {"start": start, "end": end},
@@ -284,8 +406,8 @@ async def summary(session: AsyncSession, today: date) -> CostSummary:
 
     forecast = None
     if totals.last_day is not None:
-        forecast = _run_rate(
-            float(totals.effective), float(totals.run_rate_base), start, totals.last_day
+        forecast = await month_end_forecast(
+            session, start, totals.last_day, float(totals.effective)
         )
     return CostSummary(
         status="ready",
@@ -581,3 +703,104 @@ async def credit_days(session: AsyncSession, first: date, last: date) -> list[Cr
         {"first": first, "last": last},
     )
     return [CreditDay(r.usage_date, float(r.credits), float(r.spend)) for r in rows]
+
+
+@dataclass(frozen=True)
+class TrendDay:
+    """One day of bills split for forecasting: ``spend`` (amortised, after credits),
+    ``monthly`` (once-a-month charges billed on the 1st) and ``tax``."""
+
+    usage_date: date
+    spend: float
+    monthly: float
+    tax: float
+
+
+_TREND_DAYS = """
+WITH s AS (
+    SELECT usage_date, account_id, service_code, coalesce(usage_type, '') AS usage_type,
+           charge_category, sum(effective_cost_usd) AS amount
+    FROM cost_daily WHERE usage_date BETWEEN :first AND :last
+    GROUP BY usage_date, account_id, service_code, coalesce(usage_type, ''), charge_category
+), k AS (
+    SELECT s.*, count(*) OVER (PARTITION BY date_trunc('month', usage_date), account_id,
+                               service_code, usage_type, charge_category) AS n
+    FROM s
+)
+SELECT usage_date,
+       coalesce(sum(amount) FILTER (WHERE charge_category = 'Tax'), 0) AS tax,
+       coalesce(sum(amount) FILTER (
+           WHERE charge_category NOT IN ('Tax', 'Credit') AND n = 1
+             AND extract(day FROM usage_date) = 1 AND abs(amount) >= :min
+             AND (date_trunc('month', usage_date) < date_trunc('month', CAST(:last AS date))
+                  OR CAST(:last AS date) - usage_date >= 7)
+       ), 0) AS monthly,
+       sum(amount) AS total
+FROM k GROUP BY usage_date ORDER BY usage_date
+"""
+
+
+async def trend_days(session: AsyncSession, first: date, last: date) -> list[TrendDay]:
+    """Days with bills from ``first`` to ``last``, split for forecasting. A charge counts
+    as monthly when it is the only one of its kind (account, service, usage type, charge
+    category) in its month, on the 1st, and at least USD 1 (in the latest month, only once
+    a week of bills has followed without it)."""
+    rows = await session.execute(
+        text(_TREND_DAYS), {"first": first, "last": last, "min": MONTHLY_CHARGE_MIN_USD}
+    )
+    return [
+        TrendDay(
+            r.usage_date,
+            float(r.total) - float(r.tax) - float(r.monthly),
+            float(r.monthly),
+            float(r.tax),
+        )
+        for r in rows
+    ]
+
+
+@dataclass(frozen=True)
+class ChangeRow:
+    """Usage and purchases for one service, region and usage type over a period."""
+
+    current: bool  # the current period, else the one compared with
+    service_code: str
+    service_name: str
+    region: str | None
+    usage_type: str | None
+    amount: float
+
+
+async def change_rows(
+    session: AsyncSession, current: tuple[date, date], previous: tuple[date, date]
+) -> list[ChangeRow]:
+    """Spend by service, region and usage type in two periods, for what changed (usage and
+    purchases, amortised: credits, refunds and tax are not what drives a change)."""
+    rows = await session.execute(
+        text(
+            "SELECT usage_date >= :cur_first AS current, service_code, "
+            "max(service_name) AS service_name, region_id, usage_type, "
+            "sum(effective_cost_usd) AS amount FROM cost_daily "
+            "WHERE (usage_date BETWEEN :cur_first AND :cur_last "
+            "OR usage_date BETWEEN :prev_first AND :prev_last) "
+            "AND charge_category IN ('Usage', 'Purchase') "
+            "GROUP BY usage_date >= :cur_first, service_code, region_id, usage_type"
+        ),
+        {
+            "cur_first": current[0],
+            "cur_last": current[1],
+            "prev_first": previous[0],
+            "prev_last": previous[1],
+        },
+    )
+    return [
+        ChangeRow(
+            bool(r.current),
+            r.service_code,
+            r.service_name,
+            r.region_id,
+            r.usage_type,
+            float(r.amount),
+        )
+        for r in rows
+    ]

@@ -27,7 +27,10 @@ import type {
   ConnectionIntent,
   ConnectionSetup,
   CostBreakdown,
+  CostChanges,
+  CostContributor,
   CostDimension,
+  CostForecast,
   CostSummary,
   CurrentRate,
   DailyCosts,
@@ -973,6 +976,10 @@ export class DemoApi implements Api {
         method: 'run_rate',
         daysCovered: days,
         daysInMonth,
+        runRateDays: Math.min(days, 7),
+        dailyRunRate: daily,
+        // AWS Support (Developer) is billed on the 1st, so it is already in the month so far.
+        monthlyCharges: 0,
       },
       previousMonth: 1237.75,
     }
@@ -994,6 +1001,106 @@ export class DemoApi implements Api {
       }
     })
     return { source: 'cur', currency: 'USD', points }
+  }
+
+  /** The Overview's run rate for this month, then a gently rising trend, with the report's FX split. */
+  async costForecast(tenantId: string): Promise<CostForecast> {
+    const summary = await this.costSummary(tenantId)
+    const rate = await this.fxCurrent(tenantId)
+    const empty: CostForecast = {
+      status: 'no_data', currency: rate.currency, basis: rate.basis, dataThrough: null, quote: rate.quote,
+      monthEnd: null, months: [], monthlyChargesUsd: 0, taxShare: 0, trendDays: 0, decomposition: null,
+    }
+    if (!summary.forecast || !summary.dataThrough) return empty
+    const round = (n: number) => Math.round(n * 100) / 100
+    const f = summary.forecast
+    const half = round(Math.sqrt(f.daysInMonth - f.daysCovered) * 1.645 * 6.2)
+    const now = new Date()
+    const months = [1, 2, 3].map((ahead) => {
+      const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + ahead, 1))
+      const days = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate()
+      const amount = round(41.26 * 1.015 ** ahead * days + 29)
+      const width = round(amount * 0.05 * ahead)
+      return { month: first.toISOString().slice(0, 7), amount, low: round(amount - width), high: round(amount + width), method: 'trend' as const }
+    })
+    const report = await this.demoReport(tenantId, this.lastFullMonth())
+    const before = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1)).toISOString().slice(0, 7)
+    const s = report.spend
+    return {
+      ...empty,
+      status: 'ready',
+      dataThrough: summary.dataThrough,
+      monthEnd: { month: summary.month, forecast: f, low: round(Math.max(f.amount - half, 0)), high: round(f.amount + half) },
+      months,
+      monthlyChargesUsd: 29,
+      trendDays: 90,
+      decomposition: {
+        month: report.month,
+        previousMonth: before,
+        usd: s.usd,
+        previousUsd: s.previousUsd,
+        local: s.local,
+        previousLocal: s.previousLocal,
+        rate: s.rate,
+        previousRate: s.previousRate,
+        usageEffect: s.usageEffect,
+        fxEffect: s.fxEffect,
+      },
+    }
+  }
+
+  /** Month to date against the same days last month, for the demo estate. */
+  async costChanges(tenantId: string): Promise<CostChanges> {
+    await this.tick()
+    this.tenant(tenantId)
+    const empty: CostChanges = {
+      status: 'no_data', month: null, current: null, previous: null, usd: 0, previousUsd: 0, changeUsd: 0, rises: [], falls: [],
+    }
+    if (!this.hasData(tenantId)) return empty
+    const summary = await this.costSummary(tenantId)
+    const to = summary.dataThrough ?? isoDaysAgo(1)
+    const from = `${to.slice(0, 8)}01`
+    const prev = new Date(Date.UTC(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 2, 1))
+    const prevEnd = new Date(Date.UTC(prev.getUTCFullYear(), prev.getUTCMonth() + 1, 0)).getUTCDate()
+    const prevMonth = prev.toISOString().slice(0, 8)
+    const prevTo = `${prevMonth}${String(Math.min(Number(to.slice(8, 10)), prevEnd)).padStart(2, '0')}`
+    const share = Math.max(Number(to.slice(8, 10)), 1) / 30
+    const item = (
+      serviceCode: string, serviceName: string, region: string | null, usd: number, previousUsd: number, usageType: string,
+    ): CostContributor => {
+      const r = (n: number) => Math.round(n * share * 100) / 100
+      const [cur, before] = [r(usd), r(previousUsd)]
+      const change = Math.round((cur - before) * 100) / 100
+      const pct = Math.round((1000 * change) / before) / 10
+      const where = region ? `${serviceName} in ${region}` : serviceName
+      return {
+        serviceCode, serviceName, region, usd: cur, previousUsd: before, changeUsd: change, changePercent: pct,
+        usageType, usageTypeChangeUsd: change,
+        sentence: `${where} ${change > 0 ? 'rose' : 'fell'} USD ${Math.abs(change).toFixed(2)} (${pct > 0 ? '+' : ''}${pct.toFixed(0)}%) mainly due to ${usageType}.`,
+      }
+    }
+    const rises = [
+      item('AmazonEC2', 'Amazon Elastic Compute Cloud', 'eu-west-1', 512.4, 426.0, 'EU-BoxUsage:m5.xlarge'),
+      item('AmazonRDS', 'Amazon Relational Database Service', 'af-south-1', 214.9, 183.7, 'AFS1-InstanceUsage:db.t3.medium'),
+      item('AmazonCloudWatch', 'AmazonCloudWatch', null, 24.1, 18.0, 'CW:MetricMonitorUsage'),
+    ]
+    const falls = [
+      item('AmazonS3', 'Amazon Simple Storage Service', 'eu-west-1', 88.3, 101.05, 'EU-TimedStorage-ByteHrs'),
+      item('AWSELB', 'Elastic Load Balancing', 'eu-west-1', 61.7, 70.1, 'EU-LoadBalancerUsage'),
+    ]
+    const usd = Math.round(901.4 * share * 100) / 100
+    const previousUsd = Math.round(798.85 * share * 100) / 100
+    return {
+      status: 'ready',
+      month: to.slice(0, 7),
+      current: { from, to },
+      previous: { from: `${prevMonth}01`, to: prevTo },
+      usd,
+      previousUsd,
+      changeUsd: Math.round((usd - previousUsd) * 100) / 100,
+      rises,
+      falls,
+    }
   }
 
   // The demo estate has fewer items than any limit, so ``limit`` changes nothing here.
@@ -1423,6 +1530,8 @@ export class DemoApi implements Api {
         { serviceName: 'Amazon Relational Database Service', usd: 214.5, previousUsd: 230.2, changeUsd: -15.7 },
         { serviceName: 'Amazon Simple Storage Service', usd: 88.3, previousUsd: 81.0, changeUsd: 7.3 },
       ],
+      whatChanged:
+        'Amazon Elastic Compute Cloud in eu-west-1 fell USD 56.60 (-8%) mainly due to EU-BoxUsage:m5.xlarge.',
       budgets: (await this.listBudgets(tenantId)).map((b) => ({
         name: b.name,
         currency: b.currency,

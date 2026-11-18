@@ -5,6 +5,7 @@ import { useApi } from '../app/context'
 import type { CostDimension, CreditsRunway } from '../api/types'
 import { DailySpendChart } from '../components/charts'
 import { Alert, Button, Card, Field, cx } from '../components/ui'
+import { ForecastPanel, WhatChanged } from './Forecast'
 import { DIMENSIONS, useMoney, useWorkspace } from './Workspace'
 
 const RANGES = [30, 90] as const
@@ -160,6 +161,8 @@ export function Costs() {
           </table>
         )}
       </Card>
+      {tenantId !== null && <ForecastPanel tenantId={tenantId} />}
+      {tenantId !== null && <WhatChanged tenantId={tenantId} />}
       {tenantId !== null && <CreditsCard tenantId={tenantId} />}
     </div>
   )

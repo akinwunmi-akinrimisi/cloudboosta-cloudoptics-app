@@ -33,6 +33,7 @@ from cloudoptics.notifications.email import Email, EmailError, get_mailer
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.recommendations import queries as recommendations
+from cloudoptics.trends import changes as what_changed
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +94,8 @@ class Digest:
     budgets: list[budgets.BudgetLine]
     anomalies: anomalies.AnomalyPeriod
     credits: credits.Runway
+    #: The month so far against the same days last month, as of the week's end.
+    month_changes: what_changed.WhatChanged | None = None
 
     @property
     def change_percent(self) -> float | None:
@@ -153,6 +156,7 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, week_start: date) -
         budgets=await budgets.active_budgets(session, week_end + timedelta(days=1)),
         anomalies=await anomalies.period(session, week_start, week_end),
         credits=await credits.runway(session, week_end),
+        month_changes=await what_changed.what_changed(session, week_end),
     )
 
 
@@ -176,6 +180,9 @@ def render(d: Digest, app_url: str) -> tuple[str, str, str]:
         f"(now {d.money(c.this_week)})"
         for c in d.changes
     ]
+    month = what_changed.headline(d.month_changes, d.money)
+    if month:
+        spend.append(f"This month so far: {month}")
     sections.append(("Spend", spend, f"{app}/costs"))
 
     r = d.recommendations

@@ -24,7 +24,9 @@ import type {
   ConnectionSetup,
   IntentSetup,
   CostBreakdown,
+  CostChanges,
   CostDimension,
+  CostForecast,
   CostSummary,
   CurrentRate,
   DailyCosts,
@@ -241,6 +243,14 @@ export class HttpApi implements Api {
 
   costBreakdown(tenantId: string, dimension: CostDimension, limit = 8): Promise<CostBreakdown> {
     return this.request('GET', `/v1/tenants/${tenantId}/costs/breakdown?dimension=${dimension}&limit=${limit}`)
+  }
+
+  costForecast(tenantId: string): Promise<CostForecast> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/forecast`)
+  }
+
+  costChanges(tenantId: string): Promise<CostChanges> {
+    return this.request('GET', `/v1/tenants/${tenantId}/costs/changes`)
   }
 
   listRecommendations(tenantId: string, query: RecommendationQuery = {}): Promise<Recommendation[]> {

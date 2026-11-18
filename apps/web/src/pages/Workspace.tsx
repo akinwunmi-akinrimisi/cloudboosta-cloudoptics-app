@@ -16,6 +16,7 @@ import { DailySpendChart, ShareList } from '../components/charts'
 import { Alert, Button, Card, StatusPill, cx } from '../components/ui'
 import { ACCESS_STACK_NAME } from '../api/types'
 import { CopyValue } from './Onboarding'
+import { WhatChanged } from './Forecast'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
 
@@ -115,7 +116,7 @@ function costTiles(
       label: 'Forecast (month end)',
       value: forecast ? money(forecast.amount) : '—',
       note: forecast
-        ? `Estimate from the daily run rate (${forecast.daysCovered} of ${forecast.daysInMonth} days)`
+        ? `Last ${forecast.runRateDays} days' run rate${forecast.monthlyCharges ? ' + monthly charges' : ''} (${forecast.daysCovered} of ${forecast.daysInMonth} days)`
         : hasData
           ? 'Needs data for this month'
           : waiting,
@@ -201,6 +202,7 @@ export function Overview() {
           <TopSpend tenantId={tenantId} />
         </div>
       )}
+      {tenantId !== null && summary.data?.status === 'ready' && <WhatChanged tenantId={tenantId} />}
     </div>
   )
 }
@@ -306,7 +308,7 @@ function reconciliationMessage(month: string, differencePct: number | null): str
 }
 
 /** The exchange-rate tile: today's rate for the workspace currency, and where it came from. */
-function rateTile(currency: string, current: CurrentRate | undefined): { label: string; value: string; note: string } {
+export function rateTile(currency: string, current: CurrentRate | undefined): { label: string; value: string; note: string } {
   const label = 'Exchange rate'
   if (currency === 'USD') return { label, value: 'USD', note: 'Amounts are shown in US dollars' }
   const quote = current?.quote
