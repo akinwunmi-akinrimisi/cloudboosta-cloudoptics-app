@@ -13,9 +13,16 @@ from sqlalchemy import text
 
 from cloudoptics.analysis.settings import (
     DEFAULT_IGNORE_TAG,
+    DEFAULT_NONPROD_PATTERN,
+    DEFAULT_NONPROD_TAG_KEYS,
+    DEFAULT_SCHEDULE_END,
+    DEFAULT_SCHEDULE_START,
+    MAX_PATTERN_LENGTH,
     RULE_IDS,
     RuleSettings,
     load_rule_settings,
+    pattern_problem,
+    window_problem,
 )
 from cloudoptics.audit import log as audit
 from cloudoptics.identity.deps import AdminAccess, MemberAccess, Session, ViewerAccess
@@ -442,12 +449,26 @@ class RuleSettingsBody(ApiModel):
     )
     idle_cpu_percent: float = Field(default=5.0, ge=1, le=20)
     idle_days: int = Field(default=14, ge=7, le=30)
+    # R7 non-production scheduling (PRD FR-ANA-07).
+    nonprod_pattern: str = Field(
+        default=DEFAULT_NONPROD_PATTERN, min_length=1, max_length=MAX_PATTERN_LENGTH
+    )
+    nonprod_tag_keys: list[
+        Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[\w.:/=+\-@ ]+$")]
+    ] = Field(default_factory=lambda: list(DEFAULT_NONPROD_TAG_KEYS), min_length=1, max_length=10)
+    schedule_start: str = Field(default=DEFAULT_SCHEDULE_START)
+    schedule_end: str = Field(default=DEFAULT_SCHEDULE_END)
 
     @model_validator(mode="after")
     def _known_rules(self) -> RuleSettingsBody:
         unknown = sorted(set(self.disabled_rules) - set(RULE_IDS))
         if unknown:
             raise ValueError(f"Unknown rules: {', '.join(unknown)}")
+        problem = pattern_problem(self.nonprod_pattern) or window_problem(
+            self.schedule_start, self.schedule_end
+        )
+        if problem:
+            raise ValueError(problem)
         return self
 
 

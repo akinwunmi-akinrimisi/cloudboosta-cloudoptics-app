@@ -365,6 +365,27 @@ export interface RecommendationFix {
   alternative?: { title: string; monthlyCostUsd?: number; steps: string[] }
   /** The resource's page in the AWS console and the clicks there; shown first. */
   console?: { url: string; steps: string[] }
+  /** R7: the schedule tag to add and the scheduler stack that acts on it. */
+  schedule?: ScheduleFix
+}
+
+/** R7 non-production schedule (PRD FR-ANA-07): one tag, read by a stack the customer deploys. */
+export interface ScheduleFix {
+  tagKey: string
+  /** For example ``07:00-20:00;MO-FR;Africa/Lagos`` (RDS: spaces instead of ``;``). */
+  tagValue: string
+  start: string
+  end: string
+  days: string
+  timeZone: string
+  hoursOnPerWeek: number
+  stackName: string
+  /** The CloudFormation template to download. */
+  templateUrl: string
+  /** One-click stack creation, once the template is hosted in S3. */
+  quickCreateUrl: string | null
+  /** RDS starts a stopped database again by itself after 7 days. */
+  rdsAutoStart: boolean
 }
 
 export interface UsageSeries {
@@ -654,6 +675,12 @@ export interface RuleSettings {
   ignoreTag: string
   idleCpuPercent: number
   idleDays: number
+  /** R7: a tag value (under these keys) or name matching this pattern is non-production. */
+  nonprodPattern: string
+  nonprodTagKeys: string[]
+  /** R7: weekday office hours, HH:MM in the workspace's time zone. */
+  scheduleStart: string
+  scheduleEnd: string
 }
 
 export interface RuleSettingsView {

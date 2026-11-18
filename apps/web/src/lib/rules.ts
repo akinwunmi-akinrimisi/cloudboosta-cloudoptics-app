@@ -10,4 +10,6 @@ export const RULES: Record<string, string> = {
   R5_rightsize_ec2: 'Smaller server size',
   R6_newer_generation: 'Older server type',
   R6_graviton: 'Move to Graviton (Arm)',
+  R7_schedule_ec2: 'Office-hours schedule (server)',
+  R7_schedule_rds: 'Office-hours schedule (database)',
 }

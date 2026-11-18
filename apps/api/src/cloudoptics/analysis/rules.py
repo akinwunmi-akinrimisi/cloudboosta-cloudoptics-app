@@ -59,6 +59,11 @@ class Context:
     volumes: dict[tuple[str, str, str], Resource] = field(default_factory=dict)
     # resource uuid -> metric -> UTC day -> 24 hourly values (None where no data)
     usage: dict[uuid.UUID, dict[str, dict[date, list[float | None]]]] = field(default_factory=dict)
+    # The tenant's IANA time zone (tenant.time_zone): R7 schedules run in it.
+    time_zone: str = "Africa/Lagos"
+    # Where the customer gets the scheduler stack R7 relies on (set by the engine).
+    scheduler_template_url: str = ""
+    scheduler_quick_create_template_url: str | None = None
 
 
 @dataclass

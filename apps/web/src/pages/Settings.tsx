@@ -195,12 +195,60 @@ function RuleSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canEd
       <p className="text-xs text-muted">
         Add the tag above to any AWS resource (with any value) and Cloudoptics will never suggest changing it.
       </p>
+      <fieldset className="grid gap-4 sm:grid-cols-2" disabled={!canEdit}>
+        <legend className="mb-1 text-sm font-medium">Non-production servers and databases (office-hours schedule)</legend>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Tag keys that say the environment</span>
+          <input
+            className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 text-sm"
+            value={draft.nonprodTagKeys.join(',')}
+            onChange={(e) => setDraft({ ...draft, nonprodTagKeys: e.target.value.split(',') })}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Non-production when a tag value or name matches</span>
+          <input
+            className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 font-mono text-xs"
+            value={draft.nonprodPattern}
+            maxLength={200}
+            spellCheck={false}
+            onChange={(e) => setDraft({ ...draft, nonprodPattern: e.target.value })}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Office hours start</span>
+          <input
+            type="time"
+            className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 text-sm"
+            value={draft.scheduleStart}
+            onChange={(e) => setDraft({ ...draft, scheduleStart: e.target.value })}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Office hours end</span>
+          <input
+            type="time"
+            className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 text-sm"
+            value={draft.scheduleEnd}
+            onChange={(e) => setDraft({ ...draft, scheduleEnd: e.target.value })}
+          />
+        </label>
+      </fieldset>
+      <p className="text-xs text-muted">
+        Servers and databases tagged or named as non-production that run day and night get a schedule for these hours,
+        Monday to Friday, in this workspace's time zone. The pattern is a regular expression, matched ignoring case.
+      </p>
       {save.error && (
         <Alert tone="error">{save.error instanceof ApiError ? save.error.message : 'Could not save. Try again.'}</Alert>
       )}
       {canEdit ? (
         <div className="flex items-center gap-3">
-          <Button disabled={!changed || !draft.ignoreTag.trim() || save.isPending} onClick={() => save.mutate(draft)}>
+          <Button
+            disabled={!changed || !draft.ignoreTag.trim() || !draft.nonprodPattern.trim() || save.isPending}
+            onClick={() =>
+              save.mutate({ ...draft, nonprodTagKeys: draft.nonprodTagKeys.map((k) => k.trim()).filter(Boolean) })
+            }
+          >
             {save.isPending ? 'Saving and re-checking…' : 'Save'}
           </Button>
           {changed && (

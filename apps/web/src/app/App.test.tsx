@@ -365,7 +365,7 @@ describe('Cloudoptics web app', () => {
 
   it('lists recommendations best first and walks one to done', async () => {
     const { user } = await connectedWorkspace('wanjiru@example.com')
-    expect(await screen.findByText('5 open recommendations')).toBeTruthy()
+    expect(await screen.findByText('7 open recommendations')).toBeTruthy()
 
     await user.click(screen.getByRole('link', { name: 'Recommendations' }))
     const first = await screen.findByRole('link', { name: /Delete unattached gp2 volume build-cache/ })
@@ -398,7 +398,40 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('link', { name: /All recommendations/ }))
     await screen.findByRole('link', { name: /Change volume db-data/ })
     expect(screen.queryByRole('link', { name: /build-cache/ })).toBeNull()
-    expect(screen.getByText('4')).toBeTruthy()
+    expect(screen.getByText('6')).toBeTruthy()
+  })
+
+  it('shows a non-production schedule: the tag to copy, the template and the database caveat', async () => {
+    const { user } = await connectedWorkspace('ngozi@example.com')
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    await user.selectOptions(await screen.findByLabelText('Type'), 'R7_schedule_ec2')
+    await user.click(await screen.findByRole('link', { name: /Run non-production server staging-api/ }))
+    expect(await screen.findByRole('heading', { name: /Run it 07:00 to 20:00, Monday to Friday/ })).toBeTruthy()
+    // The schedule is in the workspace's time zone (this one is in the UK).
+    expect(screen.getByText('07:00-20:00;MO-FR;Europe/London')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Copy tag value' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Download the scheduler template/ }).getAttribute('href')).toContain(
+      'infra/cloudformation/scheduler/cloudoptics-scheduler.yaml',
+    )
+    expect(screen.getByText('Stopped outside office hours, so not there for anyone working late')).toBeTruthy()
+    expect(screen.getByText('tagged Environment=staging')).toBeTruthy()
+    expect(screen.queryByText(/AWS starts a stopped database again by itself/)).toBeNull()
+
+    await user.click(screen.getByRole('link', { name: /All recommendations/ }))
+    await user.selectOptions(await screen.findByLabelText('Type'), 'R7_schedule_rds')
+    await user.click(await screen.findByRole('link', { name: /Run non-production database qa-orders-db/ }))
+    expect(await screen.findByText('07:00-20:00 MO-FR Europe/London')).toBeTruthy()
+    expect(screen.getByText(/AWS starts a stopped database again by itself after 7 days/)).toBeTruthy()
+
+    // Office hours come from the rule settings.
+    await user.click(screen.getByRole('link', { name: 'Settings' }))
+    const end = await screen.findByLabelText('Office hours end')
+    await user.clear(end)
+    await user.type(end, '18:00')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true))
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    expect(await screen.findAllByRole('link', { name: /07:00-18:00 weekdays, London time/ })).toHaveLength(2)
   })
 
   it('assigns, comments, acts on several at once and changes the rules', async () => {
@@ -423,7 +456,7 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('button', { name: 'Dismiss…' }))
     await user.type(screen.getByLabelText(/Why are you dismissing them/), 'Kept on purpose')
     await user.click(screen.getByRole('button', { name: 'Dismiss' }))
-    await waitFor(() => expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(3))
+    await waitFor(() => expect(screen.getAllByRole('link', { name: /\/mo$/ })).toHaveLength(5))
     expect(screen.getByRole('link', { name: /Release idle Elastic IP/ })).toBeTruthy()
 
     await user.click(screen.getByRole('link', { name: 'Settings' }))

@@ -7,6 +7,7 @@ from httpx import AsyncClient
 from test_inventory import setup, world  # noqa: F401 - fixture
 
 from cloudoptics.analysis import engine
+from cloudoptics.analysis.settings import DEFAULT_NONPROD_PATTERN
 from cloudoptics.inventory import scanner
 
 
@@ -149,6 +150,10 @@ async def test_rule_settings_rerun_the_rules(
         "ignoreTag": "cloudoptics:ignore",
         "idleCpuPercent": 5.0,
         "idleDays": 14,
+        "nonprodPattern": DEFAULT_NONPROD_PATTERN,
+        "nonprodTagKeys": ["env", "environment", "stage"],
+        "scheduleStart": "07:00",
+        "scheduleEnd": "20:00",
     }
     before = {r["ruleId"] for r in (await client.get(base, headers=headers)).json()}
     assert "R2_idle_eip" in before
