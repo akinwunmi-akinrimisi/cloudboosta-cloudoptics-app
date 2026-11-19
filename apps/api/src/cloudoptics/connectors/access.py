@@ -295,7 +295,10 @@ async def _connection_from_intent(
     """The account the stack is in becomes a connection (or a disconnected one comes back)."""
     existing = (
         await session.execute(
-            text("SELECT id, status FROM cloud_connection WHERE aws_account_id = :acct"),
+            text(
+                "SELECT id, status FROM cloud_connection WHERE provider = 'aws' "
+                "AND provider_account_id = :acct"
+            ),
             {"acct": body.account_id},
         )
     ).one_or_none()
@@ -338,7 +341,7 @@ async def _connection_from_intent(
             async with session.begin_nested():
                 await session.execute(
                     text(
-                        "INSERT INTO cloud_connection (id, tenant_id, aws_account_id, "
+                        "INSERT INTO cloud_connection (id, tenant_id, provider_account_id, "
                         "account_type, role_arn, external_id_enc, stack_name, create_cur_export, "
                         "created_by) VALUES (:id, :t, :acct, :type, :arn, :ext, :stack, true, :by)"
                     ),
@@ -467,7 +470,8 @@ async def stack_callback(body: StackCallback, session: Session) -> CallbackResul
     conn = (
         await session.execute(
             text(
-                "SELECT id, aws_account_id, status, stack_name, external_id_enc, account_type, "
+                "SELECT id, provider_account_id AS aws_account_id, status, stack_name, "
+                "external_id_enc, account_type, "
                 "role_arn, stack_version, cur_bucket, cur_prefix "
                 "FROM cloud_connection WHERE id = :c"
             ),

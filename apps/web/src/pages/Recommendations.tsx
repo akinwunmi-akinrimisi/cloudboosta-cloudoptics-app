@@ -20,6 +20,7 @@ import { ExportButton } from '../components/exports'
 import { NatRoutes } from '../components/natRoutes'
 import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, cx } from '../components/ui'
+import { accountLabel, accountNoun } from '../lib/providers'
 import { RULES } from '../lib/rules'
 import { Kpi, useMoney, useWorkspace } from './Workspace'
 
@@ -532,8 +533,8 @@ function Outcome({ rec, money }: { rec: Recommendation; money: (usd: number) => 
   if (rec.status === 'not_verified') {
     return (
       <Alert tone="warning">
-        Marked done, but 72 hours later the scans still do not show the change. Check it was made in AWS account{' '}
-        {rec.accountId}; it is verified as soon as a scan sees it.
+        Marked done, but 72 hours later the scans still do not show the change. Check it was made in{' '}
+        {accountLabel(rec.provider, rec.accountId)}; it is verified as soon as a scan sees it.
       </Alert>
     )
   }
@@ -957,7 +958,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
       <div>
         <h1 className="text-2xl font-semibold [overflow-wrap:anywhere]">{r.title}</h1>
         <p className="text-sm text-secondary">
-          {RULES[r.ruleId] ?? r.ruleId} · account {r.accountId} · {r.regionId} · <code className="[overflow-wrap:anywhere]">{r.resourceId}</code> ·{' '}
+          {RULES[r.ruleId] ?? r.ruleId} · {accountNoun(r.provider)} {r.accountId} · {r.regionId} · <code className="[overflow-wrap:anywhere]">{r.resourceId}</code> ·{' '}
           {STATUS[r.status]}
         </p>
         {r.status === 'verified' && (
@@ -1007,7 +1008,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
                 >
                   Open in AWS console <ExternalLink size={14} />
                 </a>
-                <span className="text-xs text-muted">Sign in to AWS account {r.accountId} first.</span>
+                <span className="text-xs text-muted">Sign in to {accountLabel(r.provider, r.accountId)} first.</span>
               </div>
             )}
             {(r.fix.checklist?.length ?? 0) > 0 || (r.fix.console?.steps.length ?? 0) > 0 ? (

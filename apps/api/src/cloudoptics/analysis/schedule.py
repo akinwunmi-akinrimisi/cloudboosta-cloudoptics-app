@@ -17,7 +17,7 @@ resources another scheduler already handles (a ``Schedule`` tag) are skipped.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any, Literal
 from urllib.parse import urlencode
@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from cloudoptics.analysis import compute
 from cloudoptics.analysis.pricing import HOURS_PER_MONTH
+from cloudoptics.analysis.registry import RuleSpec
 from cloudoptics.analysis.rules import (
     PROD,
     Candidate,
@@ -374,7 +375,22 @@ def schedule_databases(ctx: Context, resources: list[Resource]) -> Iterator[Cand
         )  # fmt: skip
 
 
-SCHEDULE_RULES: list[Callable[[Context, list[Resource]], Iterator[Candidate]]] = [
-    schedule_instances,
-    schedule_databases,
-]
+# The AWS rules of this module, in evaluation order (analysis/registry.py; ADR-018).
+RULE_SPECS: tuple[RuleSpec, ...] = (
+    RuleSpec(
+        id="R7",
+        provider="aws",
+        rule_ids=("R7_schedule_ec2",),
+        resource_types=frozenset({"ec2_instance"}),
+        version=1,
+        evaluate=schedule_instances,
+    ),
+    RuleSpec(
+        id="R7",
+        provider="aws",
+        rule_ids=("R7_schedule_rds",),
+        resource_types=frozenset({"rds_instance"}),
+        version=1,
+        evaluate=schedule_databases,
+    ),
+)

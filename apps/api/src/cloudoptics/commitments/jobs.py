@@ -11,6 +11,7 @@ from sqlalchemy import text
 from cloudoptics.commitments import service
 from cloudoptics.platform.db import get_sessionmaker, scheduler_scope, scope
 from cloudoptics.platform.jobs import defer_once
+from cloudoptics.providers import capability_for
 
 blueprint = procrastinate.Blueprint()
 
@@ -41,7 +42,10 @@ async def after_refresh(tenant_id: uuid.UUID) -> int:
 
 @blueprint.task(name="commitments.refresh", queue="inventory", retry=1)
 async def refresh(tenant_id: str, connection_id: str) -> str:
-    status = await service.refresh(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    commitments = await capability_for(tenant_id, connection_id, "commitments")
+    if commitments is None:
+        return "unsupported"
+    status = await commitments.refresh(uuid.UUID(tenant_id), uuid.UUID(connection_id))
     if status != "skipped":
         await after_refresh(uuid.UUID(tenant_id))
     return status

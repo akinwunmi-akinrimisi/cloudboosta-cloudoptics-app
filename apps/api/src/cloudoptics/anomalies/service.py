@@ -227,7 +227,8 @@ async def _store(
     suppressor = (
         await session.execute(
             text(
-                "SELECT id FROM anomaly WHERE account_id = :account AND service_code = :service "
+                "SELECT id FROM anomaly WHERE provider_account_id = :account "
+                "AND service_code = :service "
                 "AND status = 'expected' AND usage_date >= :from AND usage_date < :day "
                 "ORDER BY usage_date DESC LIMIT 1"
             ),
@@ -242,12 +243,14 @@ async def _store(
     inserted = (
         await session.execute(
             text(
-                "INSERT INTO anomaly (id, tenant_id, usage_date, account_id, service_code, "
+                "INSERT INTO anomaly (id, tenant_id, usage_date, provider_account_id, "
+                "service_code, "
                 "service_name, actual_usd, expected_usd, mad_usd, impact_usd, contributors, "
                 "status, suppressed_by, engine_version) VALUES (:id, :t, :day, :account, "
                 ":service, :name, :actual, :expected, :mad, :impact, CAST(:top AS jsonb), "
                 ":status, :suppressor, :engine) "
-                "ON CONFLICT (tenant_id, usage_date, account_id, service_code) DO UPDATE SET "
+                "ON CONFLICT (tenant_id, usage_date, provider, provider_account_id, service_code) "
+                "DO UPDATE SET "
                 "service_name = EXCLUDED.service_name, actual_usd = EXCLUDED.actual_usd, "
                 "expected_usd = EXCLUDED.expected_usd, mad_usd = EXCLUDED.mad_usd, "
                 "impact_usd = EXCLUDED.impact_usd, contributors = EXCLUDED.contributors, "
@@ -340,10 +343,11 @@ async def recipients(
 
 
 SELECT_UNSENT = text(
-    "SELECT a.id, a.usage_date, a.account_id, a.service_name, a.actual_usd, a.expected_usd, "
-    "a.impact_usd, a.contributors, coalesce(c.name, a.account_id) AS account_label "
+    "SELECT a.id, a.usage_date, a.provider_account_id AS account_id, a.service_name, "
+    "a.actual_usd, a.expected_usd, a.impact_usd, a.contributors, "
+    "coalesce(c.name, a.provider_account_id) AS account_label "
     "FROM anomaly a LEFT JOIN cloud_account c ON c.tenant_id = a.tenant_id "
-    "AND c.aws_account_id = a.account_id "
+    "AND c.provider = a.provider AND c.provider_account_id = a.provider_account_id "
     "WHERE a.status = 'open' AND a.usage_date >= :since AND NOT EXISTS ("
     "SELECT 1 FROM notification n WHERE n.dedupe_key = 'anomaly:' || CAST(a.id AS text) "
     "AND n.status <> 'failed') ORDER BY a.usage_date, a.impact_usd DESC"

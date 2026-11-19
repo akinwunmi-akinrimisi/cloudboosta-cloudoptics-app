@@ -34,6 +34,7 @@ from cloudoptics.notifications.alerts import send_connection_alert
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.providers.base import ProviderName
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/connections", tags=["connections"])
 accounts_router = APIRouter(prefix="/v1/tenants/{tenant_id}/accounts", tags=["connections"])
@@ -75,6 +76,8 @@ class Connection(ApiModel):
     stack_name: str
     # The single stack's version as last reported; None while on the older stacks.
     stack_version: str | None = None
+    # The cloud (ADR-018); added after the other fields so AWS responses only gain this key.
+    provider: ProviderName = "aws"
 
 
 class ConnectionSetup(ApiModel):
@@ -220,7 +223,10 @@ async def create_connection(
     external_id = aws.new_external_id()
     existing = (
         await session.execute(
-            text("SELECT id, status FROM cloud_connection WHERE aws_account_id = :acct"),
+            text(
+                "SELECT id, status FROM cloud_connection WHERE provider = 'aws' "
+                "AND provider_account_id = :acct"
+            ),
             {"acct": body.aws_account_id},
         )
     ).one_or_none()
@@ -237,7 +243,8 @@ async def create_connection(
         async with session.begin_nested():
             await session.execute(
                 text(
-                    "INSERT INTO cloud_connection (id, tenant_id, aws_account_id, account_type, "
+                    "INSERT INTO cloud_connection (id, tenant_id, provider_account_id, "
+                    "account_type, "
                     "role_arn, external_id_enc, stack_name, create_cur_export, cur_bucket, "
                     "created_by) VALUES (:id, :t, :acct, :type, :arn, :ext, :stack, :cur, "
                     ":bucket, :by)"
@@ -502,7 +509,7 @@ async def scan_resources(
         await session.execute(
             text(
                 "UPDATE cloud_account SET resource_access = :access WHERE connection_id = :c "
-                "AND aws_account_id = :a"
+                "AND provider_account_id = :a"
             ),
             {"access": a.access, "c": connection_id, "a": a.aws_account_id},
         )
@@ -565,6 +572,7 @@ class CloudAccount(ApiModel):
     org_seen_at: datetime | None
     resource_access: bool
     has_cost_data: bool
+    provider: ProviderName = "aws"
 
 
 class AccountCoverage(ApiModel):

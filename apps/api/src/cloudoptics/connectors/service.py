@@ -27,13 +27,15 @@ from cloudoptics.platform.settings import get_settings
 
 # Literal statements only; request values are always bound parameters.
 SELECT_CONNECTION = text(
-    "SELECT id, tenant_id, aws_account_id, account_type, role_arn, stack_name, "
+    "SELECT id, tenant_id, provider, provider_account_id AS aws_account_id, account_type, "
+    "role_arn, stack_name, "
     "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
     "permission_checks, last_error, last_validated_at, created_at, external_id_enc, health, "
     "stack_version, pending_stack FROM cloud_connection WHERE id = :c"
 )
 LIST_CONNECTIONS = text(
-    "SELECT id, tenant_id, aws_account_id, account_type, role_arn, stack_name, "
+    "SELECT id, tenant_id, provider, provider_account_id AS aws_account_id, account_type, "
+    "role_arn, stack_name, "
     "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
     "permission_checks, last_error, last_validated_at, created_at, stack_version "
     "FROM cloud_connection ORDER BY created_at"
@@ -247,14 +249,15 @@ async def run_validation(
         await funnel.emit(session, "connected", tenant_id=tenant_id)
         await session.execute(
             text(
-                "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
-                "account_type) VALUES (:id, :t, :c, :acct, :type) "
-                "ON CONFLICT (tenant_id, aws_account_id) DO NOTHING"
+                "INSERT INTO cloud_account (id, tenant_id, connection_id, provider, "
+                "provider_account_id, account_type) VALUES (:id, :t, :c, :provider, :acct, :type) "
+                "ON CONFLICT (tenant_id, provider, provider_account_id) DO NOTHING"
             ),
             {
                 "id": uuid7(),
                 "t": tenant_id,
                 "c": connection_id,
+                "provider": conn.provider,
                 "acct": conn.aws_account_id,
                 "type": account_type,
             },
@@ -311,8 +314,8 @@ async def mark_disconnected(
         text(
             "UPDATE recommendation SET status = 'expired' WHERE status IN ('new', 'assigned', "
             "'in_progress') AND (resource_ref IN (SELECT id FROM resource WHERE connection_id = "
-            ":c) OR (resource_ref IS NULL AND account_id IN (SELECT aws_account_id FROM "
-            "cloud_account WHERE connection_id = :c)))"
+            ":c) OR (resource_ref IS NULL AND (provider, provider_account_id) IN (SELECT provider, "
+            "provider_account_id FROM cloud_account WHERE connection_id = :c)))"
         ),
         {"c": connection_id},
     )

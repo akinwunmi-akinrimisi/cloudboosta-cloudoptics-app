@@ -372,7 +372,9 @@ async def reload_connection(
     for manifest in sorted(manifests, key=lambda m: m.billing_period):
         p, version = manifest.billing_period, manifest.export_version
         try:
-            loaded = await run_in_threadpool(load_export, source, manifest, norm_base)
+            loaded = await run_in_threadpool(
+                load_export, source, manifest, norm_base, conn.provider
+            )
         except service.LOAD_ERRORS as exc:
             result.periods.append(PeriodResult(p, "failed", version, service._error_code(exc)))
             continue

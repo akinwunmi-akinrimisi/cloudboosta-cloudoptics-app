@@ -1,4 +1,5 @@
-"""Background jobs for billing ingestion (ADR-003, docs/11c §1.1 F1)."""
+"""Background jobs for billing ingestion (ADR-003, docs/11c §1.1 F1). Each job runs the
+connection's provider plug-in (ADR-018); a provider without the capability is skipped."""
 
 from __future__ import annotations
 
@@ -8,14 +9,15 @@ from datetime import date
 import procrastinate
 from sqlalchemy import text
 
-from cloudoptics.ingestion.explorer import refresh_snapshot
-from cloudoptics.ingestion.reconcile import reconcile_period
-from cloudoptics.ingestion.reload import parse_month, reload_connection
-from cloudoptics.ingestion.service import INGESTABLE, ingest_connection
+from cloudoptics.ingestion.reload import parse_month
+from cloudoptics.ingestion.service import INGESTABLE
 from cloudoptics.platform.db import get_sessionmaker, scheduler_scope
 from cloudoptics.platform.jobs import defer_once
+from cloudoptics.providers import capability_for
 
 blueprint = procrastinate.Blueprint()
+
+UNSUPPORTED = "unsupported"
 
 INGEST_TASK = "ingestion:cur.ingest"
 SNAPSHOT_TASK = "ingestion:ce.snapshot"
@@ -91,7 +93,10 @@ async def _after_new_bills(
 
 @blueprint.task(name="cur.ingest", queue="ingestion", retry=2)
 async def ingest(tenant_id: str, connection_id: str) -> str:
-    result = await ingest_connection(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    source = await capability_for(tenant_id, connection_id, "billing_source")
+    if source is None:
+        return UNSUPPORTED
+    result = await source.ingest(uuid.UUID(tenant_id), uuid.UUID(connection_id))
     if result.loaded_periods:
         await _after_new_bills(tenant_id, connection_id, result.loaded_periods)
     return result.status
@@ -101,7 +106,10 @@ async def ingest(tenant_id: str, connection_id: str) -> str:
 async def reload(tenant_id: str, connection_id: str, period: str) -> str:
     """An admin's reload; then reconciliation, budgets, anomalies and the analysis (the
     rules that read resource costs, R6b and R10, and verification need the new rows)."""
-    result = await reload_connection(
+    source = await capability_for(tenant_id, connection_id, "billing_source")
+    if source is None:
+        return UNSUPPORTED
+    result = await source.reload(
         uuid.UUID(tenant_id), uuid.UUID(connection_id), parse_month(period) if period else None
     )
     if result.reloaded:
@@ -111,8 +119,13 @@ async def reload(tenant_id: str, connection_id: str, period: str) -> str:
 
 @blueprint.task(name="cost.reconcile", queue="ingestion", retry=1)
 async def reconcile(tenant_id: str, connection_id: str, billing_period: str) -> str:
-    return await reconcile_period(
-        uuid.UUID(tenant_id), uuid.UUID(connection_id), date.fromisoformat(billing_period)
+    check = await capability_for(tenant_id, connection_id, "reconcile")
+    if check is None:
+        return UNSUPPORTED
+    return str(
+        await check.reconcile(
+            uuid.UUID(tenant_id), uuid.UUID(connection_id), date.fromisoformat(billing_period)
+        )
     )
 
 
@@ -146,7 +159,10 @@ async def poll(timestamp: int) -> int:
 
 @blueprint.task(name="ce.snapshot", queue="ingestion", retry=1)
 async def snapshot(tenant_id: str, connection_id: str) -> str:
-    return await refresh_snapshot(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    check = await capability_for(tenant_id, connection_id, "reconcile")
+    if check is None:
+        return UNSUPPORTED
+    return str(await check.snapshot(uuid.UUID(tenant_id), uuid.UUID(connection_id)))
 
 
 @blueprint.periodic(cron="41 6 * * *")

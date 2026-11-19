@@ -65,10 +65,12 @@ ADMIN_EMAILS = text(
 )
 TENANT_NAME = text("SELECT name, status FROM tenant WHERE id = :t")
 STACK_ACCOUNTS = text(
-    "SELECT aws_account_id, account_type, stack_name FROM cloud_connection ORDER BY aws_account_id"
+    "SELECT provider_account_id AS aws_account_id, account_type, stack_name "
+    "FROM cloud_connection WHERE provider = 'aws' ORDER BY provider_account_id"
 )
 CONNECTION_FOR_DELETE = text(
-    "SELECT id, aws_account_id, status FROM cloud_connection WHERE id = :c FOR UPDATE"
+    "SELECT id, provider_account_id AS aws_account_id, status FROM cloud_connection "
+    "WHERE id = :c FOR UPDATE"
 )
 RECORD_NOTIFICATION = text(
     "INSERT INTO notification (id, tenant_id, kind, dedupe_key, recipients, subject, status, "

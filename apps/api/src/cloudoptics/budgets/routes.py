@@ -193,7 +193,9 @@ async def _validate(
     if scope.accounts:
         known = {
             r.aws_account_id.strip()
-            for r in await session.execute(text("SELECT aws_account_id FROM cloud_account"))
+            for r in await session.execute(
+                text("SELECT provider_account_id AS aws_account_id FROM cloud_account")
+            )
         }
         unknown = sorted(set(scope.accounts) - known)
         if unknown:

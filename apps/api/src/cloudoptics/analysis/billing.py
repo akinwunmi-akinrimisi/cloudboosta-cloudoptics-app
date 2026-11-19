@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections import defaultdict
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Literal
@@ -33,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.analysis.pricing import HOURS_PER_MONTH
+from cloudoptics.analysis.registry import RuleSpec
 from cloudoptics.analysis.rules import (
     BilledUsage,
     Candidate,
@@ -73,13 +74,16 @@ async def load_billing(session: AsyncSession) -> list[BilledUsage]:
     """
     rows = await session.execute(
         text(
-            "WITH last AS (SELECT max(usage_date) AS d FROM cost_resource_daily) "
-            "SELECT c.usage_date, c.account_id, c.region_id, c.service_code, c.usage_type, "
+            "WITH last AS (SELECT max(usage_date) AS d FROM cost_resource_daily "
+            "WHERE provider = 'aws') "
+            "SELECT c.usage_date, c.provider_account_id, c.region_id, c.service_code, "
+            "c.usage_type, "
             "c.resource_id, c.effective_cost_usd, c.usage_quantity, t.tags "
             "FROM cost_resource_daily c CROSS JOIN last "
             "JOIN cloud_connection k ON k.id = c.connection_id "
             "LEFT JOIN tag_set t ON t.hash = c.tag_set_hash "
-            "WHERE c.usage_date > last.d - :days AND k.status <> 'disconnected' "
+            "WHERE c.provider = 'aws' AND c.usage_date > last.d - :days "
+            "AND k.status <> 'disconnected' "
             "AND c.usage_type ~* :usage_types"
         ),
         {"days": WINDOW_DAYS, "usage_types": BILLED_USAGE_TYPES},
@@ -87,7 +91,7 @@ async def load_billing(session: AsyncSession) -> list[BilledUsage]:
     return [
         BilledUsage(
             day=r.usage_date,
-            account_id=r.account_id.strip(),
+            account_id=r.provider_account_id.strip(),
             region_id=r.region_id or "global",
             service_code=r.service_code,
             usage_type=r.usage_type,
@@ -643,7 +647,22 @@ def idle_nat_gateways(ctx: Context, resources: list[Resource]) -> Iterator[Candi
         )
 
 
-BILLING_RULES: list[Callable[[Context, list[Resource]], Iterator[Candidate]]] = [
-    extended_support,
-    idle_nat_gateways,
-]
+# The AWS rules of this module, in evaluation order (analysis/registry.py; ADR-018).
+RULE_SPECS: tuple[RuleSpec, ...] = (
+    RuleSpec(
+        id="R6b",
+        provider="aws",
+        rule_ids=("R6b_extended_support",),
+        resource_types=frozenset({"eks_cluster", "rds_cluster", "rds_instance"}),
+        version=1,
+        evaluate=extended_support,
+    ),
+    RuleSpec(
+        id="R10",
+        provider="aws",
+        rule_ids=("R10_idle_nat",),
+        resource_types=frozenset({"nat_gateway"}),
+        version=2,
+        evaluate=idle_nat_gateways,
+    ),
+)

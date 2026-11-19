@@ -93,6 +93,8 @@ class BreakdownItem:
     label: str
     amount: float
     share: float
+    # The account's cloud, for the account dimension (ADR-018); None for the others.
+    provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -243,30 +245,33 @@ class MonthlyCharge:
 
 _MONTHLY_CHARGES = """
 WITH monthly AS (
-    SELECT account_id, service_code, max(service_name) AS service_name,
+    SELECT provider_account_id, service_code, max(service_name) AS service_name,
            coalesce(usage_type, '') AS usage_type, charge_category,
            sum(effective_cost_usd) AS amount
     FROM cost_daily
     WHERE usage_date >= :prev AND usage_date < :start
       AND charge_category NOT IN ('Tax', 'Credit')
-      AND (CAST(:accounts AS text[]) IS NULL OR account_id = ANY(CAST(:accounts AS text[])))
-    GROUP BY account_id, service_code, coalesce(usage_type, ''), charge_category
+      AND (CAST(:accounts AS text[]) IS NULL
+           OR provider_account_id = ANY(CAST(:accounts AS text[])))
+    GROUP BY provider_account_id, service_code, coalesce(usage_type, ''), charge_category
     HAVING count(DISTINCT usage_date) = 1 AND min(usage_date) = :prev
        AND abs(sum(effective_cost_usd)) >= :min
 ), cur AS (
-    SELECT account_id, service_code, coalesce(usage_type, '') AS usage_type, charge_category,
+    SELECT provider_account_id, service_code, coalesce(usage_type, '') AS usage_type,
+           charge_category,
            sum(effective_cost_usd) AS amount,
            coalesce(sum(effective_cost_usd) FILTER (WHERE usage_date >= :window), 0)
                AS in_window
     FROM cost_daily
     WHERE usage_date >= :start AND usage_date <= :last
-      AND (CAST(:accounts AS text[]) IS NULL OR account_id = ANY(CAST(:accounts AS text[])))
-    GROUP BY account_id, service_code, coalesce(usage_type, ''), charge_category
+      AND (CAST(:accounts AS text[]) IS NULL
+           OR provider_account_id = ANY(CAST(:accounts AS text[])))
+    GROUP BY provider_account_id, service_code, coalesce(usage_type, ''), charge_category
 )
 SELECT m.service_name, m.usage_type, m.amount AS expected, c.amount IS NOT NULL AS billed,
        coalesce(c.in_window, 0) AS in_window
 FROM monthly m LEFT JOIN cur c
-  ON c.account_id = m.account_id AND c.service_code = m.service_code
+  ON c.provider_account_id = m.provider_account_id AND c.service_code = m.service_code
  AND c.usage_type = m.usage_type AND c.charge_category = m.charge_category
 ORDER BY m.amount DESC
 """
@@ -322,7 +327,7 @@ async def month_end_forecast(
                 "SELECT coalesce(sum(effective_cost_usd), 0) FROM cost_daily "
                 "WHERE usage_date BETWEEN :first AND :last AND charge_category <> 'Tax' "
                 "AND (CAST(:accounts AS text[]) IS NULL "
-                "OR account_id = ANY(CAST(:accounts AS text[])))"
+                "OR provider_account_id = ANY(CAST(:accounts AS text[])))"
             ),
             {"first": window_start, "last": last_day, "accounts": accounts},
         )
@@ -414,7 +419,7 @@ async def month_spend(
                 "SELECT coalesce(sum(effective_cost_usd), 0) FROM cost_daily "
                 "WHERE usage_date >= :start AND usage_date < :end "
                 "AND (CAST(:accounts AS text[]) IS NULL "
-                "OR account_id = ANY(CAST(:accounts AS text[])))"
+                "OR provider_account_id = ANY(CAST(:accounts AS text[])))"
             ),
             {"start": start, "end": end, "accounts": accounts},
         )
@@ -614,12 +619,13 @@ _BREAKDOWN_SQL = {
         "GROUP BY service_code"
     ),
     "account": (
-        "SELECT c.account_id AS key, coalesce(max(a.name), c.account_id) AS label, "
+        "SELECT c.provider_account_id AS key, "
+        "coalesce(max(a.name), c.provider_account_id) AS label, c.provider, "
         "sum(c.effective_cost_usd) AS amount FROM cost_daily c "
         "LEFT JOIN cloud_account a ON a.tenant_id = c.tenant_id "
-        "AND a.aws_account_id = c.account_id "
+        "AND a.provider = c.provider AND a.provider_account_id = c.provider_account_id "
         "WHERE c.usage_date >= :start AND c.usage_date < :end AND c.charge_category <> 'Tax' "
-        "GROUP BY c.account_id"
+        "GROUP BY c.provider, c.provider_account_id"
     ),
     "region": (
         "SELECT coalesce(region_id, 'global') AS key, coalesce(region_id, 'Global') AS label, "
@@ -630,14 +636,18 @@ _BREAKDOWN_SQL = {
 }
 
 
-def _top(rows: list[tuple[str, str, float]], limit: int) -> tuple[float, list[BreakdownItem]]:
+def _top(
+    rows: list[tuple[str, str, float, str | None]], limit: int
+) -> tuple[float, list[BreakdownItem]]:
     rows = sorted((r for r in rows if round(r[2], 2) != 0), key=lambda r: -r[2])
     total = sum(r[2] for r in rows)
     head, tail = rows[:limit], rows[limit:]
     if tail:
-        head.append(("other", f"{len(tail)} more", sum(r[2] for r in tail)))
+        head.append(("other", f"{len(tail)} more", sum(r[2] for r in tail), None))
     share = (lambda v: round(v / total, 4)) if total else (lambda v: 0.0)
-    return round(total, 2), [BreakdownItem(k, label, round(v, 2), share(v)) for k, label, v in head]
+    return round(total, 2), [
+        BreakdownItem(k, label, round(v, 2), share(v), provider) for k, label, v, provider in head
+    ]
 
 
 async def breakdown(
@@ -654,11 +664,13 @@ async def breakdown(
                 return Breakdown("cost_explorer", month, dimension, "USD", 0.0, [])
             services = _sum_series(snapshots, "by_service", "service")
             services.pop("Tax", None)
-            total, items = _top([(k, k, v) for k, v in services.items()], limit)
+            total, items = _top([(k, k, v, None) for k, v in services.items()], limit)
             return Breakdown("cost_explorer", month, dimension, "USD", total, items)
         return Breakdown(None, month, dimension, "USD", 0.0, [])
     rows = await session.execute(text(_BREAKDOWN_SQL[dimension]), {"start": start, "end": end})
-    total, items = _top([(r.key, r.label, float(r.amount)) for r in rows], limit)
+    total, items = _top(
+        [(r.key, r.label, float(r.amount), getattr(r, "provider", None)) for r in rows], limit
+    )
     return Breakdown("cur", month, dimension, "USD", total, items)
 
 
@@ -694,13 +706,14 @@ async def scope_daily(
     refunds and tax would make a day look unusual for reasons that are not spend."""
     rows = await session.execute(
         text(
-            "SELECT account_id, service_code, max(service_name) AS service_name, usage_date, "
+            "SELECT provider_account_id AS account_id, service_code, "
+            "max(service_name) AS service_name, usage_date, "
             "sum(effective_cost_usd) AS amount FROM cost_daily "
             "WHERE usage_date BETWEEN :first AND :last "
             "AND charge_category IN ('Usage', 'Purchase') "
-            "AND (CAST(:account AS text) IS NULL OR account_id = CAST(:account AS text)) "
+            "AND (CAST(:account AS text) IS NULL OR provider_account_id = CAST(:account AS text)) "
             "AND (CAST(:service AS text) IS NULL OR service_code = CAST(:service AS text)) "
-            "GROUP BY account_id, service_code, usage_date"
+            "GROUP BY provider_account_id, service_code, usage_date"
         ),
         {"first": first, "last": last, "account": account_id, "service": service_code},
     )
@@ -728,7 +741,7 @@ async def scope_usage_types(
         text(
             "SELECT coalesce(usage_type, 'Other') AS usage_type, region_id, usage_date, "
             "sum(effective_cost_usd) AS amount FROM cost_daily "
-            "WHERE account_id = :account AND service_code = :service "
+            "WHERE provider_account_id = :account AND service_code = :service "
             "AND usage_date = ANY(:days) AND charge_category IN ('Usage', 'Purchase') "
             "GROUP BY coalesce(usage_type, 'Other'), region_id, usage_date"
         ),
@@ -830,12 +843,13 @@ class TrendDay:
 
 _TREND_DAYS = """
 WITH s AS (
-    SELECT usage_date, account_id, service_code, coalesce(usage_type, '') AS usage_type,
+    SELECT usage_date, provider_account_id, service_code, coalesce(usage_type, '') AS usage_type,
            charge_category, sum(effective_cost_usd) AS amount
     FROM cost_daily WHERE usage_date BETWEEN :first AND :last
-    GROUP BY usage_date, account_id, service_code, coalesce(usage_type, ''), charge_category
+    GROUP BY usage_date, provider_account_id, service_code, coalesce(usage_type, ''),
+             charge_category
 ), k AS (
-    SELECT s.*, count(*) OVER (PARTITION BY date_trunc('month', usage_date), account_id,
+    SELECT s.*, count(*) OVER (PARTITION BY date_trunc('month', usage_date), provider_account_id,
                                service_code, usage_type, charge_category) AS n
     FROM s
 )

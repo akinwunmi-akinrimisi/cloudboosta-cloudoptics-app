@@ -6,7 +6,8 @@ High > 65); priority = monthly savings x confidence x risk x effort weights. Sev
 candidates for one resource are deduplicated (FR-REC-06): the highest priority is the
 primary and the rest point at it with ``primary_of`` (an alternative, not extra savings).
 
-Rows are keyed by a fingerprint (rule, account, region, resource), so a re-run updates a
+Rows are keyed by a fingerprint (provider, rule, account, region, resource; the provider
+prefix since migration 0043, ADR-018), so a re-run updates a
 recommendation in place and keeps its status. After each run the verification
 (``recommendations.verification``) checks the rows the run did not produce and the ones
 marked done: verified, not verified or resolved outside Cloudoptics. A resolved one that
@@ -27,18 +28,17 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cloudoptics.analysis.billing import BILLING_RULES, load_billing
-from cloudoptics.analysis.compute import COMPUTE_RULES
+from cloudoptics.analysis.billing import load_billing
 from cloudoptics.analysis.pricing import load_price_book
+from cloudoptics.analysis.registry import engine_rules
 from cloudoptics.analysis.rules import (
-    RULES,
     Candidate,
     Context,
     Resource,
     console_url,
     parse_time,
 )
-from cloudoptics.analysis.schedule import SCHEDULE_RULES, TEMPLATE_PATH
+from cloudoptics.analysis.schedule import TEMPLATE_PATH
 from cloudoptics.analysis.settings import RuleSettings, load_rule_settings
 from cloudoptics.analytics import funnel
 from cloudoptics.metrics.puller import load_usage
@@ -71,7 +71,7 @@ class Scored:
     @property
     def fingerprint(self) -> str:
         r = self.candidate.resource
-        return f"{self.candidate.rule_id}:{r.account_id}:{r.region_id}:{r.resource_id}"
+        return f"{r.provider}:{self.candidate.rule_id}:{r.account_id}:{r.region_id}:{r.resource_id}"
 
 
 def score(c: Candidate) -> Scored:
@@ -89,14 +89,15 @@ def score(c: Candidate) -> Scored:
 async def _load(session: AsyncSession) -> list[Resource]:
     rows = await session.execute(
         text(
-            "SELECT id, account_id, region_id, resource_type, resource_id, name, state, config, "
-            "tags, state_since, first_seen_at, arn FROM resource WHERE deleted_at IS NULL"
+            "SELECT id, provider, provider_account_id, region_id, resource_type, resource_id, "
+            "name, state, config, tags, state_since, first_seen_at, arn FROM resource "
+            "WHERE deleted_at IS NULL"
         )
     )
     return [
         Resource(
             id=r.id,
-            account_id=r.account_id.strip(),
+            account_id=r.provider_account_id.strip(),
             region_id=r.region_id,
             resource_type=r.resource_type,
             resource_id=r.resource_id,
@@ -107,6 +108,7 @@ async def _load(session: AsyncSession) -> list[Resource]:
             state_since=r.state_since,
             first_seen_at=r.first_seen_at,
             arn=r.arn,
+            provider=r.provider,
         )
         for r in rows
     ]
@@ -134,13 +136,19 @@ def build_context(resources: list[Resource], ctx: Context) -> Context:
 
 
 def evaluate(ctx: Context, resources: list[Resource]) -> list[Scored]:
-    """Run every rule the tenant has on, over the resources it has not tagged to ignore."""
+    """Run every rule the tenant has on, over the resources it has not tagged to ignore.
+
+    Each rule sees its own provider's resources only (analysis/registry.py)."""
     build_context(resources, ctx)
-    considered = [r for r in resources if not ctx.settings.ignores(r.tags)]
+    considered: dict[str, list[Resource]] = defaultdict(list)
+    for r in resources:
+        if not ctx.settings.ignores(r.tags):
+            considered[r.provider].append(r)
     return [
         score(c)
-        for rule in [*RULES, *COMPUTE_RULES, *SCHEDULE_RULES, *BILLING_RULES]
-        for c in rule(ctx, considered)
+        for spec in engine_rules()
+        if spec.evaluate is not None
+        for c in spec.evaluate(ctx, considered[spec.provider])
         if c.rule_id not in ctx.settings.disabled_rules
     ]
 
@@ -165,6 +173,7 @@ def _row(s: Scored, generation: int) -> dict[str, Any]:
         "resource_ref": (
             None if c.resource.virtual or not c.resource.in_inventory else c.resource.id
         ),
+        "provider": c.resource.provider,
         "account_id": c.resource.account_id,
         "region_id": c.resource.region_id,
         "resource_id": c.resource.resource_id,
@@ -190,12 +199,13 @@ def _row(s: Scored, generation: int) -> dict[str, Any]:
 
 UPSERT = text(
     "INSERT INTO recommendation (id, tenant_id, fingerprint, type, rule_id, rule_version, "
-    "rule_config, generation_id, resource_ref, account_id, region_id, resource_id, title, "
+    "rule_config, generation_id, resource_ref, provider, provider_account_id, region_id, "
+    "resource_id, title, "
     "current_config, recommended_config, cost_now_usd_month, cost_after_usd_month, "
     "savings_basis, effort, reversibility, restart_required, risk_score, risk_level, "
     "risk_factors, confidence, confidence_notes, priority_score, evidence, fix, "
     "engine_version) VALUES (:id, :t, :fingerprint, :type, :rule_id, :rule_version, "
-    "CAST(:rule_config AS jsonb), :generation, :resource_ref, :account_id, :region_id, "
+    "CAST(:rule_config AS jsonb), :generation, :resource_ref, :provider, :account_id, :region_id, "
     ":resource_id, :title, CAST(:current_config AS jsonb), CAST(:recommended_config AS jsonb), "
     ":cost_now, :cost_after, :basis, :effort, :reversibility, :restart, :risk_score, "
     ":risk_level, CAST(:risk_factors AS jsonb), :confidence, CAST(:confidence_notes AS jsonb), "

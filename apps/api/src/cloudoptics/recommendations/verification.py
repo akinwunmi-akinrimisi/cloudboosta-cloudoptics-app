@@ -287,7 +287,8 @@ def _changed_at(item: Item, result: Check, now: datetime) -> datetime:
 
 
 LOAD = text(
-    "SELECT r.id, r.rule_id, r.status, r.account_id, r.resource_id, r.current_config, "
+    "SELECT r.id, r.rule_id, r.status, r.provider_account_id AS account_id, r.resource_id, "
+    "r.current_config, "
     "r.recommended_config, r.cost_now_usd_month, r.savings_usd_month, r.fix, r.baseline, "
     "r.done_at, r.generation_id, r.resource_ref, s.id AS sid, s.resource_type, s.state, "
     "s.config, s.tags, s.arn, s.state_since, s.last_seen_at, s.deleted_at FROM recommendation r "
@@ -505,7 +506,8 @@ def resource_keys(resource_id: str, arn: str | None, config: dict[str, Any]) -> 
 
 
 MEASURE_DUE = text(
-    "SELECT r.id, r.status, r.account_id, r.resource_id, r.changed_at, r.savings_usd_month, "
+    "SELECT r.id, r.status, r.provider, r.provider_account_id AS account_id, r.resource_id, "
+    "r.changed_at, r.savings_usd_month, "
     "r.verification, r.baseline, r.realised_at, s.arn FROM recommendation r "
     "LEFT JOIN resource s ON s.id = r.resource_ref "
     "WHERE r.status IN ('verified', 'resolved_externally') AND r.changed_at IS NOT NULL "
@@ -521,17 +523,21 @@ async def measure(session: AsyncSession, tenant_id: uuid.UUID, now: datetime) ->
         await session.execute(MEASURE_DUE, {"oldest": now - MEASURE_FOR, "window": WINDOW_DAYS})
     ).all()
     measured = 0
-    last_bill: dict[str, date | None] = {}
+    last_bill: dict[tuple[str, str], date | None] = {}
     for r in rows:
         account = r.account_id.strip()
-        if account not in last_bill:
-            last_bill[account] = (
+        key = (r.provider, account)
+        if key not in last_bill:
+            last_bill[key] = (
                 await session.execute(
-                    text("SELECT max(usage_date) FROM cost_daily WHERE account_id = :a"),
-                    {"a": account},
+                    text(
+                        "SELECT max(usage_date) FROM cost_daily WHERE provider = :p "
+                        "AND provider_account_id = :a"
+                    ),
+                    {"p": r.provider, "a": account},
                 )
             ).scalar_one()
-        last = last_bill[account]
+        last = last_bill[key]
         change_day = r.changed_at.astimezone(UTC).date()
         if last is None or (last - change_day).days < MIN_AFTER_DAYS:
             continue
@@ -543,11 +549,13 @@ async def measure(session: AsyncSession, tenant_id: uuid.UUID, now: datetime) ->
             for d, c in await session.execute(
                 text(
                     "SELECT usage_date, sum(effective_cost_usd) FROM cost_resource_daily "
-                    "WHERE account_id = :a AND usage_date >= :start AND usage_date <= :end "
+                    "WHERE provider = :p AND provider_account_id = :a AND usage_date >= :start "
+                    "AND usage_date <= :end "
                     "AND (resource_id = ANY(:keys) OR resource_id LIKE ANY(:suffixes)) "
                     "GROUP BY usage_date"
                 ),
                 {
+                    "p": r.provider,
                     "a": account,
                     "start": change_day - timedelta(days=WINDOW_DAYS),
                     "end": change_day + timedelta(days=WINDOW_DAYS),

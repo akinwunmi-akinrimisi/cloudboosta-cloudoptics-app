@@ -715,6 +715,7 @@ function demoRecommendation(r: DemoRec, status: RecommendationStatus): Recommend
   const riskLevel = riskScore > 65 ? 'high' : riskScore >= 35 ? 'medium' : 'low'
   const confidence = r.confidence ?? 'high'
   return {
+    provider: 'aws',
     currentConfig: {},
     recommendedConfig: { action: 'delete' },
     savingsUsdMonth: savings,
@@ -893,6 +894,7 @@ export class DemoApi implements Api {
     const account = '123456789012'
     const conn: Connection = {
       id: randomId(),
+      provider: 'aws',
       awsAccountId: account,
       accountType: 'standalone',
       roleArn: `arn:aws:iam::${account}:role/CloudopticsBillingReadOnly`,
@@ -1179,6 +1181,7 @@ export class DemoApi implements Api {
     }
     const conn: Connection = {
       id: randomId(),
+      provider: 'aws',
       awsAccountId: body.awsAccountId,
       accountType: body.accountType,
       roleArn: `arn:aws:iam::${body.awsAccountId}:role/CloudopticsBillingReadOnly`,
@@ -1233,6 +1236,7 @@ export class DemoApi implements Api {
       const account = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b % 10).join('')
       const conn: Connection = {
         id: randomId(),
+        provider: 'aws',
         awsAccountId: account,
         accountType: 'standalone',
         roleArn: `arn:aws:iam::${account}:role/CloudopticsBillingReadOnly`,
@@ -1894,6 +1898,7 @@ export class DemoApi implements Api {
       const usable = c.status === 'healthy' || c.status === 'degraded'
       const own: CloudAccount = {
         connectionId: c.id,
+        provider: c.provider ?? 'aws',
         awsAccountId: c.awsAccountId,
         name: c.accountType === 'management' ? 'payer' : null,
         accountType: c.accountType,
@@ -2152,6 +2157,7 @@ export class DemoApi implements Api {
     const round = (n: number) => Math.round(n * 100) / 100
     return {
       id: a.id,
+      provider: 'aws',
       date,
       accountId: a.accountId,
       accountName: a.accountName,

@@ -19,6 +19,7 @@ from cloudoptics.ingestion.service import INGESTABLE, ingest_connection
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.conditional import ConditionalGet
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.providers.base import ProviderName
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}", tags=["costs"])
 
@@ -109,6 +110,8 @@ class BreakdownItem(ApiModel):
     label: str
     amount: float
     share: float
+    # The account's cloud, for the account dimension (ADR-018); null for the others.
+    provider: ProviderName | None = None
 
 
 class Breakdown(ApiModel):

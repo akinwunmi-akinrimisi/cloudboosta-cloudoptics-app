@@ -15,6 +15,7 @@ from cloudoptics.commitments import advisor, service
 from cloudoptics.identity.deps import AdminAccess, Session, ViewerAccess
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.providers.base import ProviderName
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/commitments", tags=["commitments"])
 
@@ -43,6 +44,7 @@ class CommitmentOut(ApiModel):
     days_left: int | None
     current: bool
     last_seen_at: datetime
+    provider: ProviderName = "aws"
 
 
 class PayerCoverage(ApiModel):

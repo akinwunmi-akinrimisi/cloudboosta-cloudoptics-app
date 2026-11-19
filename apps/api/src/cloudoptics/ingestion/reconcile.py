@@ -100,9 +100,9 @@ async def reconcile_period(
         rows = (
             await session.execute(
                 text(
-                    "SELECT account_id, sum(billed_cost_usd) AS billed, max(usage_date) AS last, "
-                    "max(data_version) AS version FROM cost_daily WHERE connection_id = :c "
-                    "AND billing_period = :p GROUP BY account_id"
+                    "SELECT provider_account_id AS account_id, sum(billed_cost_usd) AS billed, "
+                    "max(usage_date) AS last, max(data_version) AS version FROM cost_daily "
+                    "WHERE connection_id = :c AND billing_period = :p GROUP BY provider_account_id"
                 ),
                 {"c": connection_id, "p": billing_period},
             )

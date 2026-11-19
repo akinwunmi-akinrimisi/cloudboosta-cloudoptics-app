@@ -16,19 +16,22 @@ from cloudoptics.anomalies import service
 from cloudoptics.audit import log as audit
 from cloudoptics.identity.deps import AdminAccess, MemberAccess, Session, ViewerAccess
 from cloudoptics.platform.api import ApiModel, user_actor
+from cloudoptics.providers.base import ProviderName
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/anomalies", tags=["anomalies"])
 settings_router = APIRouter(prefix="/v1/tenants/{tenant_id}/alert-settings", tags=["anomalies"])
 
 # One query for both: a single anomaly (:id) or the list (:since, optional :status).
 SELECT_ANOMALIES = text(
-    "SELECT a.id, a.usage_date, a.account_id, coalesce(c.name, a.account_id) AS account_label, "
+    "SELECT a.id, a.usage_date, a.provider, a.provider_account_id AS account_id, "
+    "coalesce(c.name, a.provider_account_id) AS account_label, "
     "a.service_code, a.service_name, a.actual_usd, a.expected_usd, a.impact_usd, "
     "a.contributors, a.status, a.suppressed_by, a.note, a.status_changed_at, a.detected_at, "
     "u.display_name AS changed_by_name, EXISTS (SELECT 1 FROM notification n "
     "WHERE n.dedupe_key = 'anomaly:' || CAST(a.id AS text) AND n.status = 'sent') AS alerted "
     "FROM anomaly a LEFT JOIN cloud_account c ON c.tenant_id = a.tenant_id "
-    "AND c.aws_account_id = a.account_id LEFT JOIN app_user u ON u.id = a.status_changed_by "
+    "AND c.provider = a.provider AND c.provider_account_id = a.provider_account_id "
+    "LEFT JOIN app_user u ON u.id = a.status_changed_by "
     "WHERE (CAST(:id AS uuid) IS NULL OR a.id = CAST(:id AS uuid)) "
     "AND (CAST(:since AS date) IS NULL OR a.usage_date >= CAST(:since AS date)) "
     "AND (CAST(:status AS text) IS NULL OR a.status = CAST(:status AS text)) "
@@ -66,6 +69,7 @@ class Anomaly(ApiModel):
     status_changed_by: str | None
     detected_at: datetime
     alerted: bool
+    provider: ProviderName = "aws"
 
 
 class Point(ApiModel):
@@ -101,6 +105,7 @@ def _model(row: Any) -> dict[str, Any]:
         "status_changed_by": row.changed_by_name,
         "detected_at": row.detected_at,
         "alerted": row.alerted,
+        "provider": row.provider,
     }
 
 

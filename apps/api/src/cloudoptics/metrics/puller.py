@@ -200,9 +200,10 @@ async def pull_connection(
         rows = (
             await session.execute(
                 text(
-                    "SELECT r.id, r.account_id, r.region_id, r.resource_type, r.resource_id, "
-                    "max(m.day) AS last_day FROM resource r JOIN cloud_account a ON "
-                    "a.tenant_id = r.tenant_id AND a.aws_account_id = r.account_id AND "
+                    "SELECT r.id, r.provider_account_id AS account_id, r.region_id, "
+                    "r.resource_type, r.resource_id, max(m.day) AS last_day FROM resource r "
+                    "JOIN cloud_account a ON a.tenant_id = r.tenant_id AND "
+                    "a.provider = r.provider AND a.provider_account_id = r.provider_account_id AND "
                     "a.resource_access LEFT JOIN resource_metric m ON m.resource_id = r.id "
                     "WHERE r.connection_id = :c AND r.deleted_at IS NULL AND "
                     "((r.resource_type = 'ec2_instance' AND r.state = 'running') OR "

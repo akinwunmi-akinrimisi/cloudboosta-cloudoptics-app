@@ -35,6 +35,7 @@ from typing import Any, Literal
 
 from sqlalchemy import (
     ColumnElement,
+    and_,
     any_,
     bindparam,
     column,
@@ -56,7 +57,7 @@ log = logging.getLogger(__name__)
 # How one table's rows belong to a connection:
 #   "id" / "connection_id": that column holds the connection's ID;
 #   "resource": resource_id is one of the connection's resources;
-#   "account": account_id is one of the connection's AWS accounts;
+#   "account": (provider, provider_account_id) is one of the connection's accounts;
 #   "recommendation": the connection's recommendations (by account or resource);
 #   "recommendation_event": history of those recommendations;
 #   None: workspace-wide, kept when a connection's data is deleted.
@@ -130,16 +131,17 @@ KEPT: dict[str, str] = {
 _UUIDS = ARRAY(UUID(as_uuid=True))
 _TEXTS = ARRAY(Text())
 
+CONNECTION_PROVIDER = text("SELECT provider FROM cloud_connection WHERE id = :c")
 CONNECTION_ACCOUNTS = text(
-    "SELECT a.aws_account_id FROM cloud_account a WHERE a.connection_id = :c "
-    "UNION SELECT c.aws_account_id FROM cloud_connection c WHERE c.id = :c "
-    "AND NOT EXISTS (SELECT 1 FROM cloud_account o WHERE o.aws_account_id = c.aws_account_id "
-    "AND o.connection_id <> c.id)"
+    "SELECT a.provider_account_id FROM cloud_account a WHERE a.connection_id = :c "
+    "UNION SELECT c.provider_account_id FROM cloud_connection c WHERE c.id = :c "
+    "AND NOT EXISTS (SELECT 1 FROM cloud_account o WHERE o.provider = c.provider "
+    "AND o.provider_account_id = c.provider_account_id AND o.connection_id <> c.id)"
 )
 CONNECTION_RESOURCES = text("SELECT id FROM resource WHERE connection_id = :c")
 CONNECTION_RECOMMENDATIONS = text(
-    "SELECT id FROM recommendation WHERE account_id = ANY(CAST(:a AS text[])) "
-    "OR resource_ref = ANY(CAST(:r AS uuid[]))"
+    "SELECT id FROM recommendation WHERE (provider = :p "
+    "AND provider_account_id = ANY(CAST(:a AS text[]))) OR resource_ref = ANY(CAST(:r AS uuid[]))"
 )
 DELETE_UNUSED_TAG_SETS = text(
     "DELETE FROM tag_set t WHERE NOT EXISTS (SELECT 1 FROM cost_daily d "
@@ -157,6 +159,7 @@ class DeletionIncompleteError(RuntimeError):
 @dataclass
 class ConnectionTargets:
     connection_id: uuid.UUID
+    provider: str = "aws"
     accounts: list[str] = field(default_factory=list)
     resources: list[uuid.UUID] = field(default_factory=list)
     recommendations: list[uuid.UUID] = field(default_factory=list)
@@ -164,6 +167,10 @@ class ConnectionTargets:
 
 def _in(name: str, values: list[Any], array: Any) -> ColumnElement[bool]:
     return column(name) == any_(bindparam(None, values, type_=array))
+
+
+def _account_filter(t: ConnectionTargets) -> ColumnElement[bool]:
+    return and_(column("provider") == t.provider, _in("provider_account_id", t.accounts, _TEXTS))
 
 
 def _connection_filter(spec: TenantTable, t: ConnectionTargets) -> ColumnElement[bool]:
@@ -175,7 +182,7 @@ def _connection_filter(spec: TenantTable, t: ConnectionTargets) -> ColumnElement
         case "resource":
             return _in("resource_id", t.resources, _UUIDS)
         case "account":
-            return _in("account_id", t.accounts, _TEXTS)
+            return _account_filter(t)
         case "recommendation":
             return _in("id", t.recommendations, _UUIDS)
         case "recommendation_event":
@@ -197,6 +204,8 @@ async def tenant_counts(session: AsyncSession, tenant_id: uuid.UUID) -> dict[str
 
 async def connection_targets(session: AsyncSession, connection_id: uuid.UUID) -> ConnectionTargets:
     targets = ConnectionTargets(connection_id)
+    provider = (await session.execute(CONNECTION_PROVIDER, {"c": connection_id})).scalar()
+    targets.provider = str(provider or targets.provider)
     targets.accounts = sorted(
         str(a).strip()
         for a in (await session.execute(CONNECTION_ACCOUNTS, {"c": connection_id})).scalars()
@@ -207,7 +216,8 @@ async def connection_targets(session: AsyncSession, connection_id: uuid.UUID) ->
     targets.recommendations = list(
         (
             await session.execute(
-                CONNECTION_RECOMMENDATIONS, {"a": targets.accounts, "r": targets.resources}
+                CONNECTION_RECOMMENDATIONS,
+                {"p": targets.provider, "a": targets.accounts, "r": targets.resources},
             )
         ).scalars()
     )
@@ -240,9 +250,7 @@ async def delete_connection_data(session: AsyncSession, connection_id: uuid.UUID
     await session.execute(
         delete(table("recommendation")).where(_in("id", targets.recommendations, _UUIDS))
     )
-    await session.execute(
-        delete(table("anomaly")).where(_in("account_id", targets.accounts, _TEXTS))
-    )
+    await session.execute(delete(table("anomaly")).where(_account_filter(targets)))
     await session.execute(delete(table("cloud_connection")).where(column("id") == connection_id))
     tag_sets = await session.execute(DELETE_UNUSED_TAG_SETS)
     after = await connection_counts(session, targets)

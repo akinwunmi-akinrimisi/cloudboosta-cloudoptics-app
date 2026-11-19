@@ -6,8 +6,8 @@ import uuid
 
 import procrastinate
 
-from cloudoptics.metrics.puller import pull_connection
 from cloudoptics.platform.jobs import defer_once
+from cloudoptics.providers import capability_for
 
 blueprint = procrastinate.Blueprint()
 
@@ -27,7 +27,12 @@ async def defer_pull(app: procrastinate.App, tenant_id: str, connection_id: str)
 @blueprint.task(name="metrics.pull", queue="metrics", retry=1)
 async def pull(tenant_id: str, connection_id: str) -> str:
     """After each inventory scan: pull usage, then re-run the rules with it."""
-    status = await pull_connection(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    metrics = await capability_for(tenant_id, connection_id, "metrics")
+    status = (
+        "unsupported"
+        if metrics is None
+        else await metrics.pull(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    )
     from cloudoptics.analysis.jobs import defer_analysis
     from cloudoptics.platform.jobs import get_job_app
 

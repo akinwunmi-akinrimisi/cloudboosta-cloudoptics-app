@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import shlex
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import quote
 
 from cloudoptics.analysis.pricing import HOURS_PER_MONTH, Basis, PriceBook
+from cloudoptics.analysis.registry import RuleSpec
 from cloudoptics.analysis.settings import RuleSettings
 
 Confidence = Literal["high", "medium", "low"]
@@ -47,6 +48,8 @@ class Resource:
     in_inventory: bool = True
     # Not a row in ``resource`` (e.g. R8's payer-wide Savings Plan scope).
     virtual: bool = False
+    # The cloud the resource is in (ADR-018); part of the recommendation fingerprint.
+    provider: str = "aws"
 
 
 @dataclass(frozen=True)
@@ -594,10 +597,46 @@ def gp2_to_gp3(ctx: Context, resources: list[Resource]) -> Iterator[Candidate]:
         )  # fmt: skip
 
 
-RULES: list[Callable[[Context, list[Resource]], Iterator[Candidate]]] = [
-    unattached_volumes,
-    old_snapshots,
-    idle_addresses,
-    idle_load_balancers,
-    gp2_to_gp3,
-]
+# The AWS rules of this module, in evaluation order (analysis/registry.py; ADR-018).
+RULE_SPECS: tuple[RuleSpec, ...] = (
+    RuleSpec(
+        id="R1",
+        provider="aws",
+        rule_ids=("R1_unattached_ebs",),
+        resource_types=frozenset({"ebs_volume"}),
+        version=1,
+        evaluate=unattached_volumes,
+    ),
+    RuleSpec(
+        id="R1",
+        provider="aws",
+        rule_ids=("R1_old_snapshot",),
+        resource_types=frozenset({"ebs_snapshot"}),
+        version=1,
+        evaluate=old_snapshots,
+    ),
+    RuleSpec(
+        id="R2",
+        provider="aws",
+        rule_ids=("R2_idle_eip",),
+        resource_types=frozenset({"eip"}),
+        version=1,
+        evaluate=idle_addresses,
+    ),
+    RuleSpec(
+        id="R2",
+        provider="aws",
+        rule_ids=("R2_idle_lb",),
+        resource_types=frozenset({"elb"}),
+        version=1,
+        evaluate=idle_load_balancers,
+    ),
+    RuleSpec(
+        id="R3",
+        provider="aws",
+        rule_ids=("R3_gp2_gp3",),
+        resource_types=frozenset({"ebs_volume"}),
+        version=1,
+        evaluate=gp2_to_gp3,
+    ),
+)

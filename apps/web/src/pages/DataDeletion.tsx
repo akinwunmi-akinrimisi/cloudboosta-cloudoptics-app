@@ -7,6 +7,7 @@ import type { Connection, DataDeletion, StackSteps, Tenant } from '../api/types'
 import { ApiError } from '../api/types'
 import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card } from '../components/ui'
+import { accountLabel, accountNoun } from '../lib/providers'
 
 // Deleting data (PRD US-8.3): a disconnected connection's data straight away, the whole
 // workspace after a grace period. Cloudoptics cannot touch the customer's AWS accounts, so
@@ -73,12 +74,12 @@ export function DeleteConnectionData({
       }}
     >
       <p>
-        Delete everything Cloudoptics holds for AWS account {c.awsAccountId}: its bills, costs, resources, usage metrics,
+        Delete everything Cloudoptics holds for {accountLabel(c.provider, c.awsAccountId)}: its bills, costs, resources, usage metrics,
         recommendations and anomalies. This cannot be undone. The audit log keeps a record of the deletion, and you can
         connect the account again later.
       </p>
       <label className="flex flex-col gap-1">
-        <span className="font-medium">Type the account ID {c.awsAccountId} to confirm</span>
+        <span className="font-medium">Type the {accountNoun(c.provider)} ID {c.awsAccountId} to confirm</span>
         <input
           className={inputClass}
           value={typed}
@@ -116,7 +117,7 @@ export function StackStepsList({ steps, consoleUrl }: { steps: StackSteps[]; con
       <ul className="flex flex-col divide-y divide-border rounded-sm border border-border">
         {steps.map((s) => (
           <li key={s.awsAccountId} className="flex flex-wrap justify-between gap-2 px-3 py-2">
-            <span>AWS account {s.awsAccountId}</span>
+            <span>{accountLabel(s.provider, s.awsAccountId)}</span>
             <span className="font-mono text-xs">{s.stacks.join(', ')}</span>
           </li>
         ))}
