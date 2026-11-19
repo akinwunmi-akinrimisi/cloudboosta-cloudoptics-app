@@ -6,12 +6,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DemoApi } from '../api/demo'
 import { ApiError, MFA_REQUIRED_MESSAGE } from '../api/types'
-import claims from '../../../site/src/data/claims.json'
 import { ALL_ACTIONS } from '../components/permissions'
 import { readAttribution } from '../lib/attribution'
 import { AWS_MINUTES, STEPS } from '../pages/Onboarding'
 import { ApiProvider } from './context'
 import { createAppRouter } from './router'
+
+// The site's claims file, read by Vite at test time. A glob rather than an import so that tsc in
+// the web-only Docker build (no apps/site there) still compiles this file.
+type Claim<T> = { value: T }
+const claims = Object.values(
+  import.meta.glob<{ wizardSteps: Claim<string[]>; awsMinutes: Claim<number>; firstCosts: Claim<string> }>(
+    '../../../site/src/data/claims.json',
+    { eager: true, import: 'default' },
+  ),
+)[0]
 
 function renderApp(path = '/', setup?: (api: DemoApi) => void) {
   const api = new DemoApi(0)
@@ -146,6 +155,7 @@ describe('Cloudoptics web app', () => {
   })
 
   it('uses the same step names and times as the public site', async () => {
+    if (!claims) throw new Error('apps/site/src/data/claims.json not found')
     expect(STEPS).toEqual(claims.wizardSteps.value)
     expect(AWS_MINUTES).toBe(claims.awsMinutes.value)
     expect(claims.firstCosts.value.startsWith('within a day')).toBe(true)
