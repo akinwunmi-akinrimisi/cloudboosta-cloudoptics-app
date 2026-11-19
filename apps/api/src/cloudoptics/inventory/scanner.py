@@ -667,7 +667,7 @@ async def _store(
     await session.execute(
         text(
             "UPDATE cloud_account SET resource_access = :access WHERE tenant_id = :t "
-            "AND aws_account_id = :a"
+            "AND provider = 'aws' AND provider_account_id = :a"
         ),
         {"access": scan.access, "t": tenant_id, "a": scan.account_id},
     )
@@ -675,10 +675,11 @@ async def _store(
         if records:
             await session.execute(
                 text(
-                    "INSERT INTO resource (id, tenant_id, connection_id, account_id, region_id, "
-                    "resource_type, resource_id, arn, name, state, config, tags) VALUES (:id, "
-                    ":t, :c, :a, :r, :type, :rid, :arn, :name, :state, CAST(:config AS jsonb), "
-                    "CAST(:tags AS jsonb)) ON CONFLICT (tenant_id, account_id, region_id, "
+                    "INSERT INTO resource (id, tenant_id, connection_id, provider, "
+                    "provider_account_id, region_id, resource_type, resource_id, arn, name, "
+                    "state, config, tags) VALUES (:id, :t, :c, 'aws', :a, :r, :type, :rid, :arn, "
+                    ":name, :state, CAST(:config AS jsonb), CAST(:tags AS jsonb)) "
+                    "ON CONFLICT (tenant_id, provider, provider_account_id, region_id, "
                     "resource_id) DO UPDATE SET resource_type = EXCLUDED.resource_type, "
                     "arn = EXCLUDED.arn, name = EXCLUDED.name, state = EXCLUDED.state, "
                     "config = EXCLUDED.config, tags = EXCLUDED.tags, last_seen_at = now(), "
@@ -706,7 +707,8 @@ async def _store(
             )
         await session.execute(
             text(
-                "UPDATE resource SET deleted_at = now() WHERE tenant_id = :t AND account_id = :a "
+                "UPDATE resource SET deleted_at = now() WHERE tenant_id = :t "
+                "AND provider = 'aws' AND provider_account_id = :a "
                 "AND region_id = :r AND deleted_at IS NULL AND last_seen_at < :started"
             ),
             {"t": tenant_id, "a": scan.account_id, "r": region, "started": started},

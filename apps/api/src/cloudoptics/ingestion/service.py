@@ -139,7 +139,9 @@ async def ingest_connection(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> I
             continue
         label = f"{manifest.billing_period:%Y-%m}@{manifest.export_version}"
         try:
-            loaded = await run_in_threadpool(load_export, source, manifest, norm_base)
+            loaded = await run_in_threadpool(
+                load_export, source, manifest, norm_base, conn.provider
+            )
         except LOAD_ERRORS as exc:
             result.errors.append(f"{label}: {_error_code(exc)}")
             continue
@@ -233,11 +235,12 @@ async def _store(
             await funnel.emit(session, "first_costs", tenant_id=tenant_id, detail="bills")
             await session.execute(
                 text(
-                    "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, "
-                    "billing_period, account_id, service_code, service_name, service_category, "
+                    "INSERT INTO cost_daily (tenant_id, connection_id, provider, usage_date, "
+                    "billing_period, provider_account_id, service_code, service_name, "
+                    "service_category, "
                     "region_id, usage_type, charge_category, tag_set_hash, billed_cost_usd, "
                     "effective_cost_usd, net_cost_usd, list_cost_usd, usage_quantity, "
-                    "data_version) VALUES (:t, :c, :d, :p, :acct, :svc, :svc_name, :cat, "
+                    "data_version) VALUES (:t, :c, :prov, :d, :p, :acct, :svc, :svc_name, :cat, "
                     ":region, :usage_type, :charge, :tags, :billed, :effective, :net, :list, "
                     ":qty, :v)"
                 ),
@@ -245,6 +248,7 @@ async def _store(
                     {
                         "t": tenant_id,
                         "c": conn.id,
+                        "prov": conn.provider,
                         "d": r.usage_date,
                         "p": period,
                         "acct": r.account_id,
@@ -274,16 +278,18 @@ async def _store(
         if loaded.resource_rows:
             await session.execute(
                 text(
-                    "INSERT INTO cost_resource_daily (tenant_id, connection_id, usage_date, "
-                    "billing_period, account_id, service_code, region_id, usage_type, "
-                    "resource_id, tag_set_hash, effective_cost_usd, usage_quantity) VALUES "
-                    "(:t, :c, :d, :p, :acct, :svc, :region, :usage_type, :resource, :tags, "
+                    "INSERT INTO cost_resource_daily (tenant_id, connection_id, provider, "
+                    "usage_date, billing_period, provider_account_id, service_code, region_id, "
+                    "usage_type, resource_id, tag_set_hash, effective_cost_usd, usage_quantity) "
+                    "VALUES (:t, :c, :prov, :d, :p, :acct, :svc, :region, :usage_type, :resource, "
+                    ":tags, "
                     ":effective, :qty)"
                 ),
                 [
                     {
                         "t": tenant_id,
                         "c": conn.id,
+                        "prov": conn.provider,
                         "d": r.usage_date,
                         "p": period,
                         "acct": r.account_id,
@@ -301,9 +307,9 @@ async def _store(
         if loaded.accounts:
             await session.execute(
                 text(
-                    "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
-                    "name, account_type) VALUES (:id, :t, :c, :acct, :name, :type) "
-                    "ON CONFLICT (tenant_id, aws_account_id) "
+                    "INSERT INTO cloud_account (id, tenant_id, connection_id, provider, "
+                    "provider_account_id, name, account_type) VALUES (:id, :t, :c, :prov, :acct, "
+                    ":name, :type) ON CONFLICT (tenant_id, provider, provider_account_id) "
                     "DO UPDATE SET name = COALESCE(EXCLUDED.name, cloud_account.name)"
                 ),
                 [
@@ -311,6 +317,7 @@ async def _store(
                         "id": uuid7(),
                         "t": tenant_id,
                         "c": conn.id,
+                        "prov": conn.provider,
                         "acct": acct,
                         "name": name,
                         "type": conn.account_type if acct == conn.aws_account_id else "member",

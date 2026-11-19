@@ -15,6 +15,7 @@ import type {
 } from '../api/types'
 import { ApiError } from '../api/types'
 import { Alert, Button, Card } from '../components/ui'
+import { accountLabel, asProvider } from '../lib/providers'
 import { RULES } from '../lib/rules'
 import { DangerZone, DeletionHistory } from './DataDeletion'
 import { SECTIONS, SettingsLayout, type SettingsSection } from './SettingsNav'
@@ -556,7 +557,10 @@ function change(entry: AuditEntry): string {
     return `${after.requests.toLocaleString('en')} read-only requests made`
   }
   if (typeof after.rowsDeleted === 'number') {
-    const accounts = Array.isArray(after.accounts) && after.accounts.length ? `AWS account ${after.accounts.join(', ')}: ` : ''
+    const accounts =
+      Array.isArray(after.accounts) && after.accounts.length
+        ? `${accountLabel(asProvider(after.provider), after.accounts.join(', '))}: `
+        : ''
     return `${accounts}${after.rowsDeleted.toLocaleString('en')} records deleted, each table checked to be empty`
   }
   if (typeof after.scheduledFor === 'string') {
@@ -567,7 +571,7 @@ function change(entry: AuditEntry): string {
     const reason = typeof after.reason === 'string' && after.reason ? ` (${after.reason})` : ''
     return `${from}${after.status}${reason}`
   }
-  if (typeof after.awsAccountId === 'string') return `AWS account ${after.awsAccountId}`
+  if (typeof after.awsAccountId === 'string') return accountLabel(asProvider(after.provider), after.awsAccountId)
   const keys = Object.keys(after)
   return keys.length ? keys.map((k) => `${k}: ${String(after[k])}`).join(', ') : ''
 }

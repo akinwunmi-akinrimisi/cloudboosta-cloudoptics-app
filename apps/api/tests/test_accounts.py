@@ -59,7 +59,9 @@ def bucket(tmp_path: Path):  # type: ignore[no-untyped-def]
 async def management(client: AsyncClient, login, owner_sql) -> tuple[str, str, str, dict[str, str]]:  # type: ignore[no-untyped-def]
     tenant, connection, headers = await connected(client, login, owner_sql)
     owner_sql("UPDATE cloud_connection SET account_type = 'management' WHERE id = %s", connection)
-    payer = owner_sql("SELECT aws_account_id FROM cloud_connection WHERE id = %s", connection)[0][0]
+    payer = owner_sql("SELECT provider_account_id FROM cloud_connection WHERE id = %s", connection)[
+        0
+    ][0]
     return tenant, connection, str(payer), headers
 
 
@@ -96,7 +98,7 @@ async def test_discovery_lists_accounts_and_coverage(
     await accounts.discover_accounts(tid, cid)
     owner_sql(
         "UPDATE cloud_account SET resource_access = true WHERE tenant_id = %s "
-        "AND aws_account_id = '333333333333'",
+        "AND provider_account_id = '333333333333'",
         tenant,
     )
     body = (await client.get(f"/v1/tenants/{tenant}/accounts", headers=headers)).json()

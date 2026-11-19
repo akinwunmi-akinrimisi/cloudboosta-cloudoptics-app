@@ -1,4 +1,5 @@
-"""Background jobs for connections (ADR-003)."""
+"""Background jobs for connections (ADR-003). Per-connection work goes to the connection's
+provider plug-in (ADR-018); a provider without the capability is skipped (``UNSUPPORTED``)."""
 
 from __future__ import annotations
 
@@ -12,11 +13,12 @@ from procrastinate.types import JSONValue
 from sqlalchemy import text
 
 from cloudoptics.audit.log import Actor
-from cloudoptics.connectors.accounts import USABLE, discover_accounts
-from cloudoptics.connectors.service import check_stack_removed, run_validation
-from cloudoptics.connectors.validation import ValidationResult
+from cloudoptics.connectors.accounts import USABLE
+from cloudoptics.connectors.service import check_stack_removed
 from cloudoptics.platform.db import get_sessionmaker, scheduler_scope, scope
 from cloudoptics.platform.jobs import defer_once
+from cloudoptics.providers import capability_for
+from cloudoptics.providers.base import ValidationOutcome
 
 blueprint = procrastinate.Blueprint()
 
@@ -33,12 +35,19 @@ async def defer_discovery(app: procrastinate.App, tenant_id: str, connection_id:
     )
 
 
-async def _validate(tenant_id: str, connection_id: str) -> ValidationResult | None:
-    """None when the connection was disconnected after the job was queued: nothing runs."""
+UNSUPPORTED = "unsupported"
+
+
+async def _validate(tenant_id: str, connection_id: str) -> ValidationOutcome | str | None:
+    """None when the connection was disconnected after the job was queued: nothing runs.
+    ``UNSUPPORTED`` when its provider has no ``connect`` capability."""
     tid, cid = uuid.UUID(tenant_id), uuid.UUID(connection_id)
+    connect = await capability_for(tid, cid, "connect")
+    if connect is None:
+        return UNSUPPORTED
     async with get_sessionmaker()() as session, session.begin():
         await scope(session, tenant_id=tid)
-        result = await run_validation(
+        result = await connect.validate(
             session, tenant_id=tid, connection_id=cid, actor=Actor(type="system")
         )
     if result is not None and result.health_worsened:
@@ -54,6 +63,8 @@ async def validate_connection(tenant_id: str, connection_id: str) -> str:
     result = await _validate(tenant_id, connection_id)
     if result is None:
         return "disconnected"
+    if isinstance(result, str):
+        return result
     if result.status != "failed":
         from cloudoptics.ingestion.jobs import defer_ingest, defer_snapshot
         from cloudoptics.platform.jobs import get_job_app
@@ -61,7 +72,7 @@ async def validate_connection(tenant_id: str, connection_id: str) -> str:
         app = get_job_app()
         # Provisional costs now; the export is loaded straight away rather than at the next poll.
         await defer_snapshot(app, tenant_id, connection_id)
-        if result.cur_bucket:
+        if result.has_billing_export:
             await defer_ingest(app, tenant_id, connection_id)
         # Discovery runs first so the inventory scan it queues covers every member account.
         await defer_discovery(app, tenant_id, connection_id)
@@ -75,7 +86,9 @@ CHECK_TASK = "connectors:connection.check"
 async def check_connection(tenant_id: str, connection_id: str) -> str:
     """A scheduled health check: validation only, without the follow-up loads."""
     result = await _validate(tenant_id, connection_id)
-    return "disconnected" if result is None else result.status
+    if result is None:
+        return "disconnected"
+    return result if isinstance(result, str) else result.status
 
 
 REMOVAL_TASK = "connectors:connection.verify_removed"
@@ -180,7 +193,12 @@ async def health_check(timestamp: int) -> int:
 
 @blueprint.task(name="accounts.discover", queue="connections", retry=2)
 async def discover(tenant_id: str, connection_id: str) -> str:
-    status = await discover_accounts(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    accounts = await capability_for(tenant_id, connection_id, "accounts")
+    status = (
+        UNSUPPORTED
+        if accounts is None
+        else await accounts.discover(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    )
     from cloudoptics.inventory.jobs import defer_scan
     from cloudoptics.platform.jobs import get_job_app
 

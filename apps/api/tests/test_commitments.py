@@ -369,7 +369,7 @@ def eligible(owner_sql, tenant: dict[str, Any], connection: str, day: date, usd:
              category: str = "Usage") -> None:  # fmt: skip
     owner_sql(
         "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, billing_period, "
-        "account_id, service_code, service_name, service_category, region_id, usage_type, "
+        "provider_account_id, service_code, service_name, service_category, region_id, usage_type, "
         "charge_category, billed_cost_usd, effective_cost_usd, net_cost_usd, data_version) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, 'Compute', 'eu-west-2', %s, %s, %s, %s, %s, 'v1')",
         tenant["id"], connection, day, day.replace(day=1), ACCOUNT, service_code, service_code,
@@ -382,7 +382,7 @@ def open_rec(owner_sql, tenant: dict[str, Any], rule: str, resource_id: str, sav
     rec_id = str(uuid.uuid4())
     owner_sql(
         "INSERT INTO recommendation (id, tenant_id, fingerprint, type, rule_id, rule_version, "
-        "rule_config, generation_id, account_id, region_id, resource_id, title, "
+        "rule_config, generation_id, provider_account_id, region_id, resource_id, title, "
         "cost_now_usd_month, cost_after_usd_month, savings_basis, effort, reversibility, "
         "risk_score, risk_level, confidence, priority_score, engine_version, status) VALUES "
         "(%s, %s, %s, 'x', %s, 1, '{}', 1, %s, 'eu-west-2', %s, 't', %s, 0, 'list_price', 'S', "

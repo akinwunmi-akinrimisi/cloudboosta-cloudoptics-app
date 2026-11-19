@@ -79,11 +79,16 @@ export interface PermissionCheck {
   hint: string | null
 }
 
+/** The cloud a connection, account or finding belongs to. Only AWS is live today. */
+export type Provider = 'aws' | 'gcp' | 'azure' | 'digitalocean'
+
 export type ConnectionStatus = 'pending' | 'validating' | 'healthy' | 'degraded' | 'failed' | 'disconnected'
 
 export interface Connection {
   id: string
   awsAccountId: string
+  /** The cloud provider; absent from older payloads, which are all AWS. */
+  provider?: Provider
   accountType: 'management' | 'standalone'
   roleArn: string
   status: ConnectionStatus
@@ -412,6 +417,8 @@ export interface InventorySummary {
 export interface CloudAccount {
   connectionId: string
   awsAccountId: string
+  /** The cloud provider; absent from older payloads, which are all AWS. */
+  provider?: Provider
   name: string | null
   accountType: 'management' | 'member' | 'standalone'
   /** Status in the AWS Organization (ACTIVE, SUSPENDED, NOT_LISTED…); null if never discovered. */
@@ -509,6 +516,8 @@ export interface Recommendation {
   type: string
   ruleId: string
   accountId: string
+  /** The cloud provider; absent from older payloads, which are all AWS. */
+  provider?: Provider
   regionId: string
   resourceId: string
   title: string
@@ -675,6 +684,8 @@ export interface Anomaly {
   id: string
   date: string
   accountId: string
+  /** The cloud provider; absent from older payloads, which are all AWS. */
+  provider?: Provider
   accountName: string
   serviceCode: string
   serviceName: string
@@ -888,6 +899,8 @@ export interface DataDeletion {
 /** The CloudFormation stacks a connection created in the customer's AWS account. */
 export interface StackSteps {
   awsAccountId: string
+  /** The cloud provider; absent from older payloads, which are all AWS. */
+  provider?: Provider
   accountType: string
   stacks: string[]
 }
@@ -929,6 +942,8 @@ export interface Commitment {
   kind: CommitmentKind
   commitmentId: string
   accountId: string | null
+  /** The cloud provider; absent from older payloads, which are all AWS. */
+  provider?: Provider
   regionId: string | null
   description: string
   planType: string | null

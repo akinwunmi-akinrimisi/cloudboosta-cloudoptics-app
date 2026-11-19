@@ -70,7 +70,8 @@ async def send_connection_alert(
     conn = (
         await session.execute(
             text(
-                "SELECT aws_account_id, health, permission_checks FROM cloud_connection "
+                "SELECT provider_account_id AS aws_account_id, health, permission_checks "
+                "FROM cloud_connection "
                 "WHERE id = :c"
             ),
             {"c": connection_id},

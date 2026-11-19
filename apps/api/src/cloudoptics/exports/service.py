@@ -157,7 +157,7 @@ SELECT count(*) FROM (
   SELECT CASE WHEN CAST(:monthly AS boolean)
               THEN CAST(date_trunc('month', c.usage_date) AS date) ELSE c.usage_date END,
          CASE WHEN CAST(:by_service AS boolean) THEN c.service_code END,
-         CASE WHEN CAST(:by_account AS boolean) THEN c.account_id END,
+         CASE WHEN CAST(:by_account AS boolean) THEN c.provider_account_id END,
          CASE WHEN CAST(:by_region AS boolean) THEN coalesce(c.region_id, 'global') END,
          CASE WHEN CAST(:by_usage_type AS boolean) THEN coalesce(c.usage_type, '') END,
          CASE WHEN CAST(:tag_key AS text) IS NOT NULL
@@ -166,7 +166,7 @@ SELECT count(*) FROM (
   LEFT JOIN tag_set t ON t.tenant_id = c.tenant_id AND t.hash = c.tag_set_hash
   WHERE c.usage_date BETWEEN :first AND :last
     AND (CAST(:include_tax AS boolean) OR c.charge_category <> 'Tax')
-    AND (CAST(:account AS text) IS NULL OR c.account_id = :account)
+    AND (CAST(:account AS text) IS NULL OR c.provider_account_id = :account)
   GROUP BY 1, 2, 3, 4, 5, 6
 ) q
 """
@@ -176,7 +176,7 @@ COST_ROWS_SQL = """
 SELECT CASE WHEN CAST(:monthly AS boolean)
             THEN CAST(date_trunc('month', c.usage_date) AS date) ELSE c.usage_date END AS period,
        CASE WHEN CAST(:by_service AS boolean) THEN c.service_code END AS service_code,
-       CASE WHEN CAST(:by_account AS boolean) THEN c.account_id END AS account_id,
+       CASE WHEN CAST(:by_account AS boolean) THEN c.provider_account_id END AS account_id,
        CASE WHEN CAST(:by_region AS boolean) THEN coalesce(c.region_id, 'global') END AS region,
        CASE WHEN CAST(:by_usage_type AS boolean) THEN coalesce(c.usage_type, '') END
          AS usage_type,
@@ -190,12 +190,13 @@ SELECT CASE WHEN CAST(:monthly AS boolean)
        bool_and(fx.rate IS NOT NULL OR c.effective_cost_usd = 0) AS converted
 FROM cost_daily c
 LEFT JOIN tag_set t ON t.tenant_id = c.tenant_id AND t.hash = c.tag_set_hash
-LEFT JOIN cloud_account a ON a.tenant_id = c.tenant_id AND a.aws_account_id = c.account_id
+LEFT JOIN cloud_account a ON a.tenant_id = c.tenant_id AND a.provider = c.provider
+  AND a.provider_account_id = c.provider_account_id
 LEFT JOIN unnest(CAST(:fx_days AS date[]), CAST(:fx_rates AS numeric[])) AS fx(day, rate)
   ON fx.day = c.usage_date
 WHERE c.usage_date BETWEEN :first AND :last
   AND (CAST(:include_tax AS boolean) OR c.charge_category <> 'Tax')
-  AND (CAST(:account AS text) IS NULL OR c.account_id = :account)
+  AND (CAST(:account AS text) IS NULL OR c.provider_account_id = :account)
 GROUP BY 1, 2, 3, 4, 5, 6
 ORDER BY 1, sum(c.effective_cost_usd) DESC, 2, 3, 4, 5, 6
 """
@@ -297,23 +298,25 @@ REC_COUNT_SQL = """
 SELECT count(*) FROM recommendation r
 WHERE (NOT :open_only OR r.status = ANY(:open))
   AND (CAST(:rule AS text) IS NULL OR r.rule_id = :rule)
-  AND (CAST(:account AS text) IS NULL OR r.account_id = :account)
+  AND (CAST(:account AS text) IS NULL OR r.provider_account_id = :account)
   AND (CAST(:risk AS text) IS NULL OR r.risk_level = :risk)
   AND (:alternatives OR r.primary_of IS NULL)
 """
 REC_ROWS_SQL = """
-SELECT r.id, r.title, r.rule_id, r.type, r.status, r.account_id, a.name AS account_name,
+SELECT r.id, r.title, r.rule_id, r.type, r.status, r.provider_account_id AS account_id,
+       a.name AS account_name,
        r.region_id, r.resource_id, r.savings_usd_month, r.cost_now_usd_month,
        r.cost_after_usd_month, r.savings_basis, r.confidence, r.risk_level, r.effort,
        r.reversibility, r.priority_score, r.evidence, u.display_name AS assignee,
        r.first_detected_at, r.last_evaluated_at, r.done_at, r.verified_at,
        r.realised_savings_usd_month
 FROM recommendation r
-LEFT JOIN cloud_account a ON a.tenant_id = r.tenant_id AND a.aws_account_id = r.account_id
+LEFT JOIN cloud_account a ON a.tenant_id = r.tenant_id AND a.provider = r.provider
+  AND a.provider_account_id = r.provider_account_id
 LEFT JOIN app_user u ON u.id = r.assignee_id
 WHERE (NOT :open_only OR r.status = ANY(:open))
   AND (CAST(:rule AS text) IS NULL OR r.rule_id = :rule)
-  AND (CAST(:account AS text) IS NULL OR r.account_id = :account)
+  AND (CAST(:account AS text) IS NULL OR r.provider_account_id = :account)
   AND (CAST(:risk AS text) IS NULL OR r.risk_level = :risk)
   AND (:alternatives OR r.primary_of IS NULL)
 ORDER BY r.priority_score DESC, r.savings_usd_month DESC, r.id

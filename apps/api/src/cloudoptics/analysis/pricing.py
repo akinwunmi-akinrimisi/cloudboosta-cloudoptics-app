@@ -91,21 +91,24 @@ async def load_price_book(session: AsyncSession) -> PriceBook:
         list_prices={
             (r.region_id, r.item): float(r.price_usd)
             for r in await session.execute(
-                text("SELECT region_id, item, price_usd FROM price_catalog")
+                text("SELECT region_id, item, price_usd FROM price_catalog WHERE provider = 'aws'")
             )
         }
     )
-    last = (await session.execute(text("SELECT max(usage_date) FROM cost_daily"))).scalar_one()
+    last = (
+        await session.execute(text("SELECT max(usage_date) FROM cost_daily WHERE provider = 'aws'"))
+    ).scalar_one()
     if last is None:
         return book
     totals: dict[tuple[str, str, str], list[float]] = {}
     for r in await session.execute(
         text(
-            "SELECT account_id, region_id, usage_type, sum(effective_cost_usd) AS cost, "
-            "sum(usage_quantity) AS qty FROM cost_daily WHERE usage_date > :since "
+            "SELECT provider_account_id AS account_id, region_id, usage_type, "
+            "sum(effective_cost_usd) AS cost, sum(usage_quantity) AS qty FROM cost_daily "
+            "WHERE provider = 'aws' AND usage_date > :since "
             "AND charge_category = 'Usage' AND region_id IS NOT NULL "
             "AND (usage_type LIKE '%EBS:%' OR usage_type LIKE '%PublicIPv4:%') "
-            "GROUP BY account_id, region_id, usage_type"
+            "GROUP BY provider_account_id, region_id, usage_type"
         ),
         {"since": last - timedelta(days=30)},
     ):

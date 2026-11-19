@@ -7,9 +7,10 @@ import uuid
 import procrastinate
 from sqlalchemy import text
 
-from cloudoptics.inventory.scanner import USABLE, scan_connection
+from cloudoptics.inventory.scanner import USABLE
 from cloudoptics.platform.db import get_sessionmaker, scheduler_scope
 from cloudoptics.platform.jobs import defer_once
+from cloudoptics.providers import capability_for
 
 blueprint = procrastinate.Blueprint()
 
@@ -28,7 +29,10 @@ async def defer_scan(app: procrastinate.App, tenant_id: str, connection_id: str)
 
 @blueprint.task(name="inventory.scan", queue="inventory", retry=1)
 async def scan(tenant_id: str, connection_id: str) -> str:
-    status = await scan_connection(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+    inventory = await capability_for(tenant_id, connection_id, "inventory")
+    if inventory is None:
+        return "unsupported"  # a costs-only provider: no scan, so no metrics pull
+    status = await inventory.scan(uuid.UUID(tenant_id), uuid.UUID(connection_id))
     if status in ("succeeded", "partial"):
         from cloudoptics.metrics.jobs import defer_pull
         from cloudoptics.platform.jobs import get_job_app

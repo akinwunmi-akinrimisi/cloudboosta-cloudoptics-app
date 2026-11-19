@@ -111,7 +111,7 @@ External SaaS: email provider · Slack API · FX rate providers · Google OIDC �
 - **Static egress IPs:** customers can optionally add an `aws:SourceIp` condition to their role trust policy.
 - **AWS adapters:** BCM Data Exports/CUR 2.0 reader (S3), Cost Explorer client (budgeted calls), Cost Optimization Hub and Compute Optimizer clients, CloudWatch `GetMetricData` batcher, Describe* inventory scanners (per region), Organizations, Savings Plans, Price List (bulk files).
 - **Rate control:** a token bucket per (tenant, AWS API) in Valkey; exponential backoff with jitter; **per-tenant monthly customer-side cost budget** for paid APIs (PRD FR-CON-09).
-- **Provider abstraction:** a `CloudProvider` interface (`listAccounts`, `fetchBillingFiles`, `listResources`, `fetchMetrics`, `fetchNativeRecommendations`). Azure/GCP adapters are added in v2 without changing downstream modules.
+- **Provider abstraction:** a `CloudProvider` interface (`listAccounts`, `fetchBillingFiles`, `listResources`, `fetchMetrics`, `fetchNativeRecommendations`). Azure/GCP adapters are added in v2 without changing downstream modules. Built in Phase 1 of the multi-cloud plan as `cloudoptics.providers` (optional capabilities, a registry, AWS wrapped as the first plug-in); see ADR-018.
 
 ### 1.3.2 Data storage
 

@@ -59,7 +59,7 @@ def tagged_cost(owner_sql, tenant, connection, day: date, usd: float, tags: dict
     )
     owner_sql(
         "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, billing_period, "
-        "account_id, service_code, service_name, service_category, region_id, usage_type, "
+        "provider_account_id, service_code, service_name, service_category, region_id, usage_type, "
         "charge_category, tag_set_hash, billed_cost_usd, effective_cost_usd, net_cost_usd, "
         "data_version) VALUES (%s, %s, %s, %s, %s, 'AmazonS3', 'Amazon S3', 'Storage', "
         "'eu-west-2', 'TimedStorage', 'Usage', %s, %s, %s, %s, 'v1')",
@@ -100,7 +100,7 @@ async def test_costs_export_by_service_account_and_tag_in_both_currencies(
     me = (await client.get("/v1/me", headers=admin)).json()
     # A hostile account name and tag value: both come from the customer's AWS.
     owner_sql(
-        "UPDATE cloud_account SET name = %s WHERE tenant_id = %s AND aws_account_id = %s",
+        "UPDATE cloud_account SET name = %s WHERE tenant_id = %s AND provider_account_id = %s",
         '=HYPERLINK("http://evil")',
         tid,
         OTHER,
@@ -229,7 +229,8 @@ async def test_recommendation_anomaly_and_budget_exports(
     assert every["rowCount"] == 2
 
     owner_sql(
-        "INSERT INTO anomaly (id, tenant_id, usage_date, account_id, service_code, service_name, "
+        "INSERT INTO anomaly (id, tenant_id, usage_date, "
+        "provider_account_id, service_code, service_name, "
         "actual_usd, expected_usd, mad_usd, impact_usd, contributors, note, engine_version) "
         "VALUES (gen_random_uuid(), %s, %s, %s, 'AmazonEC2', 'Amazon EC2', 120, 20, 2, 100, "
         "%s, %s, 'test')",

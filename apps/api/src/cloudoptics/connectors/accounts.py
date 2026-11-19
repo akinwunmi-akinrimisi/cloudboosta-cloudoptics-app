@@ -34,11 +34,12 @@ NOT_LISTED = "NOT_LISTED"
 # org_status; the connection's own account first). The bills are the customer's files, so
 # they cannot make the shared broker assume into an unbounded number of accounts.
 SCAN_ACCOUNTS_SQL = (
-    "SELECT aws_account_id FROM (SELECT aws_account_id, org_status, row_number() OVER "
-    "(PARTITION BY org_status IS NULL ORDER BY account_type = 'member', aws_account_id) AS n "
+    "SELECT provider_account_id AS aws_account_id FROM (SELECT provider_account_id, "
+    "org_status, row_number() OVER (PARTITION BY org_status IS NULL "
+    "ORDER BY account_type = 'member', provider_account_id) AS n "
     "FROM cloud_account WHERE connection_id = :c AND "
     "coalesce(org_status, 'ACTIVE') = 'ACTIVE') a "
-    "WHERE org_status IS NOT NULL OR n <= :bill_only ORDER BY aws_account_id"
+    "WHERE org_status IS NOT NULL OR n <= :bill_only ORDER BY provider_account_id"
 )
 
 
@@ -132,9 +133,10 @@ async def _store(
     if accounts:
         await session.execute(
             text(
-                "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, name, "
-                "account_type, org_status, org_seen_at) VALUES (:id, :t, :c, :acct, :name, "
-                ":type, :status, now()) ON CONFLICT (tenant_id, aws_account_id) DO UPDATE SET "
+                "INSERT INTO cloud_account (id, tenant_id, connection_id, provider, "
+                "provider_account_id, name, account_type, org_status, org_seen_at) VALUES "
+                "(:id, :t, :c, :provider, :acct, :name, :type, :status, now()) "
+                "ON CONFLICT (tenant_id, provider, provider_account_id) DO UPDATE SET "
                 "name = COALESCE(EXCLUDED.name, cloud_account.name), "
                 "org_status = EXCLUDED.org_status, org_seen_at = now()"
             ),
@@ -143,6 +145,7 @@ async def _store(
                     "id": uuid7(),
                     "t": tenant_id,
                     "c": conn.id,
+                    "provider": conn.provider,
                     "acct": a.aws_account_id,
                     "name": a.name,
                     "type": "management" if a.aws_account_id == conn.aws_account_id else "member",
@@ -155,7 +158,7 @@ async def _store(
         text(
             "UPDATE cloud_account SET org_status = :gone WHERE connection_id = :c "
             "AND org_status IS NOT NULL AND org_status <> :gone "
-            "AND NOT (aws_account_id = ANY(:listed))"
+            "AND NOT (provider_account_id = ANY(:listed))"
         ),
         {"gone": NOT_LISTED, "c": conn.id, "listed": [a.aws_account_id for a in accounts]},
     )
@@ -171,6 +174,7 @@ class AccountRow:
     org_seen_at: datetime | None
     resource_access: bool
     has_cost_data: bool
+    provider: str = "aws"
 
 
 @dataclass(frozen=True)
@@ -190,13 +194,15 @@ async def list_accounts(session: AsyncSession, today: date) -> tuple[list[Accoun
         AccountRow(**r._mapping)
         for r in await session.execute(
             text(
-                "SELECT a.connection_id, a.aws_account_id, a.name, a.account_type, a.org_status, "
-                "a.org_seen_at, a.resource_access, EXISTS (SELECT 1 FROM cost_daily d WHERE "
-                "d.account_id = a.aws_account_id AND d.usage_date >= :since) AS has_cost_data "
+                "SELECT a.connection_id, a.provider_account_id AS aws_account_id, a.name, "
+                "a.account_type, a.org_status, a.org_seen_at, a.resource_access, EXISTS "
+                "(SELECT 1 FROM cost_daily d WHERE d.provider = a.provider AND "
+                "d.provider_account_id = a.provider_account_id AND d.usage_date >= :since) "
+                "AS has_cost_data, a.provider "
                 "FROM cloud_account a JOIN cloud_connection c ON c.id = a.connection_id "
                 "WHERE c.status <> 'disconnected' "
                 "ORDER BY a.account_type = 'management' DESC, lower(coalesce(a.name, '')), "
-                "a.aws_account_id"
+                "a.provider_account_id"
             ),
             {"since": since},
         )

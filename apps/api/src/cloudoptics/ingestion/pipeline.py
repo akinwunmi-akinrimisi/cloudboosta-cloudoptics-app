@@ -58,10 +58,14 @@ class LoadedExport:
 
 
 def load_export(
-    source: ExportSource, manifest: Manifest, normalised_dir: Path | None = None
+    source: ExportSource,
+    manifest: Manifest,
+    normalised_dir: Path | None = None,
+    provider: str = "aws",
 ) -> LoadedExport:
     """Read every data file of ``manifest``. Blocking checks leave ``rows`` empty.
 
+    The provider's currency rule applies (AWS: USD only; ADR-018).
     Raises ``ExportTooLargeError`` when the period is past the bytes or rows limit."""
     limits = get_settings()
     max_rows = limits.cur_max_period_rows
@@ -70,7 +74,11 @@ def load_export(
             f"{manifest.key} lists {manifest.num_rows:,} rows; the limit is {max_rows:,}"
         )
     bytes_left = limits.cur_max_period_bytes
-    quality = QualityChecks(manifest.billing_period)
+    from cloudoptics.providers import get as get_provider
+
+    quality = QualityChecks(
+        manifest.billing_period, accepted_currencies=get_provider(provider).billing_currencies
+    )
     aggregator = DailyAggregator()
     files: list[LoadedFile] = []
     writer: pq.ParquetWriter | None = None

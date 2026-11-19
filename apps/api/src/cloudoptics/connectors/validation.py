@@ -45,6 +45,11 @@ class ValidationResult:
     def checks_json(self) -> list[dict[str, Any]]:
         return [asdict(c) for c in self.checks]
 
+    @property
+    def has_billing_export(self) -> bool:
+        """The connection has a CUR export to load now (provider protocol, ADR-018)."""
+        return bool(self.cur_bucket)
+
 
 def _code(exc: Exception) -> str:
     if isinstance(exc, ClientError):

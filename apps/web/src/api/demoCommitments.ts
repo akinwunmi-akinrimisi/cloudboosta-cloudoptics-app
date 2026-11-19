@@ -204,6 +204,7 @@ export function demoAdvisory(payerAccountId: string, connectionId: string, curre
 export function demoCommitments(payerAccountId: string, connectionId: string): CommitmentList {
   const base = {
     connectionId,
+    provider: 'aws' as const,
     planType: null,
     paymentOption: null,
     state: 'active',

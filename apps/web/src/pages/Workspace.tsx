@@ -24,6 +24,8 @@ import { WhatChanged } from './Forecast'
 import { ReloadBills } from './ReloadBills'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
+import { accountLabel, workspaceProviders } from '../lib/providers'
+import { ProviderBadge } from '../components/providers'
 
 export function useWorkspace() {
   const api = useApi()
@@ -339,6 +341,7 @@ export function Connections() {
   const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
   const isAdmin = role === 'admin'
   const [deleted, setDeleted] = useState<DataDeletion | null>(null)
+  const multiProvider = workspaceProviders(connections.data ?? []).length > 1
   return (
     <SettingsLayout current="connections" role={role}>
     <div className="flex flex-col gap-6">
@@ -370,7 +373,11 @@ export function Connections() {
         <Card key={c.id}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="font-medium">AWS account {c.awsAccountId}</p>
+              <p className="font-medium">
+                {accountLabel(c.provider, c.awsAccountId)}
+                {multiProvider && ' '}
+                <ProviderBadge provider={c.provider} show={multiProvider} />
+              </p>
               <p className="text-xs text-muted">
                 {c.accountType === 'management' ? 'Management (payer) account' : 'Standalone account'}
                 {c.lastValidatedAt && ` · checked ${new Date(c.lastValidatedAt).toLocaleString()}`}
@@ -409,7 +416,7 @@ export function Connections() {
           )}
         </Card>
       ))}
-      {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}
+      {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} showProvider={multiProvider} />}
     </div>
     </SettingsLayout>
   )
@@ -508,7 +515,7 @@ function ConnectionActions({
       {confirming ? (
         <div ref={confirmPanel} className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
           <p>
-            Disconnect AWS account {c.awsAccountId}? Cloudoptics stops reading it and its open recommendations close.
+            Disconnect {accountLabel(c.provider, c.awsAccountId)}? Cloudoptics stops reading it and its open recommendations close.
             Past costs stay. To remove our access completely, also delete the{' '}
             <code className="font-mono text-xs">{c.stackName}</code> stack in{' '}
             <a className="text-accent underline" href={STACKS_URL} target="_blank" rel="noreferrer">
@@ -797,7 +804,7 @@ function orgStatusLabel(status: string | null): string | null {
 }
 
 /** Accounts from the AWS Organization and the bills, with coverage (PRD US-1.3). */
-function Accounts({ tenantId }: { tenantId: string }) {
+function Accounts({ tenantId, showProvider }: { tenantId: string; showProvider: boolean }) {
   const api = useApi()
   const list = useQuery({
     queryKey: ['accounts', tenantId],
@@ -820,6 +827,8 @@ function Accounts({ tenantId }: { tenantId: string }) {
               <div>
                 <p className="text-sm">
                   {a.name ?? 'Unnamed account'} <span className="text-muted tabular-nums">{a.awsAccountId}</span>
+                  {showProvider && ' '}
+                  <ProviderBadge provider={a.provider} show={showProvider} />
                 </p>
                 <p className="text-xs text-muted">
                   {a.accountType === 'management'

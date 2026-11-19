@@ -37,6 +37,7 @@ class CloudProvider(Protocol):
 ```
 - **AwsProvider (MVP):** implements all methods using boto3 clients built from a `SessionFactory`.
 - **AzureProvider / GcpProvider (v2):** same protocol; exports in FOCUS format.
+- **As built (ADR-018):** `cloudoptics.providers.base.CloudProvider` holds optional capabilities (`connect`, `credentials`, `accounts`, `billing_source`, `reconcile`, `inventory`, `metrics`, `native_recs`, `prices`, `commitments`, `rules`); jobs look them up by `cloud_connection.provider` and skip a provider that lacks one.
 
 ### 1.3 Authentication flows
 

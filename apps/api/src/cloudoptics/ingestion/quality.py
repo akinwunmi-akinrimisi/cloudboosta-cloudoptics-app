@@ -49,10 +49,21 @@ def missing_columns(schema: pa.Schema) -> list[str]:
     return [c for c in REQUIRED_COLUMNS if schema.get_field_index(c) < 0]
 
 
-class QualityChecks:
-    """Accumulates per-batch evidence; ``finish`` turns it into checks."""
+#: The billing currencies AWS bills may use (``providers.aws``); the default rule.
+USD_ONLY: frozenset[str] = frozenset({"USD"})
 
-    def __init__(self, billing_period: date) -> None:
+
+class QualityChecks:
+    """Accumulates per-batch evidence; ``finish`` turns it into checks.
+
+    ``accepted_currencies`` is the provider's rule (``CloudProvider.billing_currencies``):
+    a bill in any other currency is blocked. None accepts every currency; the cost tables
+    keep native amounts beside USD (migration 0043), AWS stays USD-only for now."""
+
+    def __init__(
+        self, billing_period: date, accepted_currencies: frozenset[str] | None = USD_ONLY
+    ) -> None:
+        self._accepted_currencies = accepted_currencies
         self._period_start = billing_period
         nxt = (billing_period.replace(day=28) + timedelta(days=4)).replace(day=1)
         self._period_end = nxt
@@ -198,13 +209,17 @@ class QualityChecks:
         else:
             checks.append(Check("duplicates", "ok", "No duplicate line items."))
 
-        if self._currencies - {"USD"}:
+        unsupported = (
+            set()
+            if self._accepted_currencies is None
+            else self._currencies - self._accepted_currencies
+        )
+        if unsupported:
             checks.append(
                 Check(
                     "currency",
                     "error",
-                    "Billing currency "
-                    f"{', '.join(sorted(self._currencies - {'USD'}))} is not supported yet.",
+                    f"Billing currency {', '.join(sorted(unsupported))} is not supported yet.",
                 )
             )
 

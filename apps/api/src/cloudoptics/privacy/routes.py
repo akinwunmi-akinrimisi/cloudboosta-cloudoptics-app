@@ -27,7 +27,9 @@ from cloudoptics.privacy import service
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}", tags=["privacy"])
 
-LOAD_CONNECTION = text("SELECT id, aws_account_id, status FROM cloud_connection WHERE id = :c")
+LOAD_CONNECTION = text(
+    "SELECT id, provider_account_id AS aws_account_id, status FROM cloud_connection WHERE id = :c"
+)
 
 
 class DataDeletion(ApiModel):

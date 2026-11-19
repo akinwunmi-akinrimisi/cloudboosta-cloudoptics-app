@@ -116,13 +116,15 @@ def fetch(
 
 
 UPSERT_COMMITMENT = text(
-    "INSERT INTO commitment (id, tenant_id, connection_id, kind, commitment_id, account_id, "
+    "INSERT INTO commitment (id, tenant_id, connection_id, kind, commitment_id, "
+    "provider_account_id, "
     "region_id, description, plan_type, term_months, payment_option, state, quantity, "
     "hourly_commitment_usd, upfront_usd, starts_at, ends_at, utilisation_pct, details) "
     "VALUES (:id, :t, :c, :kind, :cid, :account, :region, :description, :plan_type, :term, "
     ":payment, :state, :quantity, :hourly, :upfront, :starts, :ends, :util, "
     "CAST(:details AS jsonb)) ON CONFLICT (tenant_id, connection_id, kind, commitment_id) "
-    "DO UPDATE SET account_id = EXCLUDED.account_id, region_id = EXCLUDED.region_id, "
+    "DO UPDATE SET provider_account_id = EXCLUDED.provider_account_id, "
+    "region_id = EXCLUDED.region_id, "
     "description = EXCLUDED.description, plan_type = EXCLUDED.plan_type, "
     "term_months = EXCLUDED.term_months, payment_option = EXCLUDED.payment_option, "
     "state = EXCLUDED.state, quantity = EXCLUDED.quantity, "
@@ -316,6 +318,7 @@ class Held:
     days_left: int | None
     current: bool
     last_seen_at: datetime
+    provider: str = "aws"
 
 
 def _f(value: Any) -> float | None:
@@ -327,9 +330,10 @@ async def held(session: AsyncSession, now: datetime) -> list[Held]:
     not yet ended."""
     rows = await session.execute(
         text(
-            "SELECT id, connection_id, kind, commitment_id, account_id, region_id, description, "
-            "plan_type, term_months, payment_option, state, quantity, hourly_commitment_usd, "
-            "upfront_usd, starts_at, ends_at, utilisation_pct, last_seen_at FROM commitment "
+            "SELECT id, connection_id, kind, commitment_id, provider_account_id AS account_id, "
+            "region_id, description, plan_type, term_months, payment_option, state, quantity, "
+            "hourly_commitment_usd, upfront_usd, starts_at, ends_at, utilisation_pct, "
+            "last_seen_at, provider FROM commitment "
             "ORDER BY ends_at NULLS LAST, description"
         )
     )
@@ -359,6 +363,7 @@ async def held(session: AsyncSession, now: datetime) -> list[Held]:
                 days_left=left,
                 current=not ended and now - r.last_seen_at <= STALE_AFTER,
                 last_seen_at=r.last_seen_at,
+                provider=r.provider,
             )
         )  # fmt: skip
     return out
@@ -471,7 +476,8 @@ async def netted_savings(session: AsyncSession, accounts: list[str]) -> float:
                 "WHERE r.status = ANY(:open) AND r.primary_of IS NULL AND r.rule_id ~ :rules "
                 "AND (res.resource_type = 'ec2_instance' OR "
                 "(res.id IS NULL AND r.resource_id LIKE 'i-%')) "
-                "AND trim(r.account_id) = ANY(CAST(:accounts AS text[]))"
+                "AND r.provider = 'aws' "
+                "AND trim(r.provider_account_id) = ANY(CAST(:accounts AS text[]))"
             ),
             {"open": OPEN, "rules": NETTED_RULES, "accounts": accounts},
         )
@@ -483,10 +489,11 @@ async def _connections(session: AsyncSession) -> list[Any]:
     return list(
         await session.execute(
             text(
-                "SELECT c.id, c.aws_account_id, array_remove(array_agg(DISTINCT "
-                "trim(a.aws_account_id)), NULL) AS accounts FROM cloud_connection c "
+                "SELECT c.id, c.provider_account_id AS aws_account_id, array_remove(array_agg("
+                "DISTINCT trim(a.provider_account_id)), NULL) AS accounts FROM cloud_connection c "
                 "LEFT JOIN cloud_account a ON a.connection_id = c.id "
-                "WHERE c.status <> 'disconnected' GROUP BY c.id ORDER BY c.created_at"
+                "WHERE c.provider = 'aws' AND c.status <> 'disconnected' "
+                "GROUP BY c.id ORDER BY c.created_at"
             )
         )
     )

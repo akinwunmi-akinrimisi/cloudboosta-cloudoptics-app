@@ -31,13 +31,15 @@ from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.conditional import ConditionalGet
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.providers.base import ProviderName
 from cloudoptics.recommendations.queries import OPEN
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/recommendations", tags=["recommendations"])
 
 # Literal statements only; request values are always bound parameters.
 LIST_RECOMMENDATIONS = text(
-    "SELECT id, type, rule_id, account_id, region_id, resource_id, title, current_config, "
+    "SELECT id, type, rule_id, provider, provider_account_id AS account_id, region_id, "
+    "resource_id, title, current_config, "
     "recommended_config, cost_now_usd_month, cost_after_usd_month, savings_usd_month, "
     "savings_basis, effort, reversibility, restart_required, risk_score, risk_level, "
     "risk_factors, confidence, confidence_notes, priority_score, evidence, fix, primary_of, "
@@ -46,14 +48,15 @@ LIST_RECOMMENDATIONS = text(
     "FROM recommendation "
     "WHERE (NOT :open_only OR status = ANY(:open)) "
     "AND (CAST(:rule AS text) IS NULL OR rule_id = :rule) "
-    "AND (CAST(:account AS text) IS NULL OR account_id = :account) "
+    "AND (CAST(:account AS text) IS NULL OR provider_account_id = :account) "
     "AND (CAST(:risk AS text) IS NULL OR risk_level = :risk) "
     "AND (CAST(:assignee AS uuid) IS NULL OR assignee_id = :assignee) "
     "AND (:alternatives OR primary_of IS NULL) "
     "ORDER BY priority_score DESC, savings_usd_month DESC, id LIMIT 500"
 )
 GET_RECOMMENDATION = text(
-    "SELECT id, type, rule_id, account_id, region_id, resource_id, title, current_config, "
+    "SELECT id, type, rule_id, provider, provider_account_id AS account_id, region_id, "
+    "resource_id, title, current_config, "
     "recommended_config, cost_now_usd_month, cost_after_usd_month, savings_usd_month, "
     "savings_basis, effort, reversibility, restart_required, risk_score, risk_level, "
     "risk_factors, confidence, confidence_notes, priority_score, evidence, fix, primary_of, "
@@ -106,6 +109,8 @@ class Recommendation(ApiModel):
     # cur: from the resource's own costs in the bills; estimate: the bills do not show it.
     realised_basis: Literal["cur", "estimate"] | None = None
     realised_at: datetime | None = None
+    # The cloud (ADR-018); added after the other fields so AWS responses only gain this key.
+    provider: ProviderName = "aws"
 
 
 class RuleTotal(ApiModel):

@@ -21,3 +21,4 @@ Format: context, decision, consequences, alternatives. Source of truth for the d
 | [ADR-015](015-data-deletion-keeps-the-audit-log.md) | Data deletion removes workspace data and keeps the audit log | Decided 19 Nov 2026 |
 | [ADR-016](016-public-site-astro-static-and-path-split-hosting.md) | Public site as a static Astro app on the app's origin, no third-party scripts | Decided 19 Nov 2026 |
 | [ADR-017](017-customer-companies-only-and-self-serve-sign-up.md) | Customer companies only, self-serve sign-up, one verified workspace per cloud account | Decided 19 Nov 2026 |
+| [ADR-018](018-provider-neutral-core.md) | Provider-neutral core: provider on every fact table, neutral account IDs, native currency, provider plug-ins | Decided 19 Nov 2026 |

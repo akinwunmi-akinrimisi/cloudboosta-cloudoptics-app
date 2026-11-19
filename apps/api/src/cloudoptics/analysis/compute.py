@@ -9,11 +9,12 @@ per family, scaled by size (migration 0013), so savings are labelled ``list_pric
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any
 
 from cloudoptics.analysis.pricing import HOURS_PER_MONTH, PriceBook
+from cloudoptics.analysis.registry import RuleSpec
 from cloudoptics.analysis.rules import (
     Candidate,
     Confidence,
@@ -602,9 +603,41 @@ def rightsizing(ctx: Context, resources: list[Resource]) -> Iterator[Candidate]:
         )
 
 
-COMPUTE_RULES: list[Callable[[Context, list[Resource]], Iterator[Candidate]]] = [
-    idle_instances,
-    idle_databases,
-    rightsizing,
-    previous_generation,
-]
+# The AWS rules of this module, in evaluation order (analysis/registry.py; ADR-018).
+RULE_SPECS: tuple[RuleSpec, ...] = (
+    RuleSpec(
+        id="R4",
+        provider="aws",
+        rule_ids=("R4_idle_ec2",),
+        resource_types=frozenset({"ec2_instance"}),
+        version=1,
+        evaluate=idle_instances,
+    ),
+    RuleSpec(
+        id="R4",
+        provider="aws",
+        rule_ids=("R4_idle_rds",),
+        resource_types=frozenset({"rds_instance"}),
+        version=1,
+        evaluate=idle_databases,
+    ),
+    RuleSpec(
+        id="R5",
+        provider="aws",
+        rule_ids=("R5_rightsize_ec2",),
+        resource_types=frozenset({"ec2_instance"}),
+        version=1,
+        evaluate=rightsizing,
+    ),
+    RuleSpec(
+        id="R6",
+        provider="aws",
+        rule_ids=(
+            "R6_newer_generation",
+            "R6_graviton",
+        ),
+        resource_types=frozenset({"ec2_instance"}),
+        version=1,
+        evaluate=previous_generation,
+    ),
+)

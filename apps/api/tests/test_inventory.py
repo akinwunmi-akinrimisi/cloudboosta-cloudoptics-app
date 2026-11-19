@@ -260,11 +260,12 @@ def world():  # type: ignore[no-untyped-def]
 
 async def setup(client: AsyncClient, login, owner_sql) -> tuple[str, str, str, dict[str, str]]:  # type: ignore[no-untyped-def]
     tenant, connection, headers = await connected(client, login, owner_sql)
-    account = owner_sql("SELECT aws_account_id FROM cloud_connection WHERE id = %s", connection)[0][
-        0
-    ]
+    account = owner_sql(
+        "SELECT provider_account_id FROM cloud_connection WHERE id = %s", connection
+    )[0][0]
     owner_sql(
-        "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, account_type) "
+        "INSERT INTO cloud_account (id, tenant_id, "
+        "connection_id, provider_account_id, account_type) "
         "VALUES (gen_random_uuid(), %s, %s, %s, 'standalone'), "
         "(gen_random_uuid(), %s, %s, '555555555555', 'member')",
         tenant,
@@ -286,7 +287,7 @@ async def test_scan_stores_resources_and_access(
     assert await scanner.scan_connection(tid, cid) == "succeeded"
     rows = owner_sql(
         "SELECT region_id, resource_type, resource_id, name, state FROM resource "
-        "WHERE connection_id = %s AND account_id = %s AND region_id = 'eu-west-1' "
+        "WHERE connection_id = %s AND provider_account_id = %s AND region_id = 'eu-west-1' "
         'ORDER BY resource_id COLLATE "C"',
         connection,
         account,
@@ -337,7 +338,8 @@ async def test_scan_stores_resources_and_access(
 
     access = dict(
         owner_sql(
-            "SELECT aws_account_id, resource_access FROM cloud_account WHERE connection_id = %s",
+            "SELECT provider_account_id, resource_access FROM "
+            "cloud_account WHERE connection_id = %s",
             connection,
         )
     )
@@ -769,7 +771,7 @@ async def test_bill_only_accounts_are_capped_and_account_ids_are_checked(
     listed = ["700000000001", "700000000002"]
     for acct in bill_only:
         owner_sql(
-            "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
+            "INSERT INTO cloud_account (id, tenant_id, connection_id, provider_account_id, "
             "account_type) VALUES (gen_random_uuid(), %s, %s, %s, 'member')",
             tenant,
             connection,
@@ -777,7 +779,7 @@ async def test_bill_only_accounts_are_capped_and_account_ids_are_checked(
         )
     for acct, status in [*((a, "ACTIVE") for a in listed), ("700000000003", "SUSPENDED")]:
         owner_sql(
-            "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
+            "INSERT INTO cloud_account (id, tenant_id, connection_id, provider_account_id, "
             "account_type, org_status) VALUES (gen_random_uuid(), %s, %s, %s, 'member', %s)",
             tenant,
             connection,
@@ -793,7 +795,7 @@ async def test_bill_only_accounts_are_capped_and_account_ids_are_checked(
     for bad in ("12345", "abcdefghijkl"):
         with pytest.raises(psycopg.errors.CheckViolation):
             owner_sql(
-                "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
+                "INSERT INTO cloud_account (id, tenant_id, connection_id, provider_account_id, "
                 "account_type) VALUES (gen_random_uuid(), %s, %s, %s, 'member')",
                 tenant,
                 connection,
