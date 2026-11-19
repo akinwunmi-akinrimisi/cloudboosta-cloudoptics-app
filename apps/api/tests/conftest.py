@@ -66,10 +66,10 @@ def app(database: dict[str, str]):  # type: ignore[no-untyped-def]
     # turns the limits on (rate_limits fixture).
     os.environ["CLOUDOPTICS_RATE_LIMIT_ENABLED"] = "false"
     from cloudoptics.identity.auth import get_verifier
-    from cloudoptics.platform.db import get_engine, get_sessionmaker
+    from cloudoptics.platform.db import get_engine, get_sessionmaker, get_side_engine
     from cloudoptics.platform.settings import get_settings
 
-    for cached in (get_settings, get_engine, get_sessionmaker, get_verifier):
+    for cached in (get_settings, get_engine, get_side_engine, get_sessionmaker, get_verifier):
         cached.cache_clear()
     from cloudoptics.main import create_app
 
