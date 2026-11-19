@@ -22,6 +22,7 @@ from cloudoptics.identity import routes as identity_routes
 from cloudoptics.ingestion import routes as ingestion_routes
 from cloudoptics.inventory import routes as inventory_routes
 from cloudoptics.notifications import routes as notification_routes
+from cloudoptics.platform.api import ApiProblem
 from cloudoptics.platform.db import get_engine
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.recommendations import routes as recommendation_routes
@@ -63,7 +64,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     async def http_problem(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        response = _problem(request, exc.status_code, str(exc.detail))
+        extra = {"code": exc.code} if isinstance(exc, ApiProblem) else {}
+        response = _problem(request, exc.status_code, str(exc.detail), **extra)
         for key, value in (exc.headers or {}).items():
             response.headers[key] = value
         return response

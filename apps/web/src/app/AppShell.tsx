@@ -14,7 +14,8 @@ import {
 } from 'lucide-react'
 
 import type { CurrencyMode } from '../lib/currency'
-import { Logo, cx } from '../components/ui'
+import { MFA_REQUIRED_MESSAGE, isMfaRequired } from '../api/types'
+import { Alert, Button, Logo, cx } from '../components/ui'
 import { useApi, useCurrentTenantId, useMe } from './context'
 
 const NAV = [
@@ -50,6 +51,13 @@ export function AppShell() {
     mutationFn: (view: CurrencyMode) => api.updateMe(view),
     onSuccess: (updated) => qc.setQueryData(['me'], updated),
   })
+  const signOut = () => {
+    api.signOut()
+    qc.clear()
+    void navigate({ to: '/sign-in' })
+  }
+  // Every workspace page would fail the same way, so explain once instead.
+  const mfaRequired = isMfaRequired(tenant.error)
 
   return (
     <div className="min-h-screen md:grid md:grid-cols-[240px_1fr] print:block">
@@ -118,18 +126,23 @@ export function AppShell() {
               type="button"
               aria-label="Sign out"
               className="rounded-sm p-2 text-secondary hover:bg-surface-2"
-              onClick={() => {
-                api.signOut()
-                qc.clear()
-                void navigate({ to: '/sign-in' })
-              }}
+              onClick={signOut}
             >
               <LogOut size={18} />
             </button>
           </div>
         </header>
         <main className="mx-auto max-w-6xl px-4 py-6 md:px-6 print:max-w-none print:p-0">
-          <Outlet />
+          {mfaRequired ? (
+            <div className="space-y-3">
+              <Alert tone="warning">{MFA_REQUIRED_MESSAGE}</Alert>
+              <Button variant="secondary" onClick={signOut}>
+                Sign out
+              </Button>
+            </div>
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
     </div>

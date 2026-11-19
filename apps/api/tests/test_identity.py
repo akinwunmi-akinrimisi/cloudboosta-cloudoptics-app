@@ -94,7 +94,7 @@ async def test_roles_are_enforced(client: AsyncClient, login, owner_sql) -> None
 
 
 async def test_admin_update_is_audited(client: AsyncClient, login) -> None:
-    headers = await login()
+    headers = await login(mfa=True)  # requiring MFA needs an MFA session
     tenant = await create_tenant(client, headers)
     r = await client.patch(
         f"/v1/tenants/{tenant['id']}",

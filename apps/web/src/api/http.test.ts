@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { HttpApi } from './http'
+import { ApiError, MFA_REQUIRED_MESSAGE } from './types'
 
 describe('HttpApi with an identity provider', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -32,5 +33,43 @@ describe('HttpApi with an identity provider', () => {
     api.attachProvider({ signedIn: true, getToken: async () => 't', signIn: async () => {}, signOut })
     await expect(api.me()).rejects.toThrow('Invalid or expired token')
     expect(signOut).not.toHaveBeenCalled()
+  })
+})
+
+describe('HttpApi when a workspace requires MFA', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    sessionStorage.clear()
+  })
+
+  it('reports mfa_required with a clear message and keeps the dev session', async () => {
+    const problem = { title: 'This workspace requires multi-factor authentication.', status: 401, code: 'mfa_required' }
+    const fetch = vi.fn(async (url: string) =>
+      url.endsWith('/v1/dev/token')
+        ? new Response(JSON.stringify({ accessToken: 'dev-token' }), { status: 200 })
+        : new Response(JSON.stringify(problem), { status: 401 }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    const api = new HttpApi('/api')
+    await api.signIn('ada@example.com')
+
+    const error = await api.getTenant('t1').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('mfa_required')
+    expect((error as ApiError).message).toBe(MFA_REQUIRED_MESSAGE)
+    expect(api.isSignedIn()).toBe(true)
+  })
+
+  it('still signs out a dev session on other 401s', async () => {
+    const fetch = vi.fn(async (url: string) =>
+      url.endsWith('/v1/dev/token')
+        ? new Response(JSON.stringify({ accessToken: 'dev-token' }), { status: 200 })
+        : new Response(JSON.stringify({ title: 'Invalid or expired token' }), { status: 401 }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    const api = new HttpApi('/api')
+    await api.signIn('ada@example.com')
+    await expect(api.me()).rejects.toThrow('Invalid or expired token')
+    expect(api.isSignedIn()).toBe(false)
   })
 })

@@ -95,9 +95,10 @@ def owner_sql(database: dict[str, str]) -> Iterator[Callable[..., list[tuple[obj
 
 @pytest.fixture
 def login(client: AsyncClient) -> Callable[..., object]:
-    async def _login(email: str | None = None) -> dict[str, str]:
+    async def _login(email: str | None = None, *, mfa: bool = False) -> dict[str, str]:
         email = email or f"user-{secrets.token_hex(3)}@example.com"
-        r = await client.post("/v1/dev/token", json={"email": email, "name": "Test User"})
+        body = {"email": email, "name": "Test User", "mfa": mfa}
+        r = await client.post("/v1/dev/token", json=body)
         assert r.status_code == 200, r.text
         return {"Authorization": f"Bearer {r.json()['accessToken']}"}
 

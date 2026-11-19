@@ -13,6 +13,14 @@ hosted AuthKit domain, ``https://<name>.authkit.app``; all are accepted. The cli
 the issuer can be the environment's first client rather than this application's, so any
 client ID is accepted there. The keys are per WorkOS environment, so the signature and the
 ``client_id`` claim are what tie a token to this application.
+
+MFA (tenant policy, FR-SEC-05): OIDC and dev tokens report it in the standard ``amr`` claim
+(RFC 8176). WorkOS access tokens document no authentication-method claim (only ``sub``,
+``sid``, ``iss``, ``org_id``, ``role``, ``permissions``, ``exp``, ``iat``), so for them the
+signal is whether the user has an enrolled authentication factor (TOTP, the only type), read
+from the User Management API only when a tenant requires MFA and cached briefly. That proves
+enrolment, not that this session completed a challenge; AuthKit challenges enrolled users at
+sign-in, but its MFA does not apply to SSO sign-ins.
 """
 
 from __future__ import annotations
@@ -32,6 +40,10 @@ from starlette.concurrency import run_in_threadpool
 from cloudoptics.platform.settings import Settings, get_settings
 
 DEV_ISSUER = "cloudoptics-dev"
+# RFC 8176 ``amr`` values that mean a second factor was used.
+MFA_AMR = frozenset({"mfa", "otp", "hwk", "swk"})
+# How long a WorkOS factor lookup is trusted; short so a removed factor is noticed quickly.
+FACTOR_TTL_SECONDS = 60
 AUTHKIT_ISSUER = re.compile(r"https://[a-z0-9-]+\.authkit\.app")
 
 log = logging.getLogger(__name__)
@@ -48,10 +60,20 @@ class Claims:
     name: str | None
     # Whether the provider confirmed the person owns the email; invitations need it.
     email_verified: bool = False
+    # Whether this session used a second factor; None means the token cannot say and the
+    # verifier's ``mfa_enrolled`` must be asked (WorkOS).
+    mfa: bool | None = False
 
 
 class TokenVerifier(Protocol):
     async def verify(self, token: str) -> Claims: ...
+
+    async def mfa_enrolled(self, subject: str) -> bool: ...
+
+
+def amr_has_mfa(payload: dict[str, Any]) -> bool:
+    amr = payload.get("amr")
+    return isinstance(amr, list) and any(isinstance(v, str) and v in MFA_AMR for v in amr)
 
 
 def _claims(payload: dict[str, Any], *, verified: bool | None = None) -> Claims:
@@ -63,10 +85,16 @@ def _claims(payload: dict[str, Any], *, verified: bool | None = None) -> Claims:
         email=str(email),
         name=payload.get("name"),
         email_verified=payload.get("email_verified") is True if verified is None else verified,
+        mfa=amr_has_mfa(payload),
     )
 
 
-class DevVerifier:
+class _TokenOnlyMfa:
+    async def mfa_enrolled(self, subject: str) -> bool:
+        return False  # the token's amr claim is the only signal; Claims.mfa is never None
+
+
+class DevVerifier(_TokenOnlyMfa):
     def __init__(self, secret: str) -> None:
         self._secret = secret
 
@@ -81,9 +109,16 @@ class DevVerifier:
         )
         return _claims(payload, verified=True)  # dev only: there is no mailbox to confirm
 
-    def mint(self, email: str, name: str | None = None, ttl_seconds: int = 8 * 3600) -> str:
+    def mint(
+        self,
+        email: str,
+        name: str | None = None,
+        ttl_seconds: int = 8 * 3600,
+        *,
+        mfa: bool = False,
+    ) -> str:
         now = int(time.time())
-        payload = {
+        payload: dict[str, Any] = {
             "iss": DEV_ISSUER,
             "aud": "cloudoptics-api",
             "sub": f"dev|{email.lower()}",
@@ -91,11 +126,12 @@ class DevVerifier:
             "name": name,
             "iat": now,
             "exp": now + ttl_seconds,
+            "amr": ["pwd", "otp"] if mfa else ["pwd"],
         }
         return jwt.encode(payload, self._secret, algorithm="HS256")
 
 
-class OidcVerifier:
+class OidcVerifier(_TokenOnlyMfa):
     def __init__(self, issuer: str, audience: str, jwks_url: str) -> None:
         self._issuer = issuer
         self._audience = audience
@@ -124,6 +160,7 @@ class WorkOSVerifier:
     api_base: str = "https://api.workos.com"
     http: httpx.AsyncClient | None = None
     _profiles: dict[str, tuple[str, str | None, bool]] = field(default_factory=dict)
+    _factors: dict[str, tuple[float, bool]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._jwks = jwt.PyJWKClient(
@@ -179,6 +216,35 @@ class WorkOSVerifier:
             self._profiles[user_id] = profile
         return self._profiles[user_id]
 
+    async def mfa_enrolled(self, subject: str) -> bool:
+        """Whether the WorkOS user has an enrolled authentication factor (cached briefly).
+
+        GET /user_management/users/{id}/auth_factors lists the user's factors; TOTP is the
+        only type. AuthKit challenges a user with a factor at sign-in, so this is the closest
+        signal WorkOS offers; it does not prove that this particular session was challenged.
+        """
+        user_id = subject.removeprefix("workos|")
+        cached = self._factors.get(user_id)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
+        if not self.api_key:
+            raise ProviderError("checking MFA needs the WorkOS API key")
+        client = self.http or httpx.AsyncClient(timeout=10)
+        try:
+            res = await client.get(
+                f"{self.api_base}/user_management/users/{user_id}/auth_factors",
+                params={"limit": 1},
+                headers={"Authorization": f"Bearer {self.api_key}"},
+            )
+        finally:
+            if self.http is None:
+                await client.aclose()
+        if res.status_code != 200:
+            raise ProviderError(f"WorkOS auth factor lookup returned {res.status_code}")
+        enrolled = bool(res.json().get("data"))
+        self._factors[user_id] = (time.monotonic() + FACTOR_TTL_SECONDS, enrolled)
+        return enrolled
+
     async def verify(self, token: str) -> Claims:
         payload = await run_in_threadpool(self._decode, token)
         email, name = payload.get("email"), payload.get("name")
@@ -186,7 +252,12 @@ class WorkOSVerifier:
         if not email:
             email, name, verified = await self._profile(str(payload["sub"]))
         return Claims(
-            subject=f"workos|{payload['sub']}", email=str(email), name=name, email_verified=verified
+            subject=f"workos|{payload['sub']}",
+            email=str(email),
+            name=name,
+            email_verified=verified,
+            # Honour amr if a token ever carries it; otherwise ask WorkOS when it matters.
+            mfa=amr_has_mfa(payload) if "amr" in payload else None,
         )
 
 

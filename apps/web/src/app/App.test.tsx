@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DemoApi } from '../api/demo'
+import { ApiError, MFA_REQUIRED_MESSAGE } from '../api/types'
 import { ApiProvider } from './context'
 import { createAppRouter } from './router'
 
@@ -77,6 +78,29 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('button', { name: 'Local' }))
     expect((await screen.findAllByText(/^GH₵[\d,.]+$/)).length).toBeGreaterThanOrEqual(2)
     expect(screen.getByText('1 USD = GH₵15.50')).toBeTruthy()
+  })
+
+  it('explains how to fix it when the workspace requires MFA', async () => {
+    const user = userEvent.setup()
+    const { api } = renderApp('/sign-in')
+    await api.signIn('nia@example.com')
+    const tenant = await api.createTenant({ name: 'Kigali Cloud', countryCode: 'RW' })
+    const setup = await api.createConnection(tenant.id, {
+      awsAccountId: '123123123123',
+      accountType: 'standalone',
+      createCurExport: true,
+    })
+    await api.validateConnection(tenant.id, setup.connection.id)
+    vi.spyOn(api, 'getTenant').mockRejectedValue(new ApiError(401, MFA_REQUIRED_MESSAGE, [], 'mfa_required'))
+    await user.type(await screen.findByLabelText('Work email'), 'nia@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+
+    expect(await screen.findByText(MFA_REQUIRED_MESSAGE)).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Overview' })).toBeNull()
+    const [, signOut] = screen.getAllByRole('button', { name: 'Sign out' })
+    expect(signOut).toBeTruthy()
+    await user.click(signOut as HTMLElement)
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy()
   })
 
   it('creates, edits and deletes a budget', async () => {
