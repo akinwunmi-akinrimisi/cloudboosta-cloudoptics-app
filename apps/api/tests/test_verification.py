@@ -421,7 +421,7 @@ async def test_realised_savings_from_the_bills(
     # change and nothing after; the snapshot (by ARN suffix) 0.40 a day, then 0.10.
     owner_sql(
         "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, billing_period, "
-        "account_id, service_code, service_name, service_category, charge_category, "
+        "provider_account_id, service_code, service_name, service_category, charge_category, "
         "billed_cost_usd, effective_cost_usd, net_cost_usd, data_version) VALUES "
         "(%s, %s, %s, %s, %s, 'AmazonEC2', 'EC2', 'Compute', 'Usage', 1, 1, 1, 'v1')",
         tenant,
@@ -440,7 +440,7 @@ async def test_realised_savings_from_the_bills(
         for rid, cost in rows:
             owner_sql(
                 "INSERT INTO cost_resource_daily (tenant_id, connection_id, usage_date, "
-                "billing_period, account_id, service_code, usage_type, resource_id, "
+                "billing_period, provider_account_id, service_code, usage_type, resource_id, "
                 "effective_cost_usd, usage_quantity) "
                 "VALUES (%s, %s, %s, %s, %s, 'AWSELB', 'LoadBalancerUsage', %s, %s, 24)",
                 tenant,

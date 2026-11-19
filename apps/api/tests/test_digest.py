@@ -49,7 +49,7 @@ def recommendation(
     rec_id = str(uuid.uuid4())
     owner_sql(
         "INSERT INTO recommendation (id, tenant_id, fingerprint, type, rule_id, rule_version, "
-        "rule_config, generation_id, account_id, region_id, resource_id, title, "
+        "rule_config, generation_id, provider_account_id, region_id, resource_id, title, "
         "cost_now_usd_month, cost_after_usd_month, savings_basis, effort, reversibility, "
         "risk_score, risk_level, confidence, priority_score, engine_version, "
         "first_detected_at, status) VALUES (%s, %s, %s, 'delete_unattached_volume', "
@@ -112,7 +112,7 @@ async def test_each_member_gets_one_digest_about_last_week(
         found,
     )
     owner_sql(
-        "INSERT INTO anomaly (id, tenant_id, usage_date, account_id, service_code, "
+        "INSERT INTO anomaly (id, tenant_id, usage_date, provider_account_id, service_code, "
         "service_name, actual_usd, expected_usd, mad_usd, impact_usd, engine_version) "
         "VALUES (gen_random_uuid(), %s, %s, '111122223333', 'AmazonEC2', 'Amazon EC2', 90, 10, "
         "0, 80, 'test')",

@@ -74,8 +74,9 @@ async def test_reconcile_after_ingest(client: AsyncClient, login, owner_sql, buc
     totals = {
         str(a).strip(): float(v)
         for a, v in owner_sql(
-            "SELECT account_id, sum(billed_cost_usd) FROM cost_daily WHERE connection_id = %s "
-            "GROUP BY account_id",
+            "SELECT provider_account_id, sum(billed_cost_usd) FROM "
+            "cost_daily WHERE connection_id = %s "
+            "GROUP BY provider_account_id",
             connection,
         )
     }

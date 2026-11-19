@@ -39,7 +39,7 @@ async def test_rls_blocks_writes_into_another_tenant(client: AsyncClient, login,
                 await scope(s, tenant_id=uuid.UUID(a))
                 await s.execute(
                     text(
-                        "INSERT INTO cloud_connection (id, tenant_id, aws_account_id, "
+                        "INSERT INTO cloud_connection (id, tenant_id, provider_account_id, "
                         "account_type, role_arn, external_id_enc, stack_name) VALUES "
                         "(:id, :t, '123456789012', 'standalone', 'arn', '\\x00', 's')"
                     ),

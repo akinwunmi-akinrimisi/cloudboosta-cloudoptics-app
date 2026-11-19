@@ -90,7 +90,9 @@ async def test_broken_connection_emails_admins_once_a_day(
     assert await validate(client, tenant, connection, headers) == "failed"
     [email] = mailer.sent
     assert email.to == ["admin-alerts@example.com"]
-    account = owner_sql("SELECT aws_account_id FROM cloud_connection WHERE id = %s", connection)
+    account = owner_sql(
+        "SELECT provider_account_id FROM cloud_connection WHERE id = %s", connection
+    )
     assert (
         email.subject == f"Action needed: your AWS connection {account[0][0]} has stopped working"
     )

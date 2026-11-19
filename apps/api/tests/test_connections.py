@@ -87,7 +87,7 @@ async def test_an_aws_account_can_join_only_one_workspace(
     [check] = conn["permissionChecks"]
     assert "another Cloudoptics workspace" in check["message"]
     verified = owner_sql(
-        "SELECT tenant_id::text FROM cloud_connection WHERE aws_account_id = '333344445555' "
+        "SELECT tenant_id::text FROM cloud_connection WHERE provider_account_id = '333344445555' "
         "AND account_verified_at IS NOT NULL"
     )
     assert verified == [(a,)]

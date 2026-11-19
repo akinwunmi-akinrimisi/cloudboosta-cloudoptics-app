@@ -30,7 +30,7 @@ def bill(
 ) -> None:  # fmt: skip
     owner_sql(
         "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, billing_period, "
-        "account_id, service_code, service_name, service_category, region_id, usage_type, "
+        "provider_account_id, service_code, service_name, service_category, region_id, usage_type, "
         "charge_category, billed_cost_usd, effective_cost_usd, net_cost_usd, data_version) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, 'Compute', %s, %s, %s, %s, %s, %s, 'v1')",
         tenant["id"],

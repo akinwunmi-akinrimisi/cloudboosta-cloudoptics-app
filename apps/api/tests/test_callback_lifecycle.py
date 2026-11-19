@@ -421,7 +421,7 @@ async def test_a_reconciliation_queued_before_a_disconnect_does_not_call_aws(
     tenant, headers, _, cid = await connected(client, login, acct)
     owner_sql(
         "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, billing_period, "
-        "account_id, service_code, service_name, service_category, region_id, usage_type, "
+        "provider_account_id, service_code, service_name, service_category, region_id, usage_type, "
         "charge_category, billed_cost_usd, effective_cost_usd, net_cost_usd, data_version) "
         "VALUES (%s, %s, '2026-09-03', '2026-09-01', %s, 'AmazonEC2', 'Amazon EC2', 'Compute', "
         "'us-east-1', 'BoxUsage', 'Usage', 10, 10, 10, 'v1')",

@@ -29,7 +29,7 @@ async def workspace(
     connection = r.json()["connection"]["id"]
     for account in (ACCOUNT, OTHER):
         owner_sql(
-            "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
+            "INSERT INTO cloud_account (id, tenant_id, connection_id, provider_account_id, "
             "account_type) VALUES (gen_random_uuid(), %s, %s, %s, 'member')",
             tenant["id"],
             connection,
@@ -44,7 +44,7 @@ def spend(
 ) -> None:  # fmt: skip
     owner_sql(
         "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, billing_period, "
-        "account_id, service_code, service_name, service_category, charge_category, "
+        "provider_account_id, service_code, service_name, service_category, charge_category, "
         "billed_cost_usd, effective_cost_usd, net_cost_usd, data_version) VALUES (%s, %s, %s, "
         "%s, %s, 'AmazonEC2', 'Amazon EC2', 'Compute', %s, %s, %s, %s, 'v1')",
         tenant["id"],

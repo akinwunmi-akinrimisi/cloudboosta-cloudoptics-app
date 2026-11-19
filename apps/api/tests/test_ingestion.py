@@ -114,8 +114,8 @@ async def test_ingest_fills_the_summary_and_is_idempotent(
     assert count > 0
     assert versions == 1
     names = owner_sql(
-        "SELECT aws_account_id, name, account_type FROM cloud_account WHERE tenant_id = %s "
-        "ORDER BY aws_account_id",
+        "SELECT provider_account_id, name, account_type FROM cloud_account WHERE tenant_id = %s "
+        "ORDER BY provider_account_id",
         tenant,
     )
     assert ("333333333333", "demo-dev", "member") in names

@@ -75,7 +75,7 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
     batch, resource, rec = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     rows = [
         (
-            "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
+            "INSERT INTO cloud_account (id, tenant_id, connection_id, provider_account_id, "
             "account_type) VALUES (%s, %s, %s, %s, 'standalone')",
             uuid.uuid4(),
             tenant,
@@ -114,7 +114,7 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
         ),
         (
             "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, billing_period, "
-            "account_id, service_code, service_name, service_category, charge_category, "
+            "provider_account_id, service_code, service_name, service_category, charge_category, "
             "tag_set_hash, billed_cost_usd, effective_cost_usd, net_cost_usd, data_version) "
             "VALUES (%s, %s, '2026-10-02', '2026-10-01', %s, 'AmazonEC2', 'EC2', 'Compute', "
             "'Usage', %s, 1, 1, 1, 'v1')",
@@ -125,7 +125,8 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
         ),
         (
             "INSERT INTO cost_resource_daily (tenant_id, connection_id, usage_date, "
-            "billing_period, account_id, service_code, usage_type, resource_id, tag_set_hash, "
+            "billing_period, provider_account_id, service_code, "
+            "usage_type, resource_id, tag_set_hash, "
             "effective_cost_usd, usage_quantity) VALUES (%s, %s, '2026-10-02', '2026-10-01', "
             "%s, 'AmazonEC2', 'BoxUsage', 'i-1', %s, 1, 1)",
             tenant,
@@ -148,7 +149,7 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
             conn,
         ),
         (
-            "INSERT INTO resource (id, tenant_id, connection_id, account_id, region_id, "
+            "INSERT INTO resource (id, tenant_id, connection_id, provider_account_id, region_id, "
             "resource_type, resource_id) VALUES (%s, %s, %s, %s, 'eu-west-1', 'ebs_volume', "
             "'vol-1')",
             resource,
@@ -183,7 +184,8 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
         ),
         (
             "INSERT INTO recommendation (id, tenant_id, fingerprint, type, rule_id, "
-            "rule_version, rule_config, generation_id, resource_ref, account_id, region_id, "
+            "rule_version, rule_config, generation_id, "
+            "resource_ref, provider_account_id, region_id, "
             "resource_id, title, cost_now_usd_month, cost_after_usd_month, savings_basis, "
             "effort, reversibility, risk_score, risk_level, confidence, priority_score, "
             "engine_version) VALUES (%s, %s, %s, 'R1', 'R1', 1, '{}', 1, %s, %s, 'eu-west-1', "
@@ -203,7 +205,7 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
             rec,
         ),
         (
-            "INSERT INTO anomaly (id, tenant_id, usage_date, account_id, service_code, "
+            "INSERT INTO anomaly (id, tenant_id, usage_date, provider_account_id, service_code, "
             "service_name, actual_usd, expected_usd, mad_usd, impact_usd, engine_version) "
             "VALUES (%s, %s, '2026-10-02', %s, 'AmazonEC2', 'EC2', 10, 1, 1, 9, 'test')",
             uuid.uuid4(),
@@ -409,10 +411,12 @@ async def test_deletes_a_disconnected_connections_data_and_nothing_else(
 
     # Gone as seen by the superuser too, not only through RLS.
     assert all(n == 0 for n in connection_rows(owner_sql, gone).values())
-    assert owner_sql("SELECT count(*) FROM anomaly WHERE account_id = %s", gone_account) == [(0,)]
-    assert owner_sql("SELECT count(*) FROM recommendation WHERE account_id = %s", gone_account) == [
-        (0,)
-    ]
+    assert owner_sql(
+        "SELECT count(*) FROM anomaly WHERE provider_account_id = %s", gone_account
+    ) == [(0,)]
+    assert owner_sql(
+        "SELECT count(*) FROM recommendation WHERE provider_account_id = %s", gone_account
+    ) == [(0,)]
     # The other connection, the workspace-wide rows and the other workspace are untouched.
     assert connection_rows(owner_sql, kept) == kept_before
     assert tenant_rows(owner_sql, other) == other_before
