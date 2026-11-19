@@ -5,7 +5,9 @@ import { useState, type ReactNode } from 'react'
 
 import { useApi } from '../app/context'
 import { ApiError, type MonthlyReport } from '../api/types'
+import { ExportButton, ExportList } from '../components/exports'
 import { Alert, Button, Card, cx } from '../components/ui'
+import { monthEnd } from './Costs'
 import { useWorkspace } from './Workspace'
 
 const BUDGET_STATUS: Record<string, string> = {
@@ -70,6 +72,7 @@ export function Reports({ month }: { month?: string }) {
       </div>
       {list.error && <Alert tone="error">{list.error.message}</Alert>}
       {selected && <ReportView tenantId={tenantId} month={selected} isAdmin={role === 'admin'} />}
+      <ExportList tenantId={tenantId} />
       {role === 'admin' && <RecipientsCard tenantId={tenantId} />}
     </div>
   )
@@ -112,6 +115,18 @@ function ReportView({ tenantId, month, isAdmin }: { tenantId: string; month: str
             <Mail size={16} /> {send.isPending ? 'Sending…' : stored ? 'Make again and send' : 'Make and send now'}
           </Button>
         )}
+        <ExportButton
+          tenantId={tenantId}
+          label="Export the month's costs"
+          request={{
+            kind: 'costs',
+            start: `${month}-01`,
+            end: monthEnd(month),
+            granularity: 'month',
+            groupBy: ['service', 'account'],
+            includeTax: true,
+          }}
+        />
         <span className="text-xs text-muted">
           {stored
             ? `Made ${new Date(report.generatedAt).toLocaleString()}; the figures stay as they were then.`

@@ -16,6 +16,7 @@ import type {
 import { ApiError } from '../api/types'
 import { UsageChart } from '../components/charts'
 import { Commands, CopyButton } from '../components/commands'
+import { ExportButton } from '../components/exports'
 import { NatRoutes } from '../components/natRoutes'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { RULES } from '../lib/rules'
@@ -296,10 +297,23 @@ export function Recommendations() {
               </select>
             </label>
           </div>
-          <label className="flex items-center gap-2 text-sm text-secondary">
-            <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
-            Show done and dismissed
-          </label>
+          <div className="flex flex-wrap items-start gap-3">
+            <label className="flex h-8 items-center gap-2 text-sm text-secondary">
+              <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
+              Show done and dismissed
+            </label>
+            {tenantId !== null && (
+              <ExportButton
+                tenantId={tenantId}
+                request={{
+                  kind: 'recommendations',
+                  status: showClosed ? 'all' : 'open',
+                  ruleId: rule === 'all' ? null : rule,
+                  risk: risk === 'all' ? null : risk,
+                }}
+              />
+            )}
+          </div>
         </div>
         {canChange && shown.length > 0 && (
           <div className="flex flex-col gap-2 border-b border-border bg-surface-2 px-5 py-3">

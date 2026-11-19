@@ -984,6 +984,54 @@ export interface SavingsPlanAdvisory {
   fxStressPercent: number[]
 }
 
+export type ExportKind = 'costs' | 'recommendations' | 'anomalies' | 'budgets'
+export type CostExportGroup = 'service' | 'account' | 'region' | 'usage_type' | 'tag'
+
+/** What to export (PRD US-7.2): a cost table or a list, with the page's filters. */
+export type ExportRequest =
+  | {
+      kind: 'costs'
+      /** Inclusive dates (YYYY-MM-DD), at most 400 days apart. */
+      start: string
+      end: string
+      granularity?: 'day' | 'month'
+      groupBy?: CostExportGroup[]
+      /** Needed when grouping by tag. */
+      tagKey?: string | null
+      accountId?: string | null
+      includeTax?: boolean
+    }
+  | {
+      kind: 'recommendations'
+      status?: 'open' | 'all'
+      ruleId?: string | null
+      accountId?: string | null
+      risk?: 'low' | 'medium' | 'high' | null
+      alternatives?: boolean
+    }
+  | { kind: 'anomalies'; days?: number; status?: AnomalyStatus | null }
+  | { kind: 'budgets' }
+
+export type ExportStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'expired'
+
+/** An export and its file (kept 7 days). Small exports are `succeeded` at once; large ones run on the worker. */
+export interface ExportJob {
+  id: string
+  kind: ExportKind
+  params: Record<string, unknown>
+  status: ExportStatus
+  progress: number
+  rowCount: number | null
+  fileName: string
+  sizeBytes: number | null
+  error: string | null
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  expiresAt: string
+  downloadUrl: string | null
+}
+
 export interface Api {
   readonly mode: 'http' | 'demo'
   authConfig(): Promise<AuthConfig>
@@ -1020,6 +1068,13 @@ export interface Api {
   /** Admins only: make it again from today's data and email every recipient. */
   sendReport(tenantId: string, month: string): Promise<{ sentTo: number; report: MonthlyReport }>
   getReportSettings(tenantId: string): Promise<{ emails: string[] }>
+  /** Any role. 429 after 10 exports in an hour. */
+  createExport(tenantId: string, request: ExportRequest): Promise<ExportJob>
+  getExport(tenantId: string, id: string): Promise<ExportJob>
+  /** Your exports from the last 7 days, newest first. */
+  listExports(tenantId: string): Promise<{ exports: ExportJob[] }>
+  /** The CSV of a finished export (410 once expired). */
+  downloadExport(tenantId: string, id: string): Promise<Blob>
   saveReportSettings(tenantId: string, emails: string[]): Promise<{ emails: string[] }>
   getAlertSettings(tenantId: string): Promise<AlertSettingsView>
   /** Admins only. */
