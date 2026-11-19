@@ -1,0 +1,49 @@
+name: Static site images
+
+# Builds the three App Platform static components (site at /, app at /app, demo at /demo)
+# from their Dockerfiles exactly as App Platform does, so a broken image fails here and not
+# during a staging deploy (19 Nov 2026: Astro needed a newer Node than the site image had).
+on:
+  pull_request:
+    paths:
+      - apps/site/**
+      - apps/web/**
+      - packages/**
+      - infra/cloudformation/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/static-images.yml
+  push:
+    branches: [main]
+    paths:
+      - apps/site/**
+      - apps/web/**
+      - packages/**
+      - pnpm-lock.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Static image (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: site
+            file: apps/site/Dockerfile
+            args: --build-arg SITE_URL=https://cloudoptics.cloudboosta.com
+          - name: web
+            file: apps/web/Dockerfile
+            args: --build-arg VITE_API_URL=/api --build-arg VITE_BASE=/app/
+          - name: demo
+            file: apps/web/Dockerfile
+            args: --build-arg VITE_API_MODE=demo --build-arg VITE_BASE=/demo/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: docker build
+        run: docker build --progress=plain -f ${{ matrix.file }} ${{ matrix.args }} .
