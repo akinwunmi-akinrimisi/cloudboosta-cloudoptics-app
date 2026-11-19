@@ -1,9 +1,9 @@
 // Checks the plain-language permission entries against the CloudFormation template, both ways,
 // and writes src/generated/permissions.json (docs/14 §5.5, SITE-08). Runs before every build and
 // typecheck, so CI fails when the template gains or loses an action without a matching entry.
-import { cpSync, mkdirSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { REPO_ROOT, buildExport, compare, loadData, loadTemplate, templateRoles } from './permissions-lib.mjs'
+import { REPO_ROOT, buildAppExport, buildExport, compare, loadData, loadTemplate, templateRoles } from './permissions-lib.mjs'
 
 const data = loadData()
 const template = loadTemplate(data.template)
@@ -27,6 +27,11 @@ for (const [key, value] of Object.entries(out.facts)) {
 const dir = join(import.meta.dirname, '..', 'src', 'generated')
 mkdirSync(dir, { recursive: true })
 writeFileSync(join(dir, 'permissions.json'), JSON.stringify(out, null, 2) + '\n')
+// The app's onboarding panel bundles a compact copy (SITE-16); committed, checked by the tests.
+// Skipped where apps/web is absent: the site's Docker image copies only apps/site.
+const appDir = join(REPO_ROOT, 'apps', 'web', 'src', 'data')
+const appCopy = JSON.stringify(buildAppExport(template, data), null, 2) + '\n'
+if (existsSync(appDir)) writeFileSync(join(appDir, 'permissions.json'), appCopy)
 const counts = out.roles.map((r) => `${r.roleName ?? r.logicalId} ${r.actionCount}`).join(', ')
 console.log(`Permissions: template v${out.facts.templateVersion} matches permissions.yaml (${counts} actions).`)
 

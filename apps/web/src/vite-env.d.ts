@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   readonly VITE_BASE?: string
   /** "Start free" target in the demo banner (default /app/sign-in?intent=signup). */
   readonly VITE_SIGNUP_URL?: string
-  /** The public demo, linked from sign-in (default /demo/). */
+  /** Base URL of the public site (default '/', the same origin as the app). */
+  readonly VITE_SITE_URL?: string
+  /** The public demo, linked from sign-in and onboarding (default /demo/). */
   readonly VITE_DEMO_URL?: string
 }

@@ -1,12 +1,13 @@
-import { useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { FormEvent } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { ApiError } from '../api/types'
 import { useApi } from '../app/context'
 import { DEMO_URL } from '../app/paths'
 import { Alert, Button, Card, Field, Logo } from '../components/ui'
+import { pickAttribution, readAttribution, rememberAttribution } from '../lib/attribution'
 
 export function SignIn() {
   const api = useApi()
@@ -19,6 +20,10 @@ export function SignIn() {
   const config = useQuery({ queryKey: ['auth-config'], queryFn: () => api.authConfig() })
   const pending = config.data?.mode === 'oidc' && !config.data.configured
   const external = config.data?.mode === 'oidc' && config.data.configured
+  // "Start free" on the site sends ?intent=signup with where the visitor came from (docs/14 §6.5).
+  const search = useSearch({ from: '/sign-in' })
+  const signUp = search.intent === 'signup'
+  useEffect(() => rememberAttribution(pickAttribution(search)), [search])
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -42,7 +47,7 @@ export function SignIn() {
           <Logo /> Cloudoptics
         </div>
         <Card>
-          <h1 className="text-2xl font-semibold">Sign in</h1>
+          <h1 className="text-2xl font-semibold">{signUp ? 'Create your account' : 'Sign in'}</h1>
           <p className="mt-1 text-sm text-secondary">
             See your AWS spend in dollars and your local currency, and what is safe to cut.
           </p>
@@ -64,13 +69,13 @@ export function SignIn() {
                 disabled={busy}
                 onClick={() => {
                   setBusy(true)
-                  api.signIn('').catch(() => {
+                  api.signIn('', undefined, { signUp, state: { attribution: readAttribution() } }).catch(() => {
                     setError('Sign-in could not start. Try again.')
                     setBusy(false)
                   })
                 }}
               >
-                {busy ? 'Opening sign-in…' : 'Continue to sign in'}
+                {busy ? 'Opening sign-in…' : signUp ? 'Continue to create your account' : 'Continue to sign in'}
               </Button>
               <p className="text-xs text-muted">Email, Google or single sign-on, with multi-factor authentication.</p>
             </div>
@@ -93,7 +98,7 @@ export function SignIn() {
               />
               {error && <Alert tone="error">{error}</Alert>}
               <Button type="submit" disabled={busy}>
-                {busy ? 'Signing in…' : 'Continue'}
+                {busy ? 'Signing in…' : signUp ? 'Create account' : 'Continue'}
               </Button>
             </form>
           )}
@@ -104,6 +109,32 @@ export function SignIn() {
           ) : (
             <p className="mt-4 text-xs text-muted">
               Development sign-in. Production uses single sign-on with MFA.
+            </p>
+          )}
+          {!pending && (
+            <p className="mt-4 text-sm text-secondary">
+              {signUp ? (
+                <>
+                  Have an account?{' '}
+                  <Link to="/sign-in" className="text-accent underline">
+                    Sign in
+                  </Link>
+                </>
+              ) : (
+                <>
+                  New here?{' '}
+                  <Link to="/sign-in" search={{ intent: 'signup' }} className="text-accent underline">
+                    Create your account
+                  </Link>
+                </>
+              )}
+            </p>
+          )}
+          {!pending && api.mode !== 'demo' && (
+            <p className="mt-2 text-sm">
+              <a className="text-accent underline" href={DEMO_URL}>
+                Explore the sample workspace
+              </a>
             </p>
           )}
         </Card>

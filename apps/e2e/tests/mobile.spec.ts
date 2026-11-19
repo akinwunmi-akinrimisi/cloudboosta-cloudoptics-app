@@ -101,5 +101,11 @@ test('onboarding fits a phone: create the workspace, then connect AWS', async ({
   await page.waitForLoadState('networkidle')
   o = await overflow(page)
   expect(o.scrollWidth, `connect AWS: ${o.wide.join(', ')}`).toBeLessThanOrEqual(o.width)
+  // The permission list (long action names) wraps, down to 320 px.
+  await page.getByText('What Cloudoptics can read').tap()
+  await expect(page.getByText('cloudformation:ListStackSetOperationResults')).toBeVisible()
+  await page.setViewportSize({ width: 320, height: 640 })
+  o = await overflow(page)
+  expect(o.scrollWidth, `permissions at 320 px: ${o.wide.join(', ')}`).toBeLessThanOrEqual(o.width)
   await context.close()
 })

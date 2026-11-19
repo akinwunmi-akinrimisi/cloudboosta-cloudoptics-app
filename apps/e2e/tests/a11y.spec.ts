@@ -77,6 +77,9 @@ test('axe on each main page', async ({ page, browser, request }) => {
   await anon.goto(appPath('/sign-in'))
   await expect(anon.getByRole('heading', { name: 'Sign in' })).toBeVisible()
   results.push(await audit(anon, 'Sign in', '/sign-in'))
+  await anon.goto(appPath('/sign-in?intent=signup&utm_source=e2e'))
+  await expect(anon.getByRole('heading', { name: 'Create your account' })).toBeVisible()
+  results.push(await audit(anon, 'Create your account', '/sign-in?intent=signup'))
   const newcomer = await signInApi(request, uniqueEmail('newcomer'))
   await openSignedIn(anon, newcomer.token, undefined, '/onboarding')
   await expect(anon.getByRole('heading', { name: 'Create your workspace' })).toBeVisible()
@@ -86,6 +89,15 @@ test('axe on each main page', async ({ page, browser, request }) => {
   await expect(anon.getByRole('heading', { name: 'Connect your AWS account' })).toBeVisible()
   await anon.waitForLoadState('networkidle')
   results.push(await audit(anon, 'Onboarding: connect AWS', '/onboarding (step 2)'))
+  await anon.getByText('What Cloudoptics can read').click()
+  await expect(anon.getByText('Connection health')).toBeVisible()
+  results.push(await audit(anon, 'Onboarding: permissions open', '/onboarding (step 2, permissions)'))
+  // The public pages sit at the origin's root, next to the app under /app/ (SITE-13, SITE-16).
+  await expect(anon.getByRole('link', { name: /Read every permission/ })).toHaveAttribute('href', '/security#permissions')
+  await expect(anon.getByRole('link', { name: /What will this create\?/ })).toHaveAttribute(
+    'href',
+    '/how-it-works#what-the-stack-creates',
+  )
   await fresh.close()
 
   // [name, path, path as reported, h1]

@@ -1,17 +1,36 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
-import { render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DemoApi } from '../api/demo'
 import { ApiError, MFA_REQUIRED_MESSAGE } from '../api/types'
+import claims from '../../../site/src/data/claims.json'
+import { ALL_ACTIONS } from '../components/permissions'
+import { readAttribution } from '../lib/attribution'
+import { AWS_MINUTES, STEPS } from '../pages/Onboarding'
 import { ApiProvider } from './context'
 import { createAppRouter } from './router'
 
 function renderApp(path = '/', setup?: (api: DemoApi) => void) {
   const api = new DemoApi(0)
   setup?.(api)
+  return renderWith(api, path)
+}
+
+/** Signs in as a new user and creates a workspace, which opens the Connect AWS step. */
+async function reachConnectStep() {
+  const user = userEvent.setup()
+  renderApp('/')
+  await user.type(await screen.findByLabelText('Work email'), 'ada@example.com')
+  await user.click(screen.getByRole('button', { name: 'Continue' }))
+  await user.type(await screen.findByLabelText('Company or team name'), 'Lagos Ledger')
+  await user.click(screen.getByRole('button', { name: 'Create workspace' }))
+  return user
+}
+
+function renderWith(api: DemoApi, path: string) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createAppRouter({ api, queryClient }, createMemoryHistory({ initialEntries: [path] }))
   render(
@@ -25,7 +44,10 @@ function renderApp(path = '/', setup?: (api: DemoApi) => void) {
 }
 
 describe('Cloudoptics web app', () => {
-  beforeEach(() => localStorage.clear())
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+  })
 
   it('sends signed-out visitors to sign in', async () => {
     renderApp('/overview')
@@ -75,9 +97,104 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByRole('heading', { name: 'Connected' })).toBeTruthy()
     expect(screen.getByText('Healthy')).toBeTruthy()
     expect(screen.getByText('Find the CUR 2.0 export')).toBeTruthy()
+    expect(screen.getByText(/Your first costs appear within a day/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Go to my workspace' }))
     expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
     await waitFor(() => expect(screen.getByText(/Lagos Ledger · KES · Africa\/Nairobi/)).toBeTruthy())
+  })
+
+  it('lists every permission on the Connect AWS step, collapsed, with the public pages a click away', async () => {
+    const user = await reachConnectStep()
+    expect(await screen.findByRole('heading', { name: 'Connect your AWS account' })).toBeTruthy()
+
+    const summary = screen.getByText('What Cloudoptics can read')
+    const panel = summary.closest('details') as HTMLDetailsElement
+    expect(panel.open).toBe(false)
+    await user.click(summary)
+    expect(panel.open).toBe(true)
+    // Every action the CloudFormation template grants (the site's tests keep this copy in step
+    // with the template), grouped by what it is used for.
+    const listed = new Set(within(panel).getAllByRole('listitem').map((li) => li.textContent))
+    for (const action of ALL_ACTIONS) expect(listed.has(action), action).toBe(true)
+    expect(ALL_ACTIONS).toContain('ce:Get*')
+    expect(ALL_ACTIONS).toContain('cloudformation:CreateStackSet')
+    expect(within(panel).getByText('Connection health')).toBeTruthy()
+    expect(within(panel).getByText('Create, change, stop or delete anything in your account')).toBeTruthy()
+
+    const create = screen.getByRole('link', { name: /What will this create\?/ })
+    expect(create.getAttribute('href')).toBe('/how-it-works#what-the-stack-creates')
+    expect(create.getAttribute('target')).toBe('_blank')
+    const every = screen.getByRole('link', { name: /Read every permission/ })
+    expect(every.getAttribute('href')).toBe('/security#permissions')
+    expect(every.getAttribute('target')).toBe('_blank')
+  })
+
+  it('copies the one-click link with a short note for a colleague', async () => {
+    const user = await reachConnectStep()
+    const oneClick = await screen.findByRole('link', { name: /Open AWS and connect/ })
+    await user.click(screen.getByRole('button', { name: 'Copy link for a colleague' }))
+    expect(await screen.findByText('Copied')).toBeTruthy()
+    const text = await navigator.clipboard.readText()
+    expect(text).toContain(oneClick.getAttribute('href'))
+    expect(text).toContain(`${window.location.origin}/how-it-works#what-the-stack-creates`)
+    expect(text).toContain('read-only and takes about 3 minutes')
+    expect(text).toMatch(/It works until \d{1,2} [A-Z][a-z]+ \d{4}\./)
+    // Only what the link already carries: no template values pasted in beside it.
+    expect(text).not.toContain('CloudopticsPrincipalArn')
+    // The page starts watching, so a stack the colleague creates moves it on (the demo connects at once).
+    expect(await screen.findByRole('heading', { name: /Checking access|Connected/ })).toBeTruthy()
+  })
+
+  it('uses the same step names and times as the public site', async () => {
+    expect(STEPS).toEqual(claims.wizardSteps.value)
+    expect(AWS_MINUTES).toBe(claims.awsMinutes.value)
+    expect(claims.firstCosts.value.startsWith('within a day')).toBe(true)
+  })
+
+  it('says "Create your account" for Start free and keeps where the visitor came from', async () => {
+    const user = userEvent.setup()
+    renderApp('/sign-in?intent=signup&utm_source=newsletter&utm_campaign=beta&ref=lagos-meetup&landing=%2Fhow-it-works')
+    expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeTruthy()
+    await waitFor(() => expect(readAttribution().utm_source).toBe('newsletter'))
+    expect(readAttribution()).toEqual({
+      utm_source: 'newsletter',
+      utm_campaign: 'beta',
+      ref: 'lagos-meetup',
+      landing: '/how-it-works',
+    })
+    await user.type(screen.getByLabelText('Work email'), 'ada@example.com')
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+    expect(await screen.findByRole('heading', { name: 'Create your workspace' })).toBeTruthy()
+    // Still known after sign-up, for workspace creation to report (SITE-15).
+    expect(readAttribution().utm_source).toBe('newsletter')
+  })
+
+  it('switches between signing in and creating an account', async () => {
+    const user = userEvent.setup()
+    renderApp('/sign-in')
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: 'Create your account' }))
+    expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: 'Sign in' }))
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy()
+  })
+
+  it('offers the sample workspace from sign-in and the first step, except inside the demo', async () => {
+    const api = new DemoApi(0)
+    Object.defineProperty(api, 'mode', { value: 'http' })
+    renderWith(api, '/sign-in')
+    const sample = await screen.findByRole('link', { name: 'Explore the sample workspace' })
+    expect(sample.getAttribute('href')).toBe('/demo/')
+    await api.signIn('ada@example.com')
+    cleanup()
+    renderWith(api, '/onboarding')
+    expect(await screen.findByRole('heading', { name: 'Create your workspace' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Explore the sample workspace' }).getAttribute('href')).toBe('/demo/')
+
+    cleanup()
+    renderApp('/sign-in')
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: 'Explore the sample workspace' })).toBeNull()
   })
 
   it('switches the currency view from the top bar', async () => {

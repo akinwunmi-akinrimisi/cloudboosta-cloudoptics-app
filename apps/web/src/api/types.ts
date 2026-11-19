@@ -173,11 +173,17 @@ export interface AuthConfig {
   clientId: string | null
 }
 
+/** How a sign-in starts: on the sign-up screen, and with state to get back afterwards. */
+export interface SignInOptions {
+  signUp?: boolean
+  state?: Record<string, unknown>
+}
+
 /** An external identity provider session (WorkOS AuthKit) the HTTP client can use. */
 export interface AuthProvider {
   signedIn: boolean
   getToken(): Promise<string>
-  signIn(): Promise<void>
+  signIn(options?: SignInOptions): Promise<void>
   signOut(): void
 }
 
@@ -1075,7 +1081,7 @@ export interface Api {
   readonly mode: 'http' | 'demo'
   authConfig(): Promise<AuthConfig>
   isSignedIn(): boolean
-  signIn(email: string, name?: string): Promise<void>
+  signIn(email: string, name?: string, options?: SignInOptions): Promise<void>
   signOut(): void
   me(): Promise<Me>
   updateMe(view: CurrencyMode): Promise<Me>
