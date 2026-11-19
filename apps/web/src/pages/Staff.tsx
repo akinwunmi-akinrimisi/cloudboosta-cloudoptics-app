@@ -16,7 +16,6 @@ const DURATIONS: [number, string][] = [
   [30, '30 minutes'],
   [60, '1 hour'],
   [120, '2 hours'],
-  [240, '4 hours'],
 ]
 
 const STATUS: Record<SupportGrant['status'], string> = { active: 'Active', ended: 'Ended', expired: 'Expired' }
@@ -41,7 +40,7 @@ function RequestForm() {
       api.requestSupportGrant({
         tenantId: tenantId.trim(),
         justification: justification.trim(),
-        ticketRef: ticketRef.trim() || null,
+        ticketRef: ticketRef.trim(),
         durationMinutes: minutes,
       }),
     onSuccess: () => {
@@ -52,12 +51,12 @@ function RequestForm() {
       void qc.invalidateQueries({ queryKey: ['me'] })
     },
   })
-  const ready = tenantId.trim().length > 0 && justification.trim().length >= 10
+  const ready = tenantId.trim().length > 0 && justification.trim().length >= 10 && ticketRef.trim().length > 0
   return (
     <Card>
       <h2 className="text-base font-semibold">Open support access</h2>
       <p className="mb-4 text-sm text-secondary">
-        Read-only access to one workspace. It starts now and ends on its own. The workspace’s admins get an email and
+        Read-only access to one workspace. It starts now and ends on its own, after 2 hours at most. The workspace’s admins get an email and
         see who, why and for how long in their audit log.
       </p>
       <form
@@ -83,10 +82,11 @@ function RequestForm() {
           <p className="text-xs text-muted">The workspace’s admins read this. At least 10 characters.</p>
         </div>
         <Field
-          label="Ticket reference (optional)"
+          label="Ticket reference"
           value={ticketRef}
           maxLength={100}
           onChange={(e) => setTicketRef(e.target.value)}
+          required
         />
         <div className="flex flex-col gap-1">
           <label htmlFor="support-duration" className="text-sm font-medium text-primary">
@@ -160,7 +160,7 @@ function GrantList() {
               </p>
               <p className="text-sm text-secondary">
                 {g.justification}
-                {g.ticketRef ? ` (${g.ticketRef})` : ''}
+                {` (${g.ticketRef})`}
               </p>
               <p className="text-xs text-muted tabular-nums">
                 {formatTime(g.createdAt)} to {formatTime(g.endedAt ?? g.expiresAt)} · {g.requests} requests

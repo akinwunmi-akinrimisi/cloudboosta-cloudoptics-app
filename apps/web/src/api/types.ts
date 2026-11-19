@@ -38,7 +38,7 @@ export interface SupportGrant {
   staffEmail: string
   staffName: string | null
   justification: string
-  ticketRef: string | null
+  ticketRef: string
   createdAt: string
   expiresAt: string
   endedAt: string | null
@@ -51,8 +51,9 @@ export interface SupportGrant {
 export interface SupportGrantRequest {
   tenantId: string
   justification: string
-  ticketRef?: string | null
-  /** 15 to 240 minutes; 60 by default. */
+  /** The support ticket (required, docs/11b §7.4). */
+  ticketRef: string
+  /** 15 to 120 minutes; 60 by default. */
   durationMinutes: number
 }
 

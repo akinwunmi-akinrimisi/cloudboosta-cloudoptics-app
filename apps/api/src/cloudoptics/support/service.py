@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MINUTES = 60
 MIN_MINUTES = 15
-MAX_MINUTES = 240
+MAX_MINUTES = 120  # docs/11b §7.4: at most 2 hours
 # Methods a grant allows: reads only, whatever role a route asks for.
 SAFE_METHODS = frozenset({"GET", "HEAD"})
 
@@ -155,7 +155,7 @@ def granted_email(
     workspace: str,
     staff: str,
     justification: str,
-    ticket: str | None,
+    ticket: str,
     expires_at: datetime,
 ) -> Email:
     link = f"{get_settings().app_url.rstrip('/')}/settings?section=security"
@@ -164,7 +164,7 @@ def granted_email(
         f"A member of Cloudoptics support, {staff}, opened read-only access to your "
         f"workspace {workspace}.",
         f"Reason: {justification}",
-        *([f"Support ticket: {ticket}"] if ticket else []),
+        f"Support ticket: {ticket}",
         f"The access ends automatically at {until}. Support can view your workspace but "
         "cannot change anything in it or in your AWS accounts.",
         f"Every use is in your workspace's audit log: {link}",

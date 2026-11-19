@@ -273,7 +273,8 @@ def seed_workspace(owner_sql: Sql, tenant: str) -> None:
         ),
         (
             "INSERT INTO support_access_grant (id, tenant_id, tenant_name, staff_user_id, "
-            "justification, expires_at) SELECT %s, %s, 'W', m.user_id, 'Ticket 42 triage', "
+            "justification, ticket_ref, expires_at) SELECT %s, %s, 'W', m.user_id, "
+            "'Ticket 42 triage', 'SUP-42', "
             "now() + interval '1 hour' FROM membership m WHERE m.tenant_id = %s LIMIT 1",
             grant,
             tenant,

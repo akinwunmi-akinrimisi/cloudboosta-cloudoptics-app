@@ -41,7 +41,7 @@ class StaffApi extends DemoApi {
       staffEmail: 'support@cloudoptics.example',
       staffName: null,
       justification: body.justification,
-      ticketRef: body.ticketRef ?? null,
+      ticketRef: body.ticketRef,
       createdAt: new Date(now).toISOString(),
       expiresAt: new Date(now + body.durationMinutes * 60_000).toISOString(),
       endedAt: null,
@@ -85,7 +85,7 @@ describe('staff support access', () => {
     expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
     expect(router.state.location.pathname).toBe('/overview')
     expect(screen.queryByRole('link', { name: 'Staff' })).toBeNull()
-    await expect(api.requestSupportGrant({ tenantId: 't', justification: 'x', durationMinutes: 60 })).rejects.toThrow('not available in the demo')
+    await expect(api.requestSupportGrant({ tenantId: 't', justification: 'x', ticketRef: 'SUP-1', durationMinutes: 60 })).rejects.toThrow('not available in the demo')
   })
 
   it('opens read-only access with a reason, shows the banner, and ends it', async () => {
@@ -103,7 +103,11 @@ describe('staff support access', () => {
     expect((submit as HTMLButtonElement).disabled).toBe(true)
     await user.type(screen.getByLabelText('Workspace ID'), tenant.id)
     await user.type(screen.getByLabelText('Justification'), 'Customer reports missing October costs')
-    await user.type(screen.getByLabelText('Ticket reference (optional)'), 'SUP-1042')
+    // A ticket reference is required, and access lasts 2 hours at most (docs/11b §7.4).
+    expect((submit as HTMLButtonElement).disabled).toBe(true)
+    const durations = within(screen.getByLabelText('Duration')).getAllByRole('option')
+    expect(durations.map((o) => (o as HTMLOptionElement).value)).toEqual(['15', '30', '60', '120'])
+    await user.type(screen.getByLabelText('Ticket reference'), 'SUP-1042')
     await user.selectOptions(screen.getByLabelText('Duration'), '120')
     await user.click(submit)
     expect(request).toHaveBeenCalledWith({

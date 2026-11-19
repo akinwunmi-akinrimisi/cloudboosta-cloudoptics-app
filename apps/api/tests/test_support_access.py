@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
+import psycopg
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
@@ -53,7 +54,7 @@ async def workspace(client: AsyncClient, login) -> tuple[str, dict[str, str], st
 async def grant(
     client: AsyncClient, staff: dict[str, str], tenant: str, **body: Any
 ) -> dict[str, Any]:
-    payload = {"tenantId": tenant, "justification": JUSTIFICATION, **body}
+    payload = {"tenantId": tenant, "justification": JUSTIFICATION, "ticketRef": "SUP-1", **body}
     r = await client.post(BASE, json=payload, headers=staff)
     assert r.status_code == 201, r.text
     return r.json()  # type: ignore[no-any-return]
@@ -143,7 +144,9 @@ async def test_grant_lifecycle_request_use_and_end(
 
     # A second grant for the same workspace while one is active is refused.
     r = await client.post(
-        BASE, json={"tenantId": tenant, "justification": JUSTIFICATION}, headers=staff
+        BASE,
+        json={"tenantId": tenant, "justification": JUSTIFICATION, "ticketRef": "SUP-1"},
+        headers=staff,
     )
     assert r.status_code == 409 and r.json()["code"] == "support_access_active"
 
@@ -169,10 +172,10 @@ async def test_grants_expire_on_their_own(
 ) -> None:
     tenant, _, _ = await workspace(client, login)
     staff = await login(staff_email, mfa=True)
-    g = await grant(client, staff, tenant, durationMinutes=240)
+    g = await grant(client, staff, tenant, durationMinutes=120)
     assert (await client.get(f"/v1/tenants/{tenant}", headers=staff)).status_code == 200
     owner_sql(
-        "UPDATE support_access_grant SET created_at = now() - interval '5 hours', "
+        "UPDATE support_access_grant SET created_at = now() - interval '3 hours', "
         "expires_at = now() - interval '1 hour' WHERE id = %s",
         g["id"],
     )
@@ -187,21 +190,35 @@ async def test_grants_expire_on_their_own(
 
 
 async def test_duration_and_justification_limits(
-    client: AsyncClient, login, staff_email, outbox
+    client: AsyncClient, login, owner_sql, staff_email, outbox
 ) -> None:
     tenant, _, _ = await workspace(client, login)
     staff = await login(staff_email, mfa=True)
+    payload = {"tenantId": tenant, "justification": JUSTIFICATION}
+    r = await client.post(BASE, json=payload, headers=staff)
+    assert r.status_code == 422, "a ticket reference is required"
     for body in (
-        {"durationMinutes": 241},
+        {"durationMinutes": 121},
         {"durationMinutes": 14},
         {"justification": "   too short   "},
         {"ticketRef": "x" * 101},
+        {"ticketRef": "   "},
+        {"ticketRef": None},
     ):
-        payload = {"tenantId": tenant, "justification": JUSTIFICATION, **body}
+        payload = {"tenantId": tenant, "justification": JUSTIFICATION, "ticketRef": "SUP-1", **body}
         r = await client.post(BASE, json=payload, headers=staff)
         assert r.status_code == 422, body
-    payload = {"tenantId": str(uuid.uuid4()), "justification": JUSTIFICATION}
+    payload = {"tenantId": str(uuid.uuid4()), "justification": JUSTIFICATION, "ticketRef": "SUP-1"}
     assert (await client.post(BASE, json=payload, headers=staff)).status_code == 404
+    # The database holds the same limits (docs/11b §7.4: at most 2 hours, a ticket).
+    insert = (
+        "INSERT INTO support_access_grant (id, tenant_id, tenant_name, staff_user_id, "
+        "justification, ticket_ref, expires_at) SELECT %s, %s, 'W', user_id, %s, %s, "
+        "now() + CAST(%s AS interval) FROM membership WHERE tenant_id = %s"
+    )
+    for ticket, length in (("SUP-1", "121 minutes"), (None, "1 hour")):
+        with pytest.raises(psycopg.errors.IntegrityError):
+            owner_sql(insert, uuid.uuid4(), tenant, JUSTIFICATION, ticket, length, tenant)
 
 
 async def test_writes_are_refused_and_recorded(
@@ -277,7 +294,7 @@ async def test_non_staff_are_refused(
     client: AsyncClient, login, owner_sql, staff_email, outbox
 ) -> None:
     tenant, admin, _ = await workspace(client, login)
-    body = {"tenantId": tenant, "justification": JUSTIFICATION}
+    body = {"tenantId": tenant, "justification": JUSTIFICATION, "ticketRef": "SUP-1"}
     for headers in (admin, await login(mfa=True)):
         assert (await client.post(BASE, json=body, headers=headers)).status_code == 403
         assert (await client.get(BASE, headers=headers)).status_code == 403
@@ -307,7 +324,7 @@ async def test_non_staff_are_refused(
 async def test_mfa_is_required(client: AsyncClient, login, staff_email, outbox) -> None:
     tenant, _, _ = await workspace(client, login)
     without = await login(staff_email)
-    body = {"tenantId": tenant, "justification": JUSTIFICATION}
+    body = {"tenantId": tenant, "justification": JUSTIFICATION, "ticketRef": "SUP-1"}
     for r in (
         await client.post(BASE, json=body, headers=without),
         await client.get(BASE, headers=without),

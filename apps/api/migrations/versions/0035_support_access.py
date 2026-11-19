@@ -1,7 +1,7 @@
 """Staff break-glass access to one workspace (WBS ADM-6, PRD FR-SEC-07, docs/11b §7.4).
 
 - ``support_access_grant``: a Cloudoptics staff member's time-boxed, read-only access to one
-  workspace, with the justification and an optional ticket reference. Active while
+  workspace, with the justification and the support ticket reference. Active while
   ``ended_at`` is null and ``expires_at`` is in the future. ``tenant_name`` is copied at
   grant time so the staff console can list grants without reading other workspaces.
 - ``support_access_request``: every request made under a grant (method, path, status of the
@@ -36,12 +36,12 @@ CREATE TABLE support_access_grant (
   tenant_name    text NOT NULL,
   staff_user_id  uuid NOT NULL REFERENCES app_user(id),
   justification  text NOT NULL CHECK (length(justification) BETWEEN 10 AND 2000),
-  ticket_ref     text CHECK (ticket_ref IS NULL OR length(ticket_ref) BETWEEN 1 AND 100),
+  ticket_ref     text NOT NULL CHECK (length(ticket_ref) BETWEEN 1 AND 100),
   created_at     timestamptz NOT NULL DEFAULT now(),
   expires_at     timestamptz NOT NULL,
   ended_at       timestamptz,
   ended_by       uuid REFERENCES app_user(id),
-  CHECK (expires_at > created_at AND expires_at <= created_at + interval '4 hours')
+  CHECK (expires_at > created_at AND expires_at <= created_at + interval '2 hours')
 );
 CREATE INDEX ON support_access_grant (tenant_id, staff_user_id) WHERE ended_at IS NULL;
 CREATE INDEX ON support_access_grant (staff_user_id, created_at DESC);

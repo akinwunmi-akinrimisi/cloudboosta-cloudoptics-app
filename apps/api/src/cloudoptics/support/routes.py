@@ -62,7 +62,7 @@ Staff = Annotated[StaffSession, Depends(support_staff)]
 class GrantCreate(ApiModel):
     tenant_id: uuid.UUID
     justification: str = Field(min_length=10, max_length=2000)
-    ticket_ref: str | None = Field(default=None, max_length=100)
+    ticket_ref: str = Field(min_length=1, max_length=100)
     duration_minutes: int = Field(
         default=service.DEFAULT_MINUTES, ge=service.MIN_MINUTES, le=service.MAX_MINUTES
     )
@@ -77,8 +77,11 @@ class GrantCreate(ApiModel):
 
     @field_validator("ticket_ref")
     @classmethod
-    def _ticket(cls, value: str | None) -> str | None:
-        return (value or "").strip() or None
+    def _ticket(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("give the support ticket reference")
+        return value
 
 
 class Grant(ApiModel):
@@ -88,7 +91,7 @@ class Grant(ApiModel):
     staff_email: str
     staff_name: str | None
     justification: str
-    ticket_ref: str | None
+    ticket_ref: str
     created_at: datetime
     expires_at: datetime
     ended_at: datetime | None
@@ -113,7 +116,7 @@ async def list_grants(staff: Staff, session: Session) -> list[Grant]:
 
 @router.post("", response_model=Grant, status_code=status.HTTP_201_CREATED)
 async def create_grant(body: GrantCreate, staff: Staff, session: Session) -> Grant:
-    """Open read-only access to one workspace now, for ``durationMinutes`` (15 to 240)."""
+    """Open read-only access to one workspace now, for ``durationMinutes`` (15 to 120)."""
     await scope(session, user_id=staff.user.id, tenant_id=body.tenant_id)
     tenant = (await session.execute(service.TENANT, {"t": body.tenant_id})).one_or_none()
     if tenant is None:
