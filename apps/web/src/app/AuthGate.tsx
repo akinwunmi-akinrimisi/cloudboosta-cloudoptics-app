@@ -5,6 +5,7 @@ import { useEffect } from 'react'
 
 import { HttpApi } from '../api/http'
 import type { Api } from '../api/types'
+import { pickAttribution, rememberAttribution } from '../lib/attribution'
 import { authRedirectUri } from './paths'
 
 // Decides how people sign in, from the API's /v1/auth/config: WorkOS AuthKit on hosted
@@ -22,7 +23,11 @@ export function AuthGate({ api, children }: { api: Api; children: ReactNode }) {
       redirectUri={authRedirectUri(window.location.origin, import.meta.env.BASE_URL)}
       // No custom WorkOS auth domain yet, so the refresh token lives in local storage.
       devMode
-      onRedirectCallback={() => window.history.replaceState(null, '', import.meta.env.BASE_URL)}
+      onRedirectCallback={({ state }) => {
+        // Where the visitor came from, round-tripped through WorkOS (docs/14 §6.5, §7.5).
+        rememberAttribution(pickAttribution((state as { attribution?: Record<string, unknown> } | null)?.attribution))
+        window.history.replaceState(null, '', import.meta.env.BASE_URL)
+      }}
     >
       <WorkOSBridge api={api}>{children}</WorkOSBridge>
     </AuthKitProvider>
@@ -40,7 +45,7 @@ function WorkOSBridge({ api, children }: { api: HttpApi; children: ReactNode }) 
   api.attachProvider({
     signedIn: auth.user !== null,
     getToken: () => auth.getAccessToken(),
-    signIn: () => auth.signIn(),
+    signIn: (o) => (o?.signUp ? auth.signUp({ state: o.state }) : auth.signIn({ state: o?.state })),
     signOut: () => auth.signOut(),
   })
   // Re-mount the app when the user changes so routes re-check the session.

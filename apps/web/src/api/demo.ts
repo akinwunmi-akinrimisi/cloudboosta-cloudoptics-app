@@ -1209,7 +1209,7 @@ export class DemoApi implements Api {
     this.save()
     const base = `${import.meta.env.BASE_URL}cfn`
     return {
-      intent: { id, status: 'waiting', connectionId: null, error: null },
+      intent: { id, status: 'waiting', connectionId: null, error: null, expiresAt: new Date(Date.now() + 7 * DAY_MS).toISOString() },
       // Staging and production offer the one-click AWS link, so the demo does too. There is no
       // S3-hosted template here, so the link opens the template itself (read-only) and the
       // stack "reports back" by itself after a few seconds.

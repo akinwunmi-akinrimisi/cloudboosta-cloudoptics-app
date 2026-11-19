@@ -34,6 +34,8 @@ jobs:
           VITE_BASE: /${{ github.event.repository.name }}/
           # Not on the Cloudoptics origin, so "Start free" needs the absolute address.
           VITE_SIGNUP_URL: https://cloudoptics.cloudboosta.com/app/sign-in?intent=signup
+          # The onboarding links to How it works and Security (SITE-16).
+          VITE_SITE_URL: https://cloudoptics.cloudboosta.com
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: apps/web/dist

@@ -11,6 +11,7 @@ import {
 } from '@tanstack/react-router'
 
 import type { Api, Me } from '../api/types'
+import { parseSignInSearch } from '../lib/attribution'
 import { SignIn } from '../pages/SignIn'
 import { isSection, type SettingsSection } from '../pages/SettingsNav'
 import { Connections, Overview } from '../pages/Workspace'
@@ -59,6 +60,8 @@ async function loadMe({ api, queryClient }: RouterContext): Promise<Me> {
 const signIn = createRoute({
   getParentRoute: () => root,
   path: '/sign-in',
+  // "Start free" on the site: ?intent=signup, plus where the visitor came from (docs/14 §4.3).
+  validateSearch: parseSignInSearch,
   component: SignIn,
 })
 

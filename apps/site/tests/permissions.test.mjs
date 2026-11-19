@@ -1,7 +1,9 @@
 // SITE-08 acceptance: the plain-language permission entries and the template must agree both ways.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { buildExport, compare, loadData, loadTemplate, templateFacts, templateRoles } from '../scripts/permissions-lib.mjs'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { REPO_ROOT, buildAppExport, buildExport, compare, loadData, loadTemplate, templateFacts, templateRoles } from '../scripts/permissions-lib.mjs'
 
 const data = loadData()
 const fresh = () => loadTemplate(data.template)
@@ -71,4 +73,12 @@ test('facts quoted on the pages come from the template', () => {
   const read = out.roles.filter((r) => r.readOnly)
   assert.deepEqual(read.map((r) => r.roleName), ['CloudopticsBillingReader', 'CloudopticsResourceReader'])
   for (const r of read) assert.equal(r.maxSessionSeconds, 3600)
+})
+
+test("the app's copy (apps/web/src/data/permissions.json) is up to date with the template", () => {
+  const committed = JSON.parse(readFileSync(join(REPO_ROOT, 'apps/web/src/data/permissions.json'), 'utf8'))
+  assert.deepEqual(committed, buildAppExport(fresh(), data), 'Run: pnpm --filter @cloudoptics/site permissions, and commit apps/web/src/data/permissions.json')
+  const inTemplate = new Set(Object.values(templateRoles(fresh())).flatMap((r) => r.statements.flatMap((s) => s.actions)))
+  const inApp = new Set(committed.roles.flatMap((r) => r.groups.flatMap((g) => g.actions)))
+  assert.deepEqual([...inApp].sort(), [...inTemplate].sort())
 })

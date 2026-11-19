@@ -7,7 +7,9 @@ import { useEffect, useState } from 'react'
 import type { Connection, IntentSetup } from '../api/types'
 import { ACCESS_STACK_NAME, ApiError } from '../api/types'
 import { rememberTenant, useApi, useCurrentTenantId, useMe } from '../app/context'
+import { PermissionPanel, SiteLinks } from '../components/permissions'
 import { Alert, Button, Card, Field, Logo, StatusPill, cx } from '../components/ui'
+import { DEMO_URL, HOW_IT_WORKS_STACK, absoluteSiteUrl } from '../lib/site'
 
 export const COUNTRIES: [string, string][] = [
   ['NG', 'Nigeria'],
@@ -22,7 +24,10 @@ export const COUNTRIES: [string, string][] = [
   ['US', 'Other (USD)'],
 ]
 
-const STEPS = ['Workspace', 'Connect AWS', 'Check access']
+// The same names and times as the public site (apps/site/src/data/claims.json, docs/14 §6.4);
+// App.test.tsx fails when the two disagree.
+export const STEPS = ['Workspace', 'Connect AWS', 'Check access']
+export const AWS_MINUTES = 3
 const POLL_MS = 5000
 // After this long with no word from the stack, say so and offer the link again.
 const SLOW_MS = 10 * 60 * 1000
@@ -144,6 +149,7 @@ function ConnectOptions({
   accountId,
   opened,
   onOpened,
+  colleagueMessage,
 }: {
   quickCreateUrl: string | null
   templateUrl: string
@@ -151,6 +157,8 @@ function ConnectOptions({
   accountId?: string
   opened: boolean
   onOpened: () => void
+  /** Offers "Copy link for a colleague" with this text (docs/14 §6.2). */
+  colleagueMessage?: string
 }) {
   const byHand = (
     <>
@@ -165,9 +173,12 @@ function ConnectOptions({
   if (!quickCreateUrl) return byHand
   return (
     <>
-      <a href={quickCreateUrl} target="_blank" rel="noreferrer" className={LINK_STYLE} onClick={onOpened}>
-        Open AWS and connect <ExternalLink size={16} />
-      </a>
+      <div className="flex flex-wrap items-center gap-2">
+        <a href={quickCreateUrl} target="_blank" rel="noreferrer" className={LINK_STYLE} onClick={onOpened}>
+          Open AWS and connect <ExternalLink size={16} />
+        </a>
+        {colleagueMessage && <ForColleague message={colleagueMessage} onCopied={onOpened} />}
+      </div>
       <details className="rounded-sm border border-border px-3 py-2">
         <summary className="cursor-pointer text-sm font-medium">Prefer to deploy the template yourself?</summary>
         <p className="mt-2 text-sm text-secondary">
@@ -176,6 +187,71 @@ function ConnectOptions({
         <div className="mt-3 flex flex-col gap-4">{byHand}</div>
       </details>
     </>
+  )
+}
+
+/**
+ * For someone without rights in the billing account: copies the one-click link with a short
+ * note. The link carries only what AWS shows on its page anyway (the workspace's ExternalId and
+ * ids), works for this workspace only and expires with the intent.
+ */
+function ForColleague({ message, onCopied }: { message: string; onCopied: () => void }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const copy = () => {
+    const done = () => {
+      setState('copied')
+      // The stack may now be created from another browser: start watching for it.
+      onCopied()
+    }
+    if (!navigator.clipboard) return setState('failed')
+    navigator.clipboard.writeText(message).then(done, () => setState('failed'))
+  }
+  return (
+    <>
+      <Button variant="secondary" onClick={copy}>
+        {state === 'copied' ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+        Copy link for a colleague
+      </Button>
+      <span role="status" className="text-xs text-secondary">
+        {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Copy the text below.' : ''}
+      </span>
+      {state === 'failed' && (
+        <textarea
+          readOnly
+          aria-label="Message for a colleague"
+          rows={6}
+          value={message}
+          className="w-full rounded-sm border border-border-strong bg-surface-1 p-2 font-mono text-xs"
+          onFocus={(e) => e.currentTarget.select()}
+        />
+      )}
+    </>
+  )
+}
+
+export function colleagueMessage(quickCreateUrl: string, expiresAt?: string | null): string {
+  const until = expiresAt
+    ? ` It works until ${new Date(expiresAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}.`
+    : ''
+  return [
+    `Could you connect our AWS account to Cloudoptics? It is read-only and takes about ${AWS_MINUTES} minutes.`,
+    '',
+    '1. Sign in to the AWS account that receives the bill (the management account if we use AWS Organizations).',
+    '2. Open this link, tick the box that starts "I acknowledge" and choose Create stack:',
+    quickCreateUrl,
+    '',
+    `What it creates: ${absoluteSiteUrl(HOW_IT_WORKS_STACK)}`,
+    `The link is for our workspace only.${until}`,
+  ].join('\n')
+}
+
+/** Permissions and the public pages, under the connect options on both AWS steps. */
+function AccessDetails() {
+  return (
+    <div className="mt-6 flex flex-col gap-3">
+      <PermissionPanel />
+      <SiteLinks />
+    </div>
   )
 }
 
@@ -196,7 +272,7 @@ function AwsSteps({ accountId }: { accountId?: string }) {
       <li>
         At the bottom of that page, tick the box that starts “I acknowledge” and choose <strong>Create stack</strong>.
       </li>
-      <li>Come back here. This page moves on by itself when AWS is done, in about 3 minutes.</li>
+      <li>Come back here. This page moves on by itself when AWS is done, in about {AWS_MINUTES} minutes.</li>
     </ol>
   )
 }
@@ -374,10 +450,14 @@ function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConnected: 
             values={handValues({ ...setup, tenantId })}
             opened={openedAt !== null}
             onOpened={() => setOpenedAt((t) => t ?? Date.now())}
+            colleagueMessage={
+              setup.quickCreateUrl ? colleagueMessage(setup.quickCreateUrl, setup.intent.expiresAt) : undefined
+            }
           />
           {openedAt !== null && <Waiting since={openedAt} onRetry={start} error={intent.data?.error ?? null} />}
         </div>
       )}
+      <AccessDetails />
     </Card>
   )
 }
@@ -470,6 +550,7 @@ function ConnectExisting({
         />
         {openedAt !== null && <Waiting since={openedAt} onRetry={() => setOpenedAt(Date.now())} error={null} />}
       </div>
+      <AccessDetails />
       <div className="mt-6">
         <Link to="/settings/connections" className="text-sm text-secondary underline">
           Back to Connections
@@ -567,6 +648,14 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
               {busy ? 'Creating…' : 'Create workspace'}
             </Button>
           </form>
+          {api.mode !== 'demo' && (
+            <p className="mt-4 text-sm text-secondary">
+              Not ready?{' '}
+              <a className="text-accent underline" href={DEMO_URL}>
+                Explore the sample workspace
+              </a>
+            </p>
+          )}
         </Card>
       )}
 

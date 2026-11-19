@@ -22,6 +22,7 @@ import type {
   AuditPage,
   AuthConfig,
   AuthProvider,
+  SignInOptions,
   Connection,
   ConnectionCreate,
   ConnectionIntent,
@@ -87,8 +88,8 @@ export class HttpApi implements Api {
     return this.provider ? this.provider.signedIn : read('session', TOKEN_KEY) !== null
   }
 
-  async signIn(email: string, name?: string): Promise<void> {
-    if (this.provider) return this.provider.signIn()
+  async signIn(email: string, name?: string, options?: SignInOptions): Promise<void> {
+    if (this.provider) return this.provider.signIn(options)
     const res = await this.request<{ accessToken: string }>('POST', '/v1/dev/token', { email, name }, false)
     write('session', TOKEN_KEY, res.accessToken)
   }
