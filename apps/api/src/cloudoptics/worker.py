@@ -19,6 +19,7 @@ async def main() -> None:
                 "metrics",
                 "analysis",
                 "notifications",
+                "privacy",
             ]
         )
 

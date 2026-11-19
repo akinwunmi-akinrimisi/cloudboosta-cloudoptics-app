@@ -16,6 +16,7 @@ import { Costs } from '../pages/Costs'
 import { RecommendationDetail, Recommendations } from '../pages/Recommendations'
 import { Reports } from '../pages/Reports'
 import { Settings } from '../pages/Settings'
+import { isSection, type SettingsSection } from '../pages/SettingsNav'
 import { Anomalies } from '../pages/Anomalies'
 import { Budgets } from '../pages/Budgets'
 import { Commitments } from '../pages/Commitments'
@@ -128,7 +129,16 @@ const reports = createRoute({
     return <Reports month={month} />
   },
 })
-const settings = createRoute({ getParentRoute: () => app, path: '/settings', component: Settings })
+const settings = createRoute({
+  getParentRoute: () => app,
+  path: '/settings',
+  validateSearch: (search: Record<string, unknown>): { section?: SettingsSection } =>
+    isSection(search.section) ? { section: search.section } : {},
+  component: function SettingsRoute() {
+    const { section } = settings.useSearch()
+    return <Settings section={section} />
+  },
+})
 
 const routeTree = root.addChildren([
   signIn,

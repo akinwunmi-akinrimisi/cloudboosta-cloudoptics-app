@@ -36,6 +36,8 @@ import type {
   CostSummary,
   CurrentRate,
   DailyCosts,
+  DataDeletion,
+  DeletionVerification,
   IntentSetup,
   Me,
   InventorySummary,
@@ -57,8 +59,10 @@ import type {
   RuleSettings,
   RuleSettingsView,
   SavingsPlanAdvisory,
+  StackSteps,
   Tenant,
   TenantChange,
+  TenantDeletion,
   UsageSeries,
 } from './types'
 import { ApiError } from './types'
@@ -129,8 +133,53 @@ interface State {
   resourceAccess?: Record<string, boolean>
   /** connectionId -> the demo's latest reload of its bills. */
   reloads?: Record<string, { requestedAt: string; period: string | null }>
+  /** Deletion requests per tenant, newest first. A workspace deletion never comes due in the demo. */
+  deletions?: Record<string, DataDeletion[]>
   /** One-click links waiting for the (simulated) stack to report back. */
   intents?: Record<string, { tenantId: string; createdAt: number; connectionId: string | null }>
+}
+
+const DEMO_GRACE_DAYS = 7
+
+/** As the API (privacy.service.stacks_to_delete): what the setup created in the account. */
+function demoStackSteps(conn: Connection): StackSteps {
+  const stacks =
+    conn.stackName === 'cloudoptics-access'
+      ? ['cloudoptics-access']
+      : [
+          conn.stackName || 'cloudoptics-billing-access',
+          'cloudoptics-resource-access',
+          ...(conn.accountType === 'management' ? ['cloudoptics-resource-stackset'] : []),
+        ]
+  return { awsAccountId: conn.awsAccountId, accountType: conn.accountType, stacks }
+}
+
+/** Plausible row counts for a demo connection's data (none if it never worked). */
+function demoConnectionVerification(conn: Connection): DeletionVerification {
+  const worked = conn.lastValidatedAt !== null
+  const n = (count: number) => (worked ? count : 0)
+  const counts: Record<string, number> = {
+    cloud_connection: 1,
+    cloud_account: n(conn.accountType === 'management' ? 3 : 1),
+    connection_intent: n(1),
+    sync_run: n(42),
+    ingest_batch: n(3),
+    billing_file: n(6),
+    cost_daily: n(2_940),
+    cost_resource_daily: n(8_115),
+    cost_snapshot_ce: n(3),
+    cost_reconciliation: n(3),
+    resource: n(57),
+    resource_metric: n(1_368),
+    commitment: n(2),
+    commitment_snapshot: n(1),
+    recommendation: n(12),
+    recommendation_event: n(9),
+    anomaly: n(2),
+  }
+  const tables = Object.fromEntries(Object.entries(counts).map(([name, before]) => [name, { before, after: 0 }]))
+  const rowsDeleted = Object.values(counts).reduce((a, b) => a + b, 0)
+  return { tables, rowsDeleted, verified: true, accounts: [conn.awsAccountId], unusedTagSetsDeleted: n(4) }
 }
 
 /** The demo's ended months, newest first: last month matches its monthly report. */
@@ -1144,6 +1193,103 @@ export class DemoApi implements Api {
   async disconnectConnection(tenantId: string, connectionId: string): Promise<void> {
     await this.tick()
     this.connection(tenantId, connectionId).status = 'disconnected'
+    this.save()
+  }
+
+  private deletionList(tenantId: string): DataDeletion[] {
+    this.state.deletions ??= {}
+    return (this.state.deletions[tenantId] ??= [])
+  }
+
+  private newDeletion(kind: DataDeletion['kind'], label: string, connectionId: string | null): DataDeletion {
+    const now = new Date().toISOString()
+    return {
+      id: randomId(),
+      kind,
+      connectionId,
+      targetLabel: label,
+      status: 'scheduled',
+      requestedAt: now,
+      requestedByEmail: this.requireMe().email,
+      scheduledFor: now,
+      cancelledAt: null,
+      completedAt: null,
+      verification: null,
+      error: null,
+    }
+  }
+
+  async deleteConnectionData(tenantId: string, connectionId: string, confirm: string): Promise<DataDeletion> {
+    await this.tick()
+    const conn = this.connection(tenantId, connectionId)
+    if (conn.status !== 'disconnected') {
+      throw new ApiError(409, 'Disconnect this AWS account before deleting its data.', [], 'connection_not_disconnected')
+    }
+    if (confirm.trim() !== conn.awsAccountId) {
+      throw new ApiError(422, `Type the AWS account ID ${conn.awsAccountId} to confirm.`, [], 'confirmation_mismatch')
+    }
+    const deletion = this.newDeletion('connection', conn.awsAccountId, conn.id)
+    deletion.status = 'completed'
+    deletion.completedAt = deletion.requestedAt
+    deletion.verification = demoConnectionVerification(conn)
+    this.deletionList(tenantId).unshift(deletion)
+    this.state.connections[tenantId] = (this.state.connections[tenantId] ?? []).filter((c) => c.id !== conn.id)
+    delete this.state.externalIds[conn.id]
+    delete this.state.resourceAccess?.[conn.id]
+    delete this.state.reloads?.[conn.id]
+    this.save()
+    return structuredClone(deletion)
+  }
+
+  async listDeletions(tenantId: string): Promise<DataDeletion[]> {
+    await this.tick()
+    this.tenant(tenantId)
+    return structuredClone(this.deletionList(tenantId))
+  }
+
+  private tenantDeletionView(tenantId: string, deletion: DataDeletion | undefined): TenantDeletion {
+    return {
+      deletion: deletion ? structuredClone(deletion) : null,
+      stacks: (this.state.connections[tenantId] ?? []).map(demoStackSteps),
+      stacksConsoleUrl:
+        'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks?filteringText=cloudoptics',
+      graceDays: DEMO_GRACE_DAYS,
+    }
+  }
+
+  async getTenantDeletion(tenantId: string): Promise<TenantDeletion> {
+    await this.tick()
+    this.tenant(tenantId)
+    const open = this.deletionList(tenantId).find((d) => d.kind === 'tenant' && d.status === 'scheduled')
+    return this.tenantDeletionView(tenantId, open)
+  }
+
+  async scheduleTenantDeletion(tenantId: string, confirmName: string): Promise<TenantDeletion> {
+    await this.tick()
+    const tenant = this.tenant(tenantId)
+    if (confirmName.trim() !== tenant.name.trim()) {
+      throw new ApiError(422, 'Type the workspace name exactly as shown to confirm.', [], 'confirmation_mismatch')
+    }
+    const list = this.deletionList(tenantId)
+    if (list.some((d) => d.kind === 'tenant' && d.status === 'scheduled')) {
+      throw new ApiError(409, 'This workspace is already scheduled for deletion.', [], 'deletion_already_scheduled')
+    }
+    const deletion = this.newDeletion('tenant', tenant.name, null)
+    deletion.scheduledFor = new Date(Date.now() + DEMO_GRACE_DAYS * 86_400_000).toISOString()
+    list.unshift(deletion)
+    tenant.status = 'deleting'
+    this.save()
+    return this.tenantDeletionView(tenantId, deletion)
+  }
+
+  async cancelTenantDeletion(tenantId: string): Promise<void> {
+    await this.tick()
+    const tenant = this.tenant(tenantId)
+    const open = this.deletionList(tenantId).find((d) => d.kind === 'tenant' && d.status === 'scheduled')
+    if (!open) throw new ApiError(404, 'This workspace is not scheduled for deletion.', [], 'no_deletion_scheduled')
+    open.status = 'cancelled'
+    open.cancelledAt = new Date().toISOString()
+    tenant.status = 'active'
     this.save()
   }
 
@@ -2328,6 +2474,43 @@ export class DemoApi implements Api {
           targetId: c.id,
           before: { status: 'pending' },
           after: { status: c.status },
+          ip: null,
+        })
+      }
+    }
+    for (const d of this.state.deletions?.[tenantId] ?? []) {
+      if (d.kind === 'connection') {
+        entries.push({
+          occurredAt: d.completedAt ?? d.requestedAt,
+          actor,
+          action: 'connection.data_deleted',
+          targetType: 'cloud_connection',
+          targetId: d.connectionId,
+          before: null,
+          after: { awsAccountId: d.targetLabel, ...d.verification },
+          ip: null,
+        })
+        continue
+      }
+      entries.push({
+        occurredAt: d.requestedAt,
+        actor,
+        action: 'tenant.deletion_scheduled',
+        targetType: 'tenant',
+        targetId: tenantId,
+        before: { status: 'active' },
+        after: { status: 'deleting', scheduledFor: d.scheduledFor },
+        ip: null,
+      })
+      if (d.cancelledAt) {
+        entries.push({
+          occurredAt: d.cancelledAt,
+          actor,
+          action: 'tenant.deletion_cancelled',
+          targetType: 'tenant',
+          targetId: tenantId,
+          before: { status: 'deleting' },
+          after: { status: 'active' },
           ip: null,
         })
       }

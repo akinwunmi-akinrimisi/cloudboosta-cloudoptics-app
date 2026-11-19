@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { Link } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
 
 import { useApi } from '../app/context'
 import type {
@@ -15,6 +16,8 @@ import type {
 import { ApiError } from '../api/types'
 import { Alert, Button, Card } from '../components/ui'
 import { RULES } from '../lib/rules'
+import { DangerZone, DeletionHistory } from './DataDeletion'
+import { SECTIONS, SettingsLayout, type SettingsSection } from './SettingsNav'
 import { useWorkspace } from './Workspace'
 
 // The currencies the API accepts for a workspace (identity SUPPORTED_CURRENCIES).
@@ -55,7 +58,7 @@ function WorkspaceSettings({ tenant }: { tenant: Tenant }) {
   return (
     <Card className="flex flex-col gap-4">
       <div>
-        <h2 className="text-base font-semibold">Workspace</h2>
+        <h2 className="text-base font-semibold">Currency and time zone</h2>
         <p className="mt-1 text-sm text-secondary">
           Costs are shown in US dollars and in this currency. Dates and the daily cut-off use this time zone.
         </p>
@@ -94,6 +97,58 @@ function WorkspaceSettings({ tenant }: { tenant: Tenant }) {
       </div>
       {save.error && <Alert tone="error">Could not save. Try again.</Alert>}
       {saved && !save.isPending && !save.error && <p className="text-xs text-good-ink">Saved.</p>}
+    </Card>
+  )
+}
+
+/** The workspace's name (in the header, emails and reports). Admins only. */
+function WorkspaceIdentity({ tenant }: { tenant: Tenant }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const [name, setName] = useState(tenant.name)
+  const save = useMutation({
+    mutationFn: () => api.updateTenant(tenant.id, { name: name.trim() }),
+    onSuccess: (updated) => {
+      qc.setQueryData(['tenant', tenant.id], updated)
+      void qc.invalidateQueries({ queryKey: ['me'] })
+      void qc.invalidateQueries({ queryKey: ['audit-log', tenant.id] })
+    },
+  })
+  const changed = name.trim() !== tenant.name && name.trim().length > 0
+  return (
+    <Card className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-base font-semibold">Workspace name</h2>
+        <p className="mt-1 text-sm text-secondary">
+          Shown in the header and in every email and monthly report. Choose who gets the monthly report on the{' '}
+          <Link to="/reports" className="text-accent underline">
+            Reports
+          </Link>{' '}
+          page.
+        </p>
+      </div>
+      <form
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (changed) save.mutate()
+        }}
+      >
+        <label className="flex min-w-60 flex-1 flex-col gap-1 text-sm">
+          <span className="font-medium">Name</span>
+          <input
+            className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 text-sm"
+            value={name}
+            maxLength={120}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+        <Button type="submit" disabled={!changed || save.isPending}>
+          {save.isPending ? 'Saving…' : 'Save name'}
+        </Button>
+      </form>
+      {save.error && <Alert tone="error">{errorText(save.error, 'Could not save. Try again.')}</Alert>}
+      {save.isSuccess && !changed && <p className="text-xs text-good-ink">Saved.</p>}
     </Card>
   )
 }
@@ -445,6 +500,12 @@ const ACTIONS: Record<string, string> = {
   'member.joined': 'Joined from an invite',
   'member.role_changed': 'Changed a member\'s role',
   'member.removed': 'Removed a member',
+  'connection.reconnected': 'Reconnected an AWS account',
+  'connection.data_deletion_requested': 'Asked to delete an AWS account’s data',
+  'connection.data_deleted': 'Deleted an AWS account’s data',
+  'tenant.deletion_scheduled': 'Scheduled the workspace for deletion',
+  'tenant.deletion_cancelled': 'Cancelled the workspace deletion',
+  'tenant.data_deleted': 'Deleted the workspace’s data',
 }
 
 function who(entry: AuditEntry): string {
@@ -456,6 +517,13 @@ function who(entry: AuditEntry): string {
 function change(entry: AuditEntry): string {
   const after = entry.after ?? {}
   const before = entry.before ?? {}
+  if (typeof after.rowsDeleted === 'number') {
+    const accounts = Array.isArray(after.accounts) && after.accounts.length ? `AWS account ${after.accounts.join(', ')}: ` : ''
+    return `${accounts}${after.rowsDeleted.toLocaleString('en')} records deleted, each table checked to be empty`
+  }
+  if (typeof after.scheduledFor === 'string') {
+    return `deleted on ${new Date(after.scheduledFor).toLocaleDateString('en-GB', { dateStyle: 'long' })} unless cancelled`
+  }
   if (typeof after.status === 'string') {
     const from = typeof before.status === 'string' ? `${before.status} → ` : ''
     const reason = typeof after.reason === 'string' && after.reason ? ` (${after.reason})` : ''
@@ -518,22 +586,57 @@ function AuditLog({ tenantId }: { tenantId: string }) {
   )
 }
 
-export function Settings() {
+function SectionHeading({ id, children }: { id: SettingsSection; children: string }) {
+  return (
+    <h2 id={`settings-${id}`} className="scroll-mt-4 text-sm font-semibold uppercase tracking-wide text-muted">
+      {children}
+    </h2>
+  )
+}
+
+const LABEL = Object.fromEntries(SECTIONS.map((s) => [s.id, s.label])) as Record<SettingsSection, string>
+
+export function Settings({ section }: { section?: SettingsSection } = {}) {
   const { me, tenantId, tenant } = useWorkspace()
   const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
+  const isAdmin = role === 'admin'
+  // A section link scrolls to its part of the page (jsdom has no scrollIntoView).
+  useEffect(() => {
+    if (section) document.getElementById(`settings-${section}`)?.scrollIntoView?.({ behavior: 'smooth' })
+  }, [section, role])
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold">Settings</h1>
         <p className="text-sm text-secondary">Your workspace, what Cloudoptics looks for, and who changed what.</p>
       </div>
-      {role === 'admin' && tenant.data && <WorkspaceSettings tenant={tenant.data} />}
-      {tenantId !== null && me && role !== undefined && (
-        <MembersCard tenantId={tenantId} meId={me.id} isAdmin={role === 'admin'} />
-      )}
-      {tenantId !== null && role !== undefined && <RuleSettingsCard tenantId={tenantId} canEdit={role === 'admin'} />}
-      {tenantId !== null && role !== undefined && <NotificationsCard tenantId={tenantId} role={role} />}
-      {tenantId !== null && role === 'admin' && <AuditLog tenantId={tenantId} />}
+      <SettingsLayout current={section ?? null} role={role}>
+        {tenantId !== null && me && role !== undefined && (
+          <>
+            <SectionHeading id="users">{LABEL.users}</SectionHeading>
+            <MembersCard tenantId={tenantId} meId={me.id} isAdmin={isAdmin} />
+            <SectionHeading id="notifications">{LABEL.notifications}</SectionHeading>
+            <NotificationsCard tenantId={tenantId} role={role} />
+            <SectionHeading id="preferences">{LABEL.preferences}</SectionHeading>
+            {isAdmin && tenant.data && <WorkspaceSettings tenant={tenant.data} />}
+            <RuleSettingsCard tenantId={tenantId} canEdit={isAdmin} />
+          </>
+        )}
+        {tenantId !== null && isAdmin && (
+          <>
+            <SectionHeading id="security">{LABEL.security}</SectionHeading>
+            <AuditLog tenantId={tenantId} />
+          </>
+        )}
+        {tenantId !== null && isAdmin && tenant.data && (
+          <>
+            <SectionHeading id="workspace">{LABEL.workspace}</SectionHeading>
+            <WorkspaceIdentity tenant={tenant.data} />
+            <DeletionHistory tenantId={tenantId} />
+            <DangerZone tenant={tenant.data} />
+          </>
+        )}
+      </SettingsLayout>
     </div>
   )
 }
