@@ -71,8 +71,9 @@ class Settings(BaseSettings):
     # production use the Procrastinate queue and a worker process.
     jobs_mode: Literal["inline", "queue"] = "inline"
     # Jobs one worker process runs at once. Each extra slot can hold one more bill load in
-    # memory, so this is sized to the worker's memory (512 MB in staging).
-    worker_concurrency: int = Field(default=3, ge=1, le=32)
+    # memory, so this is sized to the worker's memory: 2 for the 512 MB staging worker. Raise it
+    # (CLOUDOPTICS_WORKER_CONCURRENCY) only with a larger worker instance.
+    worker_concurrency: int = Field(default=2, ge=1, le=32)
 
     # Days between a workspace deletion request and the deletion, while admins can cancel it
     # (docs/08 §1.7). PRD US-8.3: the data is gone within 30 days of the request.
