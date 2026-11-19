@@ -115,6 +115,10 @@ TABLES: dict[str, TenantTable] = {
 KEPT: dict[str, str] = {
     "audit_log": "append-only, hash-chained record kept for its retention period (ADR-015)",
     "data_deletion": "the deletion requests and their verification records",
+    # Migration 0031 (ETags): a workspace ID and a counter, no customer data. Deleting the
+    # workspace row itself bumps them at commit, so they would only be re-created.
+    "tenant_data_version": "per-workspace data-version counter for ETags; ID and number only",
+    "data_version_pending": "commit-time queue for the data-version counter; ID and number only",
 }
 
 _UUIDS = ARRAY(UUID(as_uuid=True))

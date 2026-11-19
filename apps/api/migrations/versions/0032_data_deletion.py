@@ -11,14 +11,14 @@ Deleting a connection's anomalies needs DELETE on ``anomaly`` (0019 granted no D
 Everything else goes by ``ON DELETE CASCADE`` from ``cloud_connection`` or ``tenant``, or
 by DELETE grants the app role already has (``recommendation``, ``tag_set``, ``tenant``).
 
-Revision ID: 0029
-Revises: 0028
+Revision ID: 0032
+Revises: 0031
 """
 
 from cloudoptics.platform.migration_sql import run_sql
 
-revision = "0029"
-down_revision = "0028"
+revision = "0032"
+down_revision = "0031"
 branch_labels = None
 depends_on = None
 
