@@ -34,6 +34,10 @@ SHARED_TABLES: dict[str, str] = {
     "fx_rate": "platform exchange rates (feed and staff-entered), not workspace data",
     "fx_data_version": "one platform-wide version counter for exchange rates",
     "rate_limit_counter": "throttling counters keyed by a hash; no workspace content",
+    "site_event": (
+        "anonymous public-site page views (0038): no tenant, user or IP; RLS lets the app "
+        "insert, and only the staff analytics route read and expire"
+    ),
     "procrastinate_jobs": "job queue: arguments carry IDs only; each job sets its tenant scope",
     "procrastinate_events": "job queue bookkeeping",
     "procrastinate_periodic_defers": "job queue bookkeeping",
@@ -66,6 +70,10 @@ CROSS_TENANT_POLICIES: dict[tuple[str, str], str] = {
     ("support_access_request", "support_console_read"): "staff console, after admin+MFA checks",
     ("audit_log", "audit_append"): "platform rows (tenant_id NULL) are appended by the app",
     ("audit_log", "audit_platform_console"): "staff console verifies the platform chain (0037)",
+    ("funnel_event", "own_signup"): (
+        "a new user writes their own sign-up row, which has no workspace (tenant_id NULL, 0038)"
+    ),
+    ("funnel_event", "analytics_read"): "staff funnel report, after admin+MFA checks (0038)",
 }
 
 TENANT_QUAL = re.compile(r"^\(?(tenant_id|id) = app_current_tenant\(\)\)?$")
@@ -147,6 +155,8 @@ def test_tenant_tables_enable_and_force_rls_with_a_tenant_policy(owner_sql: Sql)
         ):
             problems.append(f"{name}: no policy with tenant_id = app_current_tenant()")
         for _, policy, cmd, qual, check in own:
+            if (name, policy) in CROSS_TENANT_POLICIES:
+                continue  # reviewed: rule 2
             write_check = check if check is not None else qual
             if cmd in ("ALL", "INSERT", "UPDATE") and "app_current_tenant()" not in (
                 write_check or ""
