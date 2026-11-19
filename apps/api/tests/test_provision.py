@@ -76,3 +76,79 @@ def test_a_new_value_replaces_the_old_one(monkeypatch: pytest.MonkeyPatch) -> No
     provision.apply_runtime_config(spec, current)
     api = [e for e in spec["services"][0]["envs"] if e["key"] == "AWS_ACCESS_KEY_ID"]
     assert [e["value"] for e in api] == ["AKIA-NEW"]
+
+
+def test_the_applied_spec_keeps_every_alert_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WORKOS_API_KEY", "sk_x")
+    spec = provision.render_spec({"APP_DATABASE_URL": "u", "LOCAL_DATA_KEY": "k"})
+    provision.apply_runtime_config(spec, None)
+    assert {a["rule"] for a in spec["alerts"]} == {"DEPLOYMENT_FAILED", "DOMAIN_FAILED"}
+    for comp in (spec["services"][0], spec["workers"][0]):
+        assert {a["rule"] for a in comp["alerts"]} >= {
+            "CPU_UTILIZATION",
+            "MEM_UTILIZATION",
+            "RESTART_COUNT",
+        }
+        assert all(a["operator"] == "GREATER_THAN" and a["window"] for a in comp["alerts"])
+
+
+class FakeApi:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, Any]] = []
+        self.checks: list[dict[str, Any]] = []
+        self.alerts: dict[str, list[dict[str, Any]]] = {}
+
+    def __call__(self, method: str, path: str, body: Any = None) -> dict[str, Any]:
+        self.calls.append((method, path, body))
+        if path == "/apps/app-1/alerts":
+            return {"alerts": [{"id": "a1", "slack_webhooks": [{"url": "s"}]}, {"id": "a2"}]}
+        if path.startswith("/uptime/checks?"):
+            return {"checks": self.checks}
+        if method == "POST" and path == "/uptime/checks":
+            check = {"id": f"c{len(self.checks)}", "name": body["name"]}
+            self.checks.append(check)
+            return {"check": check}
+        if path.endswith("/alerts") and path.startswith("/uptime/checks/"):
+            check_id = path.split("/")[3]
+            if method == "POST":
+                self.alerts.setdefault(check_id, []).append({"id": body["name"], **body})
+            return {"alerts": self.alerts.get(check_id, [])}
+        return {}
+
+
+def test_alerting_is_skipped_without_recipients(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = FakeApi()
+    monkeypatch.setattr(provision, "call", api)
+    monkeypatch.delenv("ALERT_EMAILS", raising=False)
+    provision.configure_alerting("app-1")
+    assert api.calls == []
+
+
+def test_alerting_sets_recipients_and_uptime_checks_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = FakeApi()
+    monkeypatch.setattr(provision, "call", api)
+    monkeypatch.setenv("ALERT_EMAILS", "oncall@example.com, founder@example.com")
+    provision.configure_alerting("app-1")
+    destinations = [c for c in api.calls if c[1].endswith("/destinations")]
+    assert [c[1] for c in destinations] == [
+        "/apps/app-1/alerts/a1/destinations",
+        "/apps/app-1/alerts/a2/destinations",
+    ]
+    assert destinations[0][2] == {
+        "emails": ["oncall@example.com", "founder@example.com"],
+        "slack_webhooks": [{"url": "s"}],
+    }
+    targets = {c[2]["target"] for c in api.calls if c[:2] == ("POST", "/uptime/checks")}
+    assert targets == {
+        "https://cloudoptics.cloudboosta.com/api/readyz",
+        "https://cloudoptics.cloudboosta.com/",
+    }
+    created_alerts = sum(len(v) for v in api.alerts.values())
+    assert created_alerts == 4
+
+    api.calls.clear()
+    provision.configure_alerting("app-1")  # a second run updates, never duplicates
+    assert not [c for c in api.calls if c[0] == "POST" and "/uptime/" in c[1]]
+    assert sum(len(v) for v in api.alerts.values()) == 4

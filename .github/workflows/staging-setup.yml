@@ -1,7 +1,8 @@
 # One-off / occasional setup of staging's external services (ADR-007, ADR-013, ADR-006):
 #   1. Cloudoptics' AWS account: template bucket, broker role, broker user (key rotated).
 #   2. App Platform: broker key, template URLs, WorkOS client ID and API key, and the
-#      Postmark server token (POSTMARK_API) and sender (POSTMARK_FROM) when present.
+#      Postmark server token (POSTMARK_API) and sender (POSTMARK_FROM) when present; the
+#      app spec's alert rules, and with ALERT_EMAILS their recipients and uptime checks.
 # Run it by hand from main (Actions -> Staging setup -> Run workflow). It reads credentials
 # from a GitHub environment. AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, WORKOS_API_KEY,
 # DIGITALOCEAN_TOKEN and POSTMARK_API must be secrets: GitHub masks secrets in logs but not
@@ -93,6 +94,10 @@ jobs:
           DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
           WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
           POSTMARK_API: ${{ secrets.POSTMARK_API }}
+          # Optional, comma-separated: recipients of the App Platform alerts and uptime
+          # checks (WBS OPS-7). Each must be a member of the DigitalOcean team. A secret, so
+          # the addresses are masked in this public repository's logs.
+          ALERT_EMAILS: ${{ secrets.ALERT_EMAILS }}
         run: uv run python infra/digitalocean/provision.py app
       - name: Wait for the deployment
         env:

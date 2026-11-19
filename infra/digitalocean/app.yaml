@@ -8,6 +8,9 @@ domains:
     type: PRIMARY
     zone: cloudboosta.com
 
+# Alert rules (WBS OPS-7). Names from the App Platform app spec reference. The spec holds
+# no recipients: provision.py assigns ALERT_EMAILS to every rule after it applies the spec
+# (docs/11g RB-05, RB-08). They change only when Staging setup runs.
 alerts:
   - rule: DEPLOYMENT_FAILED
   - rule: DOMAIN_FAILED
@@ -33,6 +36,11 @@ services:
       http_path: /readyz
       initial_delay_seconds: 10
       period_seconds: 15
+    alerts:
+      - &alert_cpu { rule: CPU_UTILIZATION, operator: GREATER_THAN, value: 80, window: TEN_MINUTES }
+      - &alert_mem { rule: MEM_UTILIZATION, operator: GREATER_THAN, value: 85, window: TEN_MINUTES }
+      - &alert_restarts { rule: RESTART_COUNT, operator: GREATER_THAN, value: 2, window: THIRTY_MINUTES }
+      - { rule: REQUEST_DURATION_P95_MS, operator: GREATER_THAN, value: 2000, window: TEN_MINUTES }
     envs:
       - &env_environment { key: CLOUDOPTICS_ENVIRONMENT, value: staging }
       - &env_auth { key: CLOUDOPTICS_AUTH_MODE, value: oidc }
@@ -57,6 +65,11 @@ workers:
     instance_size_slug: apps-s-1vcpu-0.5gb
     instance_count: 1
     run_command: python -m cloudoptics.worker
+    # A busy worker runs hot by design (bill loads), so CPU alerts only when it stays high.
+    alerts:
+      - { rule: CPU_UTILIZATION, operator: GREATER_THAN, value: 90, window: ONE_HOUR }
+      - *alert_mem
+      - *alert_restarts
     envs: [*env_environment, *env_auth, *env_jobs, *env_app_db, *env_data_key, *env_app_url]
 
 jobs:

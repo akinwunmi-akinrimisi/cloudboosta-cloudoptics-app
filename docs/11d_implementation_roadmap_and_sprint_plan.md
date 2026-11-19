@@ -236,6 +236,7 @@ UI designs on the design canvas using the **"Cloudoptic"** design system (after 
   - Load tests; E2E suite green.
   - **Full security-audit skill run** + fixes for all Critical/High findings.
   - Runbooks (11g) and the release checklist (PRD §8).
+- **Status (19 Nov 2026), operations:** on App Platform (ADR-013) rather than DOKS: image signing with cosign and a signature check before each staging deploy (OPS-9, Kyverno equivalent); App Platform alert rules, Uptime checks and an on-call rota with names to fill (OPS-7); a restore-test script and manual workflow for the managed PostgreSQL backups (OPS-8); worker sizing, queue-depth queries and the infrastructure budget instead of KEDA (OPS-10); runbooks RB-08 to RB-19 in 11g §4 and the [release checklist](release-checklist.md).
 - **Release:** a release candidate to staging and to the alpha partners. The full beta follows S7.
 - **Dependencies:** usability round 2; legal: ToS, privacy policy, DPA with NDPA/Kenya/POPIA clauses; security pack.
 - **Risks & mitigations:**
