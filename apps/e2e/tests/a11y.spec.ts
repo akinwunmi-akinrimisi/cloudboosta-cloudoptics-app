@@ -79,6 +79,7 @@ function mainPages(recommendationId: string): [string, string, string, RegExp | 
     ['Reports', '/reports', '/reports', /Report/],
     ['Connections', '/settings/connections', '/settings/connections', 'Connections'],
     ['Settings', '/settings', '/settings', 'Settings'],
+    ['New workspace', '/onboarding?new=true', '/onboarding?new=true', 'Create another workspace'],
   ]
 }
 

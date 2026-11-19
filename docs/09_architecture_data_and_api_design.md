@@ -205,13 +205,14 @@ The module interface (`CostQueryService`) hides the store, so the migration does
 
 | Layer | Strategy |
 |---|---|
-| **Model** | Pooled multi-tenancy (shared infrastructure). Every tenant-owned row has `tenant_id`. Tenant hierarchy (`parent_tenant_id`) supports partners/MSPs later |
+| **Model** | Pooled multi-tenancy (shared infrastructure). Every tenant-owned row has `tenant_id`. Customers are individual companies; resellers, agencies and MSPs are out of scope, so `parent_tenant_id` stays unused (ADR-017) |
 | **PostgreSQL** | **Row-level security (RLS)** on all tenant tables. The app sets `app.tenant_id` per transaction (`SET LOCAL`); the application DB role has no `BYPASSRLS`. A separate privileged role is used only for migrations and platform jobs (audited) |
 | **Object storage** | Tenant-prefixed paths; access only through the storage service that enforces the tenant prefix; per-tenant encryption context in object metadata; no public buckets |
 | **DuckDB/analytics** | Query builder injects a mandatory tenant path/filter; queries can't be passed raw from clients |
 | **Cache** | Keys namespaced `t:{tenant_id}:…` |
 | **Jobs** | Each job payload carries `tenant_id`; per-tenant concurrency and API budgets |
-| **Testing** | Automated cross-tenant access tests in CI (API and DB level); periodic RLS policy linting |
+| **Testing** | In CI on every PR (pytest, real PostgreSQL, the real app role): **RLS lint** (`tests/test_rls_lint.py`: every table with `tenant_id` has RLS ENABLE + FORCE and a `tenant_id = app_current_tenant()` policy, every other policy and every shared table is listed with its reason, the app role has no superuser/BYPASSRLS and owns nothing, SECURITY DEFINER functions fix `search_path`); **every-table cross-tenant test** (`tests/test_cross_tenant.py`: tables found in the catalogue, workspace B cannot read, update, delete, insert into or move rows into workspace A); **route membership test** (`tests/test_route_membership.py`: every route with `{tenant_id}`, read from the app's route table, depends on `require_role` and answers 404 to a non-member). A new table, policy or route is covered without editing the tests; an intended exception must be added to the test's allowlist with a reason |
+| **Users** | `app_user` has RLS (migration 0041): a session sees itself, the members of the workspace in context, that workspace's audit actors and break-glass staff, the staff who entered exchange rates, and everyone only in the staff console. The app role may update only its own `preferred_currency_view`; sign-in (find or create, email collisions) runs in the SECURITY DEFINER function `app_user_sign_in()` |
 | **Noisy neighbour** | Fair scheduling, per-tenant rate limits, query timeouts (e.g., 10s API, 15 min jobs) |
 | **Isolation upgrade path** | For large/regulated tenants later: dedicated schema or database (and storage bucket) via a tenant-placement table, with no API change |
 
