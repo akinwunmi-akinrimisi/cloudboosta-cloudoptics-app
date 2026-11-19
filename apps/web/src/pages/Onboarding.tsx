@@ -66,17 +66,28 @@ export function CopyValue({ label, value }: { label: string; value: string }) {
 const LINK_STYLE =
   'inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover'
 
-/** The values for creating the stack by hand, when one-click links are off. */
+/** Creating the stack by hand: the alternative to the one-click link, and the only way when links are off. */
 function ByHand({
   templateUrl,
   values,
+  accountId,
+  signIn,
 }: {
   templateUrl: string
   values: { label: string; value: string }[]
+  accountId?: string
+  /** False under the one-click steps, which already say where to sign in. */
+  signIn: boolean
 }) {
   return (
     <div className="flex flex-col gap-3">
       <ol className="list-decimal space-y-1 pl-5 text-sm text-secondary">
+        {signIn && (
+          <li>
+            In this browser, sign in to{' '}
+            {accountId ? <>AWS account {accountId}</> : <>your main AWS account, the one that receives the bill</>}.
+          </li>
+        )}
         <li>Download the template.</li>
         <li>
           In AWS, open{' '}
@@ -119,6 +130,53 @@ function handValues(s: {
     { label: 'ConnectionRef', value: s.connectionRef },
     { label: 'TenantId', value: s.tenantId },
   ]
+}
+
+/**
+ * The one-click link is the way to connect. Deploying the template by hand is offered as an
+ * alternative underneath (for teams that review templates first), and is the only way when
+ * one-click links are off.
+ */
+function ConnectOptions({
+  quickCreateUrl,
+  templateUrl,
+  values,
+  accountId,
+  opened,
+  onOpened,
+}: {
+  quickCreateUrl: string | null
+  templateUrl: string
+  values: { label: string; value: string }[]
+  accountId?: string
+  opened: boolean
+  onOpened: () => void
+}) {
+  const byHand = (
+    <>
+      <ByHand templateUrl={templateUrl} values={values} accountId={accountId} signIn={!quickCreateUrl} />
+      {!opened && (
+        <div className="flex justify-end">
+          <Button onClick={onOpened}>I have created the stack</Button>
+        </div>
+      )}
+    </>
+  )
+  if (!quickCreateUrl) return byHand
+  return (
+    <>
+      <a href={quickCreateUrl} target="_blank" rel="noreferrer" className={LINK_STYLE} onClick={onOpened}>
+        Open AWS and connect <ExternalLink size={16} />
+      </a>
+      <details className="rounded-sm border border-border px-3 py-2">
+        <summary className="cursor-pointer text-sm font-medium">Prefer to deploy the template yourself?</summary>
+        <p className="mt-2 text-sm text-secondary">
+          For teams that review a template before running it. It creates the same read-only stack.
+        </p>
+        <div className="mt-3 flex flex-col gap-4">{byHand}</div>
+      </details>
+    </>
+  )
 }
 
 /** What the person does in AWS: sign in, press one button, tick one box. */
@@ -301,7 +359,7 @@ function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConnected: 
         One click in AWS gives CloudOptics read-only access to your bill and your resources. It can never change
         anything in your account.
       </p>
-      <AwsSteps />
+      {setup?.quickCreateUrl && <AwsSteps />}
       {error && (
         <div className="mt-4">
           <Alert tone="error">{error}</Alert>
@@ -310,29 +368,13 @@ function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConnected: 
       {!setup && !error && <p className="mt-6 text-sm text-secondary">Preparing your link…</p>}
       {setup && (
         <div className="mt-6 flex flex-col gap-4">
-          {setup.quickCreateUrl ? (
-            <a
-              href={setup.quickCreateUrl}
-              target="_blank"
-              rel="noreferrer"
-              className={LINK_STYLE}
-              onClick={() => setOpenedAt((t) => t ?? Date.now())}
-            >
-              Open AWS and connect <ExternalLink size={16} />
-            </a>
-          ) : (
-            <>
-              <ByHand
-                templateUrl={setup.templateDownloadUrl}
-                values={handValues({ ...setup, tenantId })}
-              />
-              {openedAt === null && (
-                <div className="flex justify-end">
-                  <Button onClick={() => setOpenedAt(Date.now())}>I have created the stack</Button>
-                </div>
-              )}
-            </>
-          )}
+          <ConnectOptions
+            quickCreateUrl={setup.quickCreateUrl}
+            templateUrl={setup.templateDownloadUrl}
+            values={handValues({ ...setup, tenantId })}
+            opened={openedAt !== null}
+            onOpened={() => setOpenedAt((t) => t ?? Date.now())}
+          />
           {openedAt !== null && <Waiting since={openedAt} onRetry={start} error={intent.data?.error ?? null} />}
         </div>
       )}
@@ -409,38 +451,23 @@ function ConnectExisting({
           </a>
         </div>
       )}
-      <AwsSteps accountId={s.connection.awsAccountId} />
+      {s.accessQuickCreateUrl && <AwsSteps accountId={s.connection.awsAccountId} />}
       <div className="mt-6 flex flex-col gap-4">
-        {s.accessQuickCreateUrl ? (
-          <a
-            href={s.accessQuickCreateUrl}
-            target="_blank"
-            rel="noreferrer"
-            className={LINK_STYLE}
-            onClick={() => setOpenedAt((t) => t ?? Date.now())}
-          >
-            Open AWS and connect <ExternalLink size={16} />
-          </a>
-        ) : (
-          <>
-            <ByHand
-              templateUrl={s.accessTemplateDownloadUrl}
-              values={handValues({
-                externalId: s.externalId,
-                principalArn: s.principalArn,
-                resourceTemplateUrl: s.resourceTemplateUrl,
-                callbackUrl: s.callbackUrl,
-                connectionRef: s.connectionRef,
-                tenantId,
-              })}
-            />
-            {openedAt === null && (
-              <div className="flex justify-end">
-                <Button onClick={() => setOpenedAt(Date.now())}>I have created the stack</Button>
-              </div>
-            )}
-          </>
-        )}
+        <ConnectOptions
+          quickCreateUrl={s.accessQuickCreateUrl}
+          templateUrl={s.accessTemplateDownloadUrl}
+          values={handValues({
+            externalId: s.externalId,
+            principalArn: s.principalArn,
+            resourceTemplateUrl: s.resourceTemplateUrl,
+            callbackUrl: s.callbackUrl,
+            connectionRef: s.connectionRef,
+            tenantId,
+          })}
+          accountId={s.connection.awsAccountId}
+          opened={openedAt !== null}
+          onOpened={() => setOpenedAt((t) => t ?? Date.now())}
+        />
         {openedAt !== null && <Waiting since={openedAt} onRetry={() => setOpenedAt(Date.now())} error={null} />}
       </div>
       <div className="mt-6">

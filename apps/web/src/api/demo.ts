@@ -1147,8 +1147,10 @@ export class DemoApi implements Api {
     const base = `${import.meta.env.BASE_URL}cfn`
     return {
       intent: { id, status: 'waiting', connectionId: null, error: null },
-      // No S3-hosted template in the demo: the stack "reports back" by itself after a few seconds.
-      quickCreateUrl: null,
+      // Staging and production offer the one-click AWS link, so the demo does too. There is no
+      // S3-hosted template here, so the link opens the template itself (read-only) and the
+      // stack "reports back" by itself after a few seconds.
+      quickCreateUrl: `${base}/cloudoptics-access.yaml`,
       templateUrl: `${base}/cloudoptics-access.yaml`,
       templateDownloadUrl: `${base}/cloudoptics-access.yaml`,
       externalId: this.state.externalIds[id] ?? '',
@@ -2657,7 +2659,8 @@ export class DemoApi implements Api {
     return {
       connection: structuredClone(conn),
       externalId: this.state.externalIds[conn.id] ?? '',
-      // The demo has no S3-hosted template, so it shows the download path, like staging today.
+      // The demo has no S3-hosted template. The single access stack gets a one-click link like
+      // staging (it opens the template, read-only); the older per-stack links stay off.
       quickCreateUrl: null,
       templateUrl: `${base}/billing-role.yaml`,
       templateDownloadUrl: `${base}/billing-role.yaml`,
@@ -2668,7 +2671,7 @@ export class DemoApi implements Api {
       resourceStacksetDownloadUrl: `${base}/resource-stackset.yaml`,
       stackRegion: 'us-east-1',
       principalArn: 'arn:aws:iam::000000000000:role/CloudopticsBroker',
-      accessQuickCreateUrl: null,
+      accessQuickCreateUrl: `${base}/cloudoptics-access.yaml`,
       accessTemplateUrl: `${base}/cloudoptics-access.yaml`,
       accessTemplateDownloadUrl: `${base}/cloudoptics-access.yaml`,
       callbackUrl: 'https://cloudoptics.example/api/v1/cfn/callback',
