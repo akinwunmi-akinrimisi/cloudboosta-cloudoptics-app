@@ -94,6 +94,9 @@ async def reconcile_period(
     async with maker() as session, session.begin():
         await scope(session, tenant_id=tenant_id)
         conn = await get_connection(session, connection_id)
+        if conn.status == "disconnected":
+            # Queued before a disconnect: Cloudoptics no longer calls the customer's account.
+            return "skipped"
         rows = (
             await session.execute(
                 text(

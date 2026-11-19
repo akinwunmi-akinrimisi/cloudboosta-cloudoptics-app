@@ -102,6 +102,8 @@ export interface ConnectionIntent {
   connectionId: string | null
   /** Why the stack's report was refused (for example, the account is already connected). */
   error: string | null
+  /** After this an unused link no longer connects an account (7 days after it was made). */
+  expiresAt?: string | null
 }
 
 export interface IntentSetup {

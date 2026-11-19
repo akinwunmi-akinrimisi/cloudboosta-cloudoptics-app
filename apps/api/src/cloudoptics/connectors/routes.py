@@ -20,9 +20,13 @@ from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.service import (
     LIST_CONNECTIONS,
     ConnectionNotFoundError,
+    check_stack_removed,
     get_connection,
     get_session_factory,
+    mark_disconnected,
+    record_delete_ignored,
     run_validation,
+    secret_tag,
 )
 from cloudoptics.identity.deps import AdminAccess, Session, TenantAccess, ViewerAccess
 from cloudoptics.notifications.alerts import send_connection_alert
@@ -283,7 +287,8 @@ async def _reconnect(
             "role_arn = :arn, external_id_enc = :ext, stack_name = :stack, "
             "create_cur_export = :cur, cur_bucket = :bucket, cur_prefix = NULL, "
             "cur_region = NULL, cur_export_arn = NULL, permission_checks = '[]', "
-            "last_error = NULL, last_validated_at = NULL, created_by = :by WHERE id = :id"
+            "last_error = NULL, last_validated_at = NULL, account_verified_at = NULL, "
+            "pending_stack = NULL, created_by = :by WHERE id = :id"
         ),
         {
             "id": connection_id,
@@ -342,7 +347,13 @@ async def validate(
     access: AdminAccess,
     session: Session,
 ) -> Connection | ValidationAccepted:
-    await _load(session, connection_id)
+    row = await _load(session, connection_id)
+    if row.status == "disconnected":
+        # Disconnect is final; Reconnect gives the account a new External ID.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This connection is disconnected. Use Reconnect to connect the account again.",
+        )
     if not await start_validation(
         session, access.tenant_id, connection_id, user_actor(request, access.user.id)
     ):
@@ -352,14 +363,23 @@ async def validate(
 
 
 async def start_validation(
-    session: Session, tenant_id: uuid.UUID, connection_id: uuid.UUID, actor: audit.Actor
+    session: Session,
+    tenant_id: uuid.UUID,
+    connection_id: uuid.UUID,
+    actor: audit.Actor,
+    *,
+    delay_seconds: int = 0,
 ) -> bool:
-    """Validate now (inline jobs, returns False) or queue it for the worker (returns True)."""
+    """Validate now (inline jobs, returns False) or queue it for the worker (returns True).
+
+    ``delay_seconds`` holds a queued validation back (a stack's new role may take a moment
+    to reach STS). A disconnected connection is never validated.
+    """
     if get_settings().jobs_mode == "inline":
         result = await run_validation(
             session, tenant_id=tenant_id, connection_id=connection_id, actor=actor
         )
-        if result.health_worsened:
+        if result is not None and result.health_worsened:
             await send_connection_alert(session, tenant_id, connection_id)
         return False
 
@@ -371,12 +391,48 @@ async def start_validation(
             await job_app.configure_task(
                 "connectors:connection.validate",
                 queueing_lock=f"validate:{connection_id}",
+                schedule_in={"seconds": delay_seconds} if delay_seconds else None,
             ).defer_async(tenant_id=str(tenant_id), connection_id=str(connection_id))
     await session.execute(
-        text("UPDATE cloud_connection SET status = 'validating' WHERE id = :c"),
+        text(
+            "UPDATE cloud_connection SET status = 'validating' "
+            "WHERE id = :c AND status <> 'disconnected'"
+        ),
         {"c": connection_id},
     )
     return True
+
+
+async def start_removal_check(
+    session: Session, tenant_id: uuid.UUID, conn: Any, stack_name: str
+) -> str:
+    """A stack said it was deleted: disconnect once the role can no longer be assumed.
+
+    Inline jobs check straight away and answer ``disconnected`` or ``kept``; queued jobs
+    answer ``verifying`` and the worker checks later (``connectors:connection.verify_removed``).
+    """
+    tag = secret_tag(conn.external_id_enc)
+    if get_settings().jobs_mode == "inline":
+        outcome, code = await check_stack_removed(
+            session,
+            tenant_id=tenant_id,
+            connection_id=conn.id,
+            stack_name=stack_name,
+            tag=tag,
+            final=True,
+        )
+        if outcome == "unknown":
+            await record_delete_ignored(session, tenant_id, conn.id, code or "unknown")
+            return "kept"
+        return outcome
+
+    from cloudoptics.connectors.jobs import defer_removal_check
+    from cloudoptics.platform.jobs import get_job_app
+
+    await defer_removal_check(
+        get_job_app(), str(tenant_id), str(conn.id), stack_name, tag, attempt=1
+    )
+    return "verifying"
 
 
 @router.post(
@@ -506,39 +562,6 @@ async def disconnect(
         session, access.tenant_id, connection_id, row.status, user_actor(request, access.user.id)
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-async def mark_disconnected(
-    session: Session,
-    tenant_id: uuid.UUID,
-    connection_id: uuid.UUID,
-    previous: str,
-    actor: audit.Actor,
-) -> None:
-    await session.execute(
-        text("UPDATE cloud_connection SET status = 'disconnected', health = NULL WHERE id = :c"),
-        {"c": connection_id},
-    )
-    # Its open recommendations can no longer be checked or verified.
-    await session.execute(
-        text(
-            "UPDATE recommendation SET status = 'expired' WHERE status IN ('new', 'assigned', "
-            "'in_progress') AND (resource_ref IN (SELECT id FROM resource WHERE connection_id = "
-            ":c) OR (resource_ref IS NULL AND account_id IN (SELECT aws_account_id FROM "
-            "cloud_account WHERE connection_id = :c)))"
-        ),
-        {"c": connection_id},
-    )
-    await audit.record(
-        session,
-        tenant_id=tenant_id,
-        actor=actor,
-        action="connection.disconnected",
-        target_type="cloud_connection",
-        target_id=str(connection_id),
-        before={"status": previous},
-        after={"status": "disconnected"},
-    )
 
 
 class CloudAccount(ApiModel):
