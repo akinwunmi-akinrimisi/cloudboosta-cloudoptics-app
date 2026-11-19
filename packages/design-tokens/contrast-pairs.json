@@ -1,0 +1,36 @@
+{
+  "$comment": "Foreground/background pairs used for text and controls on the public site (docs/08 §2.2.1, §2.4). apps/site checks each pair in both themes in CI: names starting with -- are custom properties read from tokens.css, the rest are fixed colours. min is the WCAG 2.x ratio: 4.5 for normal text, 3 for large text and UI parts.",
+  "fixed": {
+    "white": "#ffffff",
+    "navy": "#0b1f4b",
+    "yellow": "#fac812",
+    "blue-on-navy": "#5b8cff",
+    "navy-muted": "#b8c4de"
+  },
+  "pairs": [
+    { "fg": "--text-primary", "bg": "--bg", "min": 4.5, "use": "body text on the page" },
+    { "fg": "--text-primary", "bg": "--surface-1", "min": 4.5, "use": "body text on cards" },
+    { "fg": "--text-primary", "bg": "--surface-2", "min": 4.5, "use": "body text on tinted panels" },
+    { "fg": "--text-secondary", "bg": "--bg", "min": 4.5, "use": "secondary text on the page" },
+    { "fg": "--text-secondary", "bg": "--surface-1", "min": 4.5, "use": "secondary text on cards" },
+    { "fg": "--text-secondary", "bg": "--surface-2", "min": 4.5, "use": "secondary text on tinted panels" },
+    { "fg": "--text-muted", "bg": "--bg", "min": 4.5, "use": "captions on the page" },
+    { "fg": "--text-muted", "bg": "--surface-1", "min": 4.5, "use": "captions on cards" },
+    { "fg": "--accent-hover", "bg": "--bg", "min": 4.5, "use": "links on the page (site: text-link)" },
+    { "fg": "--accent-hover", "bg": "--surface-1", "min": 4.5, "use": "links on cards (site: text-link)" },
+    { "fg": "--accent-hover", "bg": "--accent-soft", "min": 4.5, "use": "links on the blue tint (site: text-link)" },
+    { "fg": "--accent", "bg": "--surface-1", "min": 4.5, "use": "blue text on white cards" },
+    { "fg": "--accent", "bg": "--bg", "min": 3, "use": "focus ring and control borders on the page" },
+    { "fg": "--on-accent", "bg": "--accent", "min": 4.5, "use": "primary button label" },
+    { "fg": "--on-accent", "bg": "--accent-hover", "min": 4.5, "use": "primary button label, hover" },
+    { "fg": "--border-strong", "bg": "--surface-1", "min": 3, "use": "control borders" },
+    { "fg": "--good-ink", "bg": "--good-soft", "min": 4.5, "use": "success badge" },
+    { "fg": "--warning-ink", "bg": "--warning-soft", "min": 4.5, "use": "warning badge" },
+    { "fg": "--critical-ink", "bg": "--critical-soft", "min": 4.5, "use": "danger badge" },
+    { "fg": "--text-primary", "bg": "--brand-yellow-soft", "min": 4.5, "use": "text on the yellow tint" },
+    { "fg": "white", "bg": "navy", "min": 4.5, "use": "text on navy sections" },
+    { "fg": "navy-muted", "bg": "navy", "min": 4.5, "use": "secondary text on navy sections" },
+    { "fg": "blue-on-navy", "bg": "navy", "min": 4.5, "use": "links on navy sections" },
+    { "fg": "navy", "bg": "yellow", "min": 4.5, "use": "navy text on the yellow highlight" }
+  ]
+}

@@ -1,0 +1,25 @@
+---
+// A screenshot by name, or a clearly labelled placeholder when it has not been captured yet.
+import { screen } from '../data/screens'
+import Screenshot from './Screenshot.astro'
+
+interface Props {
+  name: string
+  alt: string
+  caption?: string
+  eager?: boolean
+}
+const { name, alt, caption, eager } = Astro.props
+const src = screen(name)
+---
+
+{
+  src ? (
+    <Screenshot src={src} alt={alt} caption={caption} eager={eager} />
+  ) : (
+    <figure class="flex aspect-[16/10] flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border-strong bg-surface-2 p-6 text-center">
+      <span class="rounded-sm bg-brand-yellow px-1.5 py-0.5 text-xs font-semibold text-brand-navy">Sample data</span>
+      <figcaption class="max-w-sm text-sm text-secondary">Screenshot placeholder: {alt}</figcaption>
+    </figure>
+  )
+}

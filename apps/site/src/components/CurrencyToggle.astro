@@ -1,0 +1,79 @@
+---
+// The hero's currency toggle (docs/14 §5.1 row 2), the only script on the landing page.
+// Every figure is rendered at build time in USD and each currency, so with JavaScript off the page
+// shows USD and naira; the script only reveals the buttons and swaps pre-rendered text.
+import { claims } from '../config'
+
+interface Figure {
+  label: string
+  usd: number
+}
+interface Props {
+  figures: Figure[]
+  caption: string
+}
+const { figures, caption } = Astro.props
+const rates = claims.sampleRates as Record<string, number>
+const codes = Object.keys(rates)
+const names: Record<string, string> = { NGN: 'Naira', KES: 'Kenyan shillings', ZAR: 'Rand', GHS: 'Cedis' }
+const fmt = (amount: number, currency: string) =>
+  new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency,
+    currencyDisplay: 'narrowSymbol',
+    notation: amount >= 100_000 ? 'compact' : 'standard',
+    maximumFractionDigits: amount >= 100_000 ? 2 : 0,
+  }).format(amount)
+const local = (usd: number) => Object.fromEntries(codes.map((c) => [`data-${c.toLowerCase()}`, fmt(usd * rates[c]!, c)]))
+---
+
+<div class="rounded-md border border-border bg-surface-1 p-5 shadow-sm" data-currency-toggle>
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <p class="text-sm font-medium text-secondary">{caption}</p>
+    <div role="group" aria-label="Local currency" class="inline-flex rounded-sm border border-border-strong p-0.5" data-buttons hidden>
+      {
+        codes.map((c, i) => (
+          <button
+            type="button"
+            data-code={c.toLowerCase()}
+            aria-pressed={i === 0 ? 'true' : 'false'}
+            title={names[c]}
+            class="min-h-8 min-w-11 rounded-[4px] px-2 text-sm font-medium text-secondary aria-pressed:bg-accent aria-pressed:text-on-accent"
+          >
+            {c}
+          </button>
+        ))
+      }
+    </div>
+  </div>
+  <dl class="mt-4 grid gap-4 sm:grid-cols-2" aria-live="polite">
+    {
+      figures.map((f) => (
+        <div class="rounded-sm bg-surface-2 p-4">
+          <dt class="text-sm text-secondary">{f.label}</dt>
+          <dd class="mt-1">
+            <span class="block text-2xl font-semibold tracking-tight">{fmt(f.usd, 'USD')}</span>
+            <span class="block text-secondary" data-local {...local(f.usd)}>
+              {fmt(f.usd * rates[codes[0]!]!, codes[0]!)}
+            </span>
+          </dd>
+        </div>
+      ))
+    }
+  </dl>
+  <p class="mt-3 text-xs text-muted">Sample data. Illustrative exchange rates, not today's rates.</p>
+</div>
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>('[data-currency-toggle]')) {
+    const group = root.querySelector<HTMLElement>('[data-buttons]')
+    if (!group) continue
+    group.hidden = false
+    group.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest('button')
+      if (!button?.dataset.code) return
+      for (const b of group.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b === button))
+      for (const el of root.querySelectorAll<HTMLElement>('[data-local]')) el.textContent = el.dataset[button.dataset.code] ?? ''
+    })
+  }
+</script>

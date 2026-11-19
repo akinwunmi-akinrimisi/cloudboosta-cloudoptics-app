@@ -1,0 +1,58 @@
+{
+  "$comment": "One source for the claims the public pages make (docs/14 §3.2, §7.6, §8.7; doc 13 §3.3). Each value names where it comes from. Reviewer: Tech Lead. Facts about the template (region, role names, bucket, export, session length) come from src/generated/permissions.json instead.",
+  "wizardSteps": {
+    "value": ["Workspace", "Connect AWS", "Check access"],
+    "source": "apps/web/src/pages/Onboarding.tsx STEPS"
+  },
+  "setupMinutes": { "value": 15, "source": "PRD O1 (connect in 15 minutes or less); docs/14 §5.2" },
+  "awsMinutes": { "value": 3, "source": "Onboarding.tsx AwsSteps: 'in about 3 minutes'" },
+  "workspaceTime": { "value": "under a minute", "source": "docs/14 §5.2 row 3 (two fields: name and country)" },
+  "stackName": { "value": "cloudoptics-access", "source": "apps/api/src/cloudoptics/connectors/aws.py ACCESS_STACK_NAME" },
+  "firstRecommendations": {
+    "value": "a few minutes after you connect, once the first resource scan has run",
+    "source": "Onboarding.tsx CheckAccess: 'Recommendations follow the first resource scan, a few minutes from now'"
+  },
+  "firstCosts": {
+    "value": "within a day, when AWS delivers the first bill export",
+    "source": "Onboarding.tsx CheckAccess: 'Your first costs appear within a day, when AWS delivers the first bill'"
+  },
+  "permissionChecks": {
+    "value": ["Assume the Cloudoptics role", "Read Cost Explorer", "Find the CUR 2.0 export", "Read the export bucket", "Check the account type", "Read Savings Plans"],
+    "source": "apps/api/src/cloudoptics/connectors/validation.py Check labels"
+  },
+  "localCurrencies": {
+    "value": [
+      { "code": "NGN", "country": "Nigeria" },
+      { "code": "KES", "country": "Kenya" },
+      { "code": "GHS", "country": "Ghana" },
+      { "code": "ZAR", "country": "South Africa" },
+      { "code": "EGP", "country": "Egypt" },
+      { "code": "RWF", "country": "Rwanda" },
+      { "code": "UGX", "country": "Uganda" },
+      { "code": "TZS", "country": "Tanzania" },
+      { "code": "GBP", "country": "United Kingdom" }
+    ],
+    "source": "Onboarding.tsx COUNTRIES; apps/web/src/api/demo.ts COUNTRY"
+  },
+  "hosting": {
+    "value": "DigitalOcean, London (United Kingdom)",
+    "source": "infra/digitalocean/app.yaml region lon; provision.py REGION lon1. Production location is open (docs/14 §11 Q6)"
+  },
+  "assumeRoleSessionMinutes": { "value": 60, "source": "apps/api/src/cloudoptics/connectors/aws.py DurationSeconds=3600" },
+  "costExplorerRequestUsd": { "value": 0.01, "source": "AWS Cost Explorer API public price per paginated request" },
+  "pricing": {
+    "value": {
+      "headline": "Free during the beta",
+      "after": "If we introduce paid plans, we will tell you what they cost and give you notice before anything is charged. We never ask for a card during the beta, so there is nothing on file to charge."
+    },
+    "source": "Founder decision, 19 Nov 2026 (docs/14 §11 Q3)"
+  },
+  "support": {
+    "value": null,
+    "source": "Open: docs/14 §11 Q10 (channel and hours). The footer shows a contact line once this is set."
+  },
+  "sampleRates": {
+    "value": { "NGN": 1530.25, "KES": 129.4, "ZAR": 18.1, "GHS": 15.5 },
+    "source": "apps/web/src/api/demo.ts DEMO_RATES (illustrative rates for sample data only)"
+  }
+}

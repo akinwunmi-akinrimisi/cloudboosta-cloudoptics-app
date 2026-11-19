@@ -28,3 +28,6 @@ dist/
 .data/
 apps/web/.env.local
 apps/web/public/cfn/
+
+# Public site: demo build and debug output of scripts/screenshots.mjs
+apps/site/.demo-build/

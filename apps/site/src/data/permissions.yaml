@@ -1,0 +1,217 @@
+# Plain-language entries for every IAM action in infra/cloudformation/cloudoptics-access.yaml
+# (docs/14 §5.5, SITE-08). scripts/build-permissions.mjs reads the template and this file and
+# fails the build when they disagree: an action in the template with no entry here, an entry
+# for an action the template no longer has, a role on one side only, or a write action in a
+# role marked readOnly. Its output, src/generated/permissions.json, feeds /security, /how-it-works
+# and the landing page, and is published at /permissions.json for the app's onboarding panel.
+#
+# Reviewer: Tech Lead (accuracy) and the security owner. Keep sentences short and concrete.
+
+template: infra/cloudformation/cloudoptics-access.yaml
+
+roles:
+  - logicalId: BillingRole
+    title: Billing role
+    readOnly: true
+    usedBy: Cloudoptics, only with the ExternalId unique to your workspace
+    summary: Reads your costs, the bill export, Savings Plans, budgets, AWS's public prices and the list of accounts.
+    groups:
+      - actions: [ce:Get*, ce:Describe*, ce:List*]
+        plain: Read Cost Explorer, including costs, forecasts and AWS's own savings figures.
+        usedFor: Month-to-date costs before the first bill export arrives, and forecasts.
+      - actions: [savingsplans:Describe*]
+        plain: List your Savings Plans.
+        usedFor: The Commitments page and Savings Plan advice.
+      - actions: [budgets:ViewBudget]
+        plain: Read your AWS Budgets.
+        usedFor: Budgets.
+      - actions: [pricing:GetProducts, pricing:DescribeServices]
+        plain: Read AWS's public price list.
+        usedFor: Savings estimates for each region, including Cape Town (af-south-1).
+      - actions:
+          - bcm-data-exports:GetExport
+          - bcm-data-exports:ListExports
+          - bcm-data-exports:GetExecution
+          - bcm-data-exports:ListExecutions
+          - cur:DescribeReportDefinitions
+        plain: Check that the bill export exists and when AWS last delivered it.
+        usedFor: Connection health.
+      - actions: [organizations:DescribeOrganization, organizations:ListAccounts]
+        plain: List the accounts in your AWS Organization, with their names.
+        usedFor: The account filter and coverage.
+      - actions:
+          - cloudformation:DescribeStackSet
+          - cloudformation:ListStackInstances
+          - cloudformation:DescribeStackInstance
+        plain: See which member accounts have the resource role yet. Only the cloudoptics-resource-access stack set.
+        usedFor: Showing how many of your accounts are covered, and why one is not.
+      - actions: [s3:GetObject, s3:ListBucket, s3:GetBucketLocation]
+        plain: Read the bill files in the bucket this stack creates, and no other bucket.
+        usedFor: Every cost view.
+
+  - logicalId: ResourceRole
+    title: Resource role
+    readOnly: true
+    usedBy: Cloudoptics, only with the ExternalId unique to your workspace
+    summary: Reads resource settings, tags and usage metrics. In an AWS Organization every member account gets the same role.
+    # The member-account copy rolled out by the StackSet must grant exactly the same actions.
+    sameAs: infra/cloudformation/resource-role.yaml
+    groups:
+      - actions:
+          - ec2:DescribeRegions
+          - ec2:DescribeAvailabilityZones
+          - ec2:DescribeInstances
+          - ec2:DescribeInstanceStatus
+          - ec2:DescribeInstanceTypes
+          - ec2:DescribeVolumes
+          - ec2:DescribeVolumeStatus
+          - ec2:DescribeVolumesModifications
+          - ec2:DescribeSnapshots
+          - ec2:DescribeImages
+          - ec2:DescribeAddresses
+          - ec2:DescribeNatGateways
+          - ec2:DescribeRouteTables
+          - ec2:DescribeReservedInstances
+          - ec2:DescribeTags
+        plain: >-
+          List servers, disks, snapshots, images, IP addresses, NAT gateways and the route tables
+          that use them, reserved instances and tags. A named list, not ec2:Describe*, so it cannot
+          read instance user data or launch templates, which can hold secrets.
+        usedFor: Unattached volumes, old snapshots, idle IP addresses, rightsizing and idle NAT gateways.
+      - actions: [rds:Describe*, rds:ListTagsForResource]
+        plain: List databases and their settings, not the data in them.
+        usedFor: Idle databases, gp2 storage and Extended Support charges.
+      - actions: [elasticloadbalancing:Describe*]
+        plain: List load balancers and their settings.
+        usedFor: Idle load balancers.
+      - actions: [eks:ListClusters, eks:DescribeCluster]
+        plain: List Kubernetes clusters and their versions.
+        usedFor: Extended Support charges.
+      - actions: [logs:DescribeLogGroups]
+        plain: List log groups and their sizes, not what the logs say.
+        usedFor: Log storage costs.
+      - actions:
+          - s3:ListAllMyBuckets
+          - s3:GetBucketLocation
+          - s3:GetBucketTagging
+          - s3:GetLifecycleConfiguration
+          - s3:GetIntelligentTieringConfiguration
+        plain: List bucket names, regions, tags and storage rules. Never the files in them.
+        usedFor: Storage recommendations.
+      - actions: [tag:GetResources]
+        plain: Read the tags on your resources.
+        usedFor: Owners, teams and environments.
+      - actions: [cloudwatch:GetMetricData, cloudwatch:ListMetrics]
+        plain: Read usage metrics such as CPU and network traffic.
+        usedFor: The evidence behind idle and rightsizing recommendations.
+      - actions:
+          - compute-optimizer:Get*
+          - compute-optimizer:Describe*
+          - cost-optimization-hub:Get*
+          - cost-optimization-hub:List*
+          - ecs:ListClusters
+          - ecs:ListServices
+        plain: Read AWS's own recommendations from Compute Optimizer and Cost Optimization Hub.
+        usedFor: Cross-checking our recommendations against AWS's.
+
+  - logicalId: SetupRole
+    title: Setup step's role
+    readOnly: false
+    usedBy: >-
+      The setup function in your account, only while CloudFormation creates, updates or deletes the
+      stack. Cloudoptics cannot assume this role.
+    summary: >-
+      Creates the bill-export bucket, rolls the resource role out to member accounts and removes
+      older Cloudoptics stacks. Its write actions are limited to Cloudoptics-named resources,
+      except where AWS offers no narrower scope (shown below).
+    managedPolicies:
+      - policy: AWSLambdaBasicExecutionRole
+        plain: Write the setup function's own logs to CloudWatch Logs in your account.
+    groups:
+      - actions: [cloudformation:DescribeStacks, cloudformation:DeleteStack]
+        plain: >-
+          Find and delete the older Cloudoptics stacks (cloudoptics-billing-access,
+          cloudoptics-resource-access, cloudoptics-resource-stackset) that used the same role names.
+        usedFor: Moving a connection from the older three-stack setup to this one.
+      - actions:
+          - iam:GetRole
+          - iam:DeleteRole
+          - iam:DeleteRolePolicy
+          - iam:ListRolePolicies
+          - iam:ListAttachedRolePolicies
+          - iam:DetachRolePolicy
+          - iam:ListInstanceProfilesForRole
+          - iam:TagRole
+          - iam:UntagRole
+        plain: Remove the roles those older stacks created, and read the StackSets service-linked role.
+        usedFor: Deleting the older stacks cleanly.
+      - actions:
+          - lambda:GetFunction
+          - lambda:GetFunctionConfiguration
+          - lambda:DeleteFunction
+          - lambda:InvokeFunction
+        plain: Remove the older stacks' own setup function.
+        usedFor: Deleting the older stacks cleanly.
+      - actions: [ec2:DescribeNetworkInterfaces]
+        plain: Read network interfaces, which AWS checks when a Lambda function is deleted.
+        usedFor: Deleting the older setup function.
+      - actions: [bcm-data-exports:GetExport, bcm-data-exports:DeleteExport, bcm-data-exports:ListExports]
+        plain: Find and remove the older stacks' bill export.
+        usedFor: Deleting the older stacks cleanly.
+      - actions:
+          - s3:CreateBucket
+          - s3:ListBucket
+          - s3:GetBucketPolicy
+          - s3:PutBucketPolicy
+          - s3:DeleteBucketPolicy
+          - s3:PutBucketPublicAccessBlock
+          - s3:PutBucketOwnershipControls
+          - s3:PutEncryptionConfiguration
+          - s3:PutLifecycleConfiguration
+        plain: >-
+          Create the bill-export bucket and set its public-access block, ownership, encryption,
+          expiry rule and bucket policy.
+        usedFor: The bucket AWS delivers your bill export to.
+      - actions:
+          - cloudformation:ListStacks
+          - cloudformation:ActivateOrganizationsAccess
+          - cloudformation:DescribeOrganizationsAccess
+          - organizations:EnableAWSServiceAccess
+          - organizations:ListAWSServiceAccessForOrganization
+          - organizations:DescribeOrganization
+          - organizations:ListRoots
+          - organizations:ListAccounts
+          - organizations:ListAccountsForParent
+          - organizations:ListChildren
+          - organizations:ListOrganizationalUnitsForParent
+          - organizations:ListDelegatedAdministrators
+        plain: >-
+          Check whether this is an Organization's management account, turn on CloudFormation
+          StackSets trusted access, and find the accounts to roll the resource role out to.
+        usedFor: Member-account coverage.
+      - actions: [iam:CreateServiceLinkedRole]
+        plain: Create the service-linked role that CloudFormation StackSets needs in an Organization.
+        usedFor: Member-account coverage.
+      - actions:
+          - cloudformation:CreateStackSet
+          - cloudformation:UpdateStackSet
+          - cloudformation:DeleteStackSet
+          - cloudformation:DescribeStackSet
+          - cloudformation:CreateStackInstances
+          - cloudformation:DeleteStackInstances
+          - cloudformation:ListStackInstances
+          - cloudformation:ListStackSetOperations
+          - cloudformation:ListStackSetOperationResults
+          - cloudformation:DescribeStackSetOperation
+          - cloudformation:UntagResource
+        plain: Create, update and remove the cloudoptics-resource-access stack set that gives member accounts the resource role.
+        usedFor: Member-account coverage, including accounts added later.
+
+# True of both read roles; shown on /security, /how-it-works and the landing page.
+cannot:
+  - Create, change, stop or delete anything in your account.
+  - Buy Savings Plans or Reserved Instances.
+  - Read files in any bucket other than the bill-export bucket the stack creates.
+  - Read database contents, secrets, Systems Manager parameters or what your logs say.
+  - Read Lambda configuration, instance user data, launch templates or DNS records.
+  - Open support cases or change billing settings.

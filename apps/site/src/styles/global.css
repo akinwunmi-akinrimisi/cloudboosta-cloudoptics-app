@@ -1,0 +1,54 @@
+@import 'tailwindcss';
+@import '@cloudoptics/design-tokens/tokens.css';
+
+/* Site-only base styles. Colours, fonts and radii come from the shared tokens (SITE-02). */
+@theme {
+  /* Link and eyebrow text. --accent on --bg is 4.36:1, under AA for normal text, so text on the
+     page uses the hover shade (checked in CI with contrast-pairs.json). */
+  --color-link: var(--accent-hover);
+  --color-navy-muted: #b8c4de;
+  --color-blue-on-navy: #5b8cff;
+}
+
+html {
+  /* Anchored sections stay clear of the sticky header (WCAG 2.4.11). */
+  scroll-padding-top: 5rem;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-feature-settings: 'tnum' 1;
+  line-height: 1.6;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.on-navy :focus-visible {
+  outline-color: #fac812;
+}
+
+a {
+  text-underline-offset: 3px;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  overflow-wrap: anywhere;
+}
+
+summary {
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}

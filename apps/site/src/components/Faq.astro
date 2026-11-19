@@ -1,0 +1,36 @@
+---
+// Native <details> list (docs/14 §8.2): keyboard and screen-reader friendly with no script.
+import type { FaqItem } from '../data/faq'
+
+interface Props {
+  items: FaqItem[]
+  headingLevel?: 'h2' | 'h3'
+  title?: string
+  id?: string
+}
+const { items, headingLevel = 'h2', title = 'Questions people ask first', id = 'faq' } = Astro.props
+const Heading = headingLevel
+---
+
+<section id={id} aria-labelledby={`${id}-title`} class="mx-auto max-w-3xl px-4 sm:px-6">
+  <Heading id={`${id}-title`} class="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</Heading>
+  <div class="mt-6 divide-y divide-border rounded-md border border-border bg-surface-1">
+    {
+      items.map((item) => (
+        <details id={item.id} class="group px-5">
+          <summary class="flex min-h-12 items-center justify-between gap-4 py-3 font-medium">
+            {item.q}
+            <span aria-hidden="true" class="text-secondary transition-transform group-open:rotate-45 motion-reduce:transition-none">
+              +
+            </span>
+          </summary>
+          <div class="space-y-2 pb-4 text-secondary">
+            {item.a.map((p) => (
+              <p>{p}</p>
+            ))}
+          </div>
+        </details>
+      ))
+    }
+  </div>
+</section>

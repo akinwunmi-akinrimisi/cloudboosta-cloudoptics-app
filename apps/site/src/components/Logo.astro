@@ -1,0 +1,20 @@
+---
+// The Cloudoptics mark from apps/web/public/favicon.svg, with the product name.
+interface Props {
+  tone?: 'default' | 'navy'
+}
+const { tone = 'default' } = Astro.props
+---
+
+<span class="inline-flex items-center gap-2">
+  <svg viewBox="0 0 64 64" width="28" height="28" aria-hidden="true" focusable="false">
+    <rect width="64" height="64" rx="14" fill="#0B1F4B"></rect>
+    <circle cx="30" cy="34" r="17" fill="none" stroke="#FFFFFF" stroke-width="5"></circle>
+    <path d="M19 34a11 11 0 0 1 11-11" fill="none" stroke="#5B8CFF" stroke-width="5" stroke-linecap="round"></path>
+    <circle cx="47" cy="17" r="6" fill="#FAC812"></circle>
+  </svg>
+  <span class="leading-tight">
+    <span class={`block font-semibold ${tone === 'navy' ? 'text-white' : 'text-primary'}`}>Cloudoptics</span>
+    <span class={`block text-xs ${tone === 'navy' ? 'text-navy-muted' : 'text-secondary'}`}>by Cloudboosta</span>
+  </span>
+</span>
