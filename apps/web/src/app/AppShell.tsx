@@ -101,7 +101,7 @@ export function AppShell() {
   }, [])
 
   return (
-    <div className="min-h-screen md:grid md:grid-cols-[240px_1fr] print:block">
+    <div className="min-h-screen md:grid md:grid-cols-[240px_minmax(0,1fr)] print:block">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded-sm focus:bg-surface-1 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary focus:shadow-lg"

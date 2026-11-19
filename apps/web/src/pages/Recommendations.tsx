@@ -206,7 +206,7 @@ export function Recommendations() {
       else next.add(id)
       return next
     })
-  const select = 'h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm'
+  const select = 'h-8 min-w-0 max-w-full rounded-sm border border-border-strong bg-surface-1 px-2 text-sm'
 
   return (
     <div className="flex flex-col gap-6">
@@ -227,7 +227,7 @@ export function Recommendations() {
           scan.
         </Alert>
       )}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
           label="Monthly savings identified"
           value={summary.data ? money(summary.data.savingsUsdMonth) : '—'}
@@ -260,8 +260,8 @@ export function Recommendations() {
       </div>
       <Card className="p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
+            <label className="flex min-w-0 max-w-full items-center gap-2 text-sm">
               <span className="text-secondary">Type</span>
               <select className={select} value={rule} onChange={(e) => setRule(e.target.value)}>
                 <option value="all">All</option>
@@ -272,7 +272,7 @@ export function Recommendations() {
                 ))}
               </select>
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-w-0 max-w-full items-center gap-2 text-sm">
               <span className="text-secondary">Risk</span>
               <select
                 className={select}
@@ -285,7 +285,7 @@ export function Recommendations() {
                 <option value="high">High</option>
               </select>
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-w-0 max-w-full items-center gap-2 text-sm">
               <span className="text-secondary">Assigned to</span>
               <select className={select} value={assigned} onChange={(e) => setAssigned(e.target.value)}>
                 <option value="anyone">Anyone</option>
@@ -648,7 +648,7 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
   const closed = !['new', 'assigned', 'in_progress'].includes(rec.status)
   return (
     <div className="flex flex-col gap-3">
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex min-w-0 max-w-full items-center gap-2 text-sm">
         <span className="font-medium">Assigned to</span>
         <select
           className="h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm"
@@ -828,7 +828,7 @@ function Usage({ tenantId, rec }: { tenantId: string; rec: Recommendation }) {
   return (
     <Card className="flex flex-col gap-4 p-5">
       <h2 className="text-base font-semibold">Usage</h2>
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {charts.map(({ series: s, chart: c }) => {
           return (
             <div key={s.metric} className="flex flex-col gap-2">
@@ -955,9 +955,9 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
     <div className="flex flex-col gap-6">
       {back}
       <div>
-        <h1 className="text-2xl font-semibold">{r.title}</h1>
+        <h1 className="text-2xl font-semibold [overflow-wrap:anywhere]">{r.title}</h1>
         <p className="text-sm text-secondary">
-          {RULES[r.ruleId] ?? r.ruleId} · account {r.accountId} · {r.regionId} · <code>{r.resourceId}</code> ·{' '}
+          {RULES[r.ruleId] ?? r.ruleId} · account {r.accountId} · {r.regionId} · <code className="[overflow-wrap:anywhere]">{r.resourceId}</code> ·{' '}
           {STATUS[r.status]}
         </p>
         {r.status === 'verified' && (
@@ -977,7 +977,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
           with the buying ladder and the cost in your currency if it weakens.
         </Alert>
       )}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Kpi
           label="Monthly saving"
           value={money(r.savingsUsdMonth)}
@@ -992,7 +992,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
         />
         <Kpi label="Confidence" value={capitalise(r.confidence)} note={`Effort ${r.effort}`} />
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="flex flex-col gap-5 p-5 lg:col-span-2">
           <div className="flex flex-col gap-3">
             <h2 className="text-base font-semibold">How to fix it</h2>
@@ -1011,7 +1011,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
               </div>
             )}
             {(r.fix.checklist?.length ?? 0) > 0 || (r.fix.console?.steps.length ?? 0) > 0 ? (
-              <ol className="list-decimal space-y-1 pl-5 text-sm">
+              <ol className="list-decimal space-y-1 pl-5 text-sm [overflow-wrap:anywhere]">
                 {(r.fix.checklist?.length ? r.fix.checklist : (r.fix.console?.steps ?? [])).map((item) => (
                   <li key={item}>{item}</li>
                 ))}

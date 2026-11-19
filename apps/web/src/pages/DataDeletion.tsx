@@ -250,7 +250,8 @@ export function DeletionHistory({ tenantId }: { tenantId: string }) {
             {d.verification && (
               <details>
                 <summary className="cursor-pointer text-xs text-secondary">{verificationSummary(d)}</summary>
-                <table className="mt-2 w-full text-xs tabular-nums">
+                <div className="mt-2 overflow-x-auto" role="region" aria-label="Verification details" tabIndex={0}>
+                <table className="w-full text-xs tabular-nums">
                   <thead>
                     <tr className="text-left text-muted">
                       <th className="font-medium">Table</th>
@@ -268,6 +269,7 @@ export function DeletionHistory({ tenantId }: { tenantId: string }) {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </details>
             )}
           </li>

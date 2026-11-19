@@ -198,6 +198,7 @@ export function Costs() {
           </p>
         )}
         {items.length > 0 && (
+          <div className="overflow-x-auto" role="region" aria-label="Spend breakdown" tabIndex={0}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted">
@@ -232,6 +233,7 @@ export function Costs() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
       {/* The forecast and the credits runway are about the current month only. */}
@@ -357,7 +359,7 @@ function RunwayFigures({ c, money }: { c: CreditsRunway; money: (usd: number) =>
     ['Bill without credits', `${money(c.spendBeforeCreditsUsdMonth)} a month`],
   ]
   return (
-    <dl className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-5">
       {figures.map(([label, value]) => (
         <div key={label} className="rounded-sm border border-border p-3">
           <dt className="text-xs text-muted">{label}</dt>
@@ -393,7 +395,7 @@ function BalanceForm({ tenantId, current, onDone }: { tenantId: string; current:
       <p className="text-sm text-secondary">
         In the AWS Billing console, open Credits and copy the remaining amount (all credits together, in USD).
       </p>
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <Field label="Remaining balance (USD)" type="number" min={0} step="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} />
         <Field label="As shown on" type="date" max={today} required value={asOf} onChange={(e) => setAsOf(e.target.value)} />
         <Field label="Expires on (optional)" type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />

@@ -96,6 +96,7 @@ export function ForecastPanel({ tenantId }: { tenantId: string }) {
       ) : (
         <p className="mb-4 text-xs text-secondary">{ccy === 'USD' ? 'Amounts in US dollars.' : rate.note}</p>
       )}
+      <div className="overflow-x-auto" role="region" aria-label="Forecast by month" tabIndex={0}>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs text-muted">
@@ -124,6 +125,7 @@ export function ForecastPanel({ tenantId }: { tenantId: string }) {
           ))}
         </tbody>
       </table>
+      </div>
       {f.decomposition && <FxSplit d={f.decomposition} currency={ccy} />}
     </Card>
   )

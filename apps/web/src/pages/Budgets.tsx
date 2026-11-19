@@ -257,7 +257,7 @@ function BudgetForm({ tenantId, budget, onDone }: { tenantId: string; budget?: B
   const choosable = (accounts.data?.accounts ?? []).filter((a) => a.orgStatus !== 'NOT_LISTED')
   return (
     <form onSubmit={submit} className="flex flex-col gap-4">
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} />
         <Field
           label="Amount a month"

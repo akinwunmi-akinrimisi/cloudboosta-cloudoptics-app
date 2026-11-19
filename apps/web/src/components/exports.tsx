@@ -109,6 +109,7 @@ export function ExportList({ tenantId, pollMs = POLL_MS }: { tenantId: string; p
       {save.error && <p className="text-sm text-critical-ink">{save.error.message}</p>}
       {list.data && exports.length === 0 && <p className="text-sm text-secondary">No exports yet.</p>}
       {exports.length > 0 && (
+        <div className="overflow-x-auto" role="region" aria-label="Export files" tabIndex={0}>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted">
@@ -151,6 +152,7 @@ export function ExportList({ tenantId, pollMs = POLL_MS }: { tenantId: string; p
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </section>
   )

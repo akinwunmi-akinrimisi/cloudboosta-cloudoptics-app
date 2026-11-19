@@ -121,7 +121,7 @@ export function Commitments() {
       {held.data?.coverage.map((c) => (
         <Card key={c.connectionId} className="p-5">
           <h2 className="mb-3 text-base font-semibold">Coverage and use, last 30 days (AWS Cost Explorer)</h2>
-          <dl className="grid gap-3 text-sm sm:grid-cols-4">
+          <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-4">
             <Stat label="Savings Plans cover" value={percent(c.savingsPlansCoveragePercent)} />
             <Stat label="Savings Plans used" value={percent(c.savingsPlansUtilisationPercent)} />
             <Stat label="Reservations cover (hours)" value={percent(c.reservationsCoveragePercent)} />
@@ -156,7 +156,7 @@ function Advice({ advice: a, advisory, several }: { advice: SavingsPlanAdvice; a
         {several ? `Payer account ${a.payerAccountId}` : 'Savings Plan advisory'}
       </h2>
       {a.status !== 'ok' && <Alert tone={a.status === 'not_enough_data' ? 'warning' : 'info'}>{STATUS_NOTE[a.status]}</Alert>}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Coverage current={a.currentCoveragePercent} target={a.status === 'ok' ? a.targetCoveragePercent : null} />
         <Kpi
           label="Savings Plans used"
@@ -230,7 +230,7 @@ function Recommended({ advice: a, option: o, returnWindowDays }: { advice: Savin
             : 'The shortest term with nothing up front: it covers any instance family, size or region, so it keeps working as your servers change.'}
         </p>
       </div>
-      <dl className="grid gap-3 text-sm sm:grid-cols-4">
+      <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-4">
         <Stat label="Hourly commitment" value={hourly(o.hourlyCommitmentUsd)} />
         <Stat label="Monthly saving" value={money(o.monthlySavingsUsd)} />
         <Stat label="Pays back" value={months(o.breakEvenMonths)} />
@@ -342,7 +342,7 @@ function Ladder({ advice: a, advisory }: { advice: SavingsPlanAdvice; advisory: 
         Start with {advisory.ladderFirstPercent}% of the target, then add about {advisory.ladderStepPercent}% each month while
         usage holds. Each step is a separate 1-year Savings Plan, so they also end in steps.
       </p>
-      <ol className="grid gap-2 text-sm sm:grid-cols-3 lg:grid-cols-5">
+      <ol className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3 lg:grid-cols-5">
         {a.ladder.map((s) => (
           <li key={s.month} className="rounded-sm border border-border p-3">
             <p className="text-xs text-muted">{s.month === 0 ? 'Now' : day(s.buyOn)}</p>
@@ -374,6 +374,7 @@ function FxStress({ advice: a, option: o }: { advice: SavingsPlanAdvice; option:
         The commitment is billed in US dollars. At {fx.estimated ? '≈' : ''}
         {fx.rate.toLocaleString()} {fx.currency} per USD ({day(fx.rateDate)}) it costs {local(fx.rate)} a month.
       </p>
+      <div className="overflow-x-auto" role="region" aria-label="Cost if the currency weakens" tabIndex={0}>
       <table className="w-full text-sm">
         <thead className="text-left text-xs text-muted">
           <tr>
@@ -394,6 +395,7 @@ function FxStress({ advice: a, option: o }: { advice: SavingsPlanAdvice; option:
           ))}
         </tbody>
       </table>
+      </div>
       <label className="mt-4 flex flex-col gap-1 text-sm">
         <span>
           Try a move of <strong>{shift}%</strong>: {local(fx.rate * (1 + shift / 100))} a month

@@ -184,7 +184,7 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
         </div>
         <p className="text-xs text-muted">Made {new Date(r.generatedAt).toLocaleDateString('en-GB')}</p>
       </header>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Kpi label="Total spend" value={usd(s.usd)} sub={hasLocal ? local(s.local as number, ccy) : undefined} />
         <Kpi
           label="Against the month before"
@@ -237,7 +237,7 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
           {s.creditsUsd !== 0 && <p className="text-xs text-secondary">AWS credits applied this month: {usd(-s.creditsUsd)}.</p>}
         </Section>
       )}
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
         <Section title="Budgets">
           {r.budgets.length === 0 ? (
             <p className="text-sm text-secondary">No budgets set.</p>

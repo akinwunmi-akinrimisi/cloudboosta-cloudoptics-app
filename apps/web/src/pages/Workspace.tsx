@@ -194,7 +194,7 @@ export function Overview() {
           24 hours of connecting.
         </Alert>
       )}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {costTiles(summary.data, money).map((tile) => (
           <Kpi key={tile.label} {...tile} />
         ))}
@@ -202,7 +202,7 @@ export function Overview() {
         <Kpi {...rateTile(currency, rate)} />
       </div>
       {tenantId !== null && (summary.data?.status === 'ready' || summary.data?.status === 'provisional') && (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <SpendTrend tenantId={tenantId} />
           <TopSpend tenantId={tenantId} />
         </div>
