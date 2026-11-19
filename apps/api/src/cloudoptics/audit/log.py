@@ -5,6 +5,16 @@ Each tenant (and the platform, tenant ``NULL``) has its own chain:
 lock serialises appends per chain, so concurrent writers cannot fork it. The app role has
 INSERT and SELECT only, so rows cannot be edited; ``verify_chain`` detects tampering by a
 privileged user.
+
+Invariant: a row's ``prev_hash`` is the ``row_hash`` of the newest earlier row of the same
+chain, whatever the writer's RLS scope. A tenant row can only be written in that tenant's
+scope (``audit_append``), which also shows the tenant's rows, so a plain SELECT finds the
+head. Platform rows are visible to no ordinary app session, so their head comes from
+``audit_platform_head()`` (SECURITY DEFINER, migration 0037), which returns the hash only.
+
+Platform rows written before migration 0037 were all stored unlinked (``prev_hash`` NULL);
+their hashes are kept. ``verify_chain`` accepts that unlinked prefix, checking each row's
+hash on its own, and from the first linked row on requires every row to link.
 """
 
 from __future__ import annotations
@@ -20,6 +30,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 ActorType = Literal["user", "system", "staff"]
+
+TENANT_HEAD = text("SELECT row_hash FROM audit_log WHERE tenant_id = :t ORDER BY id DESC LIMIT 1")
+PLATFORM_HEAD = text("SELECT audit_platform_head()")
 
 
 @dataclass(frozen=True)
@@ -53,15 +66,7 @@ async def record(
     await session.execute(
         text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"), {"k": f"audit:{chain}"}
     )
-    prev = (
-        await session.execute(
-            text(
-                "SELECT row_hash FROM audit_log WHERE tenant_id IS NOT DISTINCT FROM :t "
-                "ORDER BY id DESC LIMIT 1"
-            ),
-            {"t": tenant_id},
-        )
-    ).scalar_one_or_none()
+    prev = await _head(session, tenant_id)
     occurred_at = (await session.execute(text("SELECT now()"))).scalar_one()
     rec = {
         "tenant_id": str(tenant_id) if tenant_id else None,
@@ -100,6 +105,15 @@ async def record(
     )
 
 
+async def _head(session: AsyncSession, tenant_id: uuid.UUID | None) -> bytes | None:
+    """The chain's newest ``row_hash`` (see the invariant in the module docstring)."""
+    if tenant_id is None:
+        head = (await session.execute(PLATFORM_HEAD)).scalar_one()
+    else:
+        head = (await session.execute(TENANT_HEAD, {"t": tenant_id})).scalar_one_or_none()
+    return bytes(head) if head is not None else None
+
+
 @dataclass(frozen=True)
 class AuditEntry:
     id: int
@@ -127,7 +141,11 @@ async def list_entries(
 
 
 async def verify_chain(session: AsyncSession, tenant_id: uuid.UUID | None) -> bool:
-    """Recompute every hash in a chain; False if any row was altered, removed or reordered."""
+    """Recompute every hash in a chain; False if any row was altered, removed or reordered,
+    or if the session cannot see the whole chain (the head, read first, must be among the
+    rows it checks; rows appended meanwhile are checked too). The platform chain is visible
+    to the staff console only (``app.support_console``)."""
+    head = await _head(session, tenant_id)
     rows = await session.execute(
         text(
             "SELECT tenant_id, actor_type, actor_id, action, target_type, target_id, before, "
@@ -136,10 +154,17 @@ async def verify_chain(session: AsyncSession, tenant_id: uuid.UUID | None) -> bo
         ),
         {"t": tenant_id},
     )
+    seen_head = head is None
     prev: bytes | None = None
+    linked = False  # platform rows before migration 0037 are unlinked
     for r in rows:
-        if (bytes(r.prev_hash) if r.prev_hash is not None else None) != prev:
+        stored = bytes(r.prev_hash) if r.prev_hash is not None else None
+        if tenant_id is None and stored is None and not linked:
+            prev = None
+        elif stored != prev:
             return False
+        else:
+            linked = linked or stored is not None
         rec = {
             "tenant_id": str(r.tenant_id) if r.tenant_id else None,
             "actor_type": r.actor_type,
@@ -154,4 +179,5 @@ async def verify_chain(session: AsyncSession, tenant_id: uuid.UUID | None) -> bo
         if _row_hash(prev, rec) != bytes(r.row_hash):
             return False
         prev = bytes(r.row_hash)
-    return True
+        seen_head = seen_head or prev == head
+    return seen_head

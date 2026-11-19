@@ -313,7 +313,7 @@ doctl databases firewalls list $DB                        # note the UUID of you
 doctl databases firewalls remove $DB --uuid <rule-uuid>
 ```
 
-Workspace tables use FORCE row-level security, which binds the owner too: `doadmin` sees a workspace's rows only after `SELECT set_config('app.tenant_id', '<tenant-id>', false);` (the queue, rate-limit and migration tables have no RLS). Every owner session is noted in the incident or change record (who, why, start, end). The next Staging setup run also resets the firewall to "only the app".
+Workspace tables use FORCE row-level security, which binds the owner too: `doadmin` sees a workspace's rows only after `SELECT set_config('app.tenant_id', '<tenant-id>', false);` (the queue, rate-limit and migration tables have no RLS). Platform audit rows (`audit_log.tenant_id IS NULL`) are readable by the owner without scoping (policy `audit_platform_owner`, migration 0037). Every owner session is noted in the incident or change record (who, why, start, end). The next Staging setup run also resets the firewall to "only the app".
 
 ### 4.2 On-call rota (OPS-7; replaces the Grafana IRM plan in RB-05 for now)
 
