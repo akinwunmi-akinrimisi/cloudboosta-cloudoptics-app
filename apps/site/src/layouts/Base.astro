@@ -1,8 +1,11 @@
 ---
-// Every page's document: SEO head (docs/14 §8.5), CSP (§7.3), landmarks and skip link (§8.2).
+// Every page's document: SEO head (docs/14 §8.5), CSP (§7.3), landmarks and skip link (§8.2),
+// and the first-party beacon (SITE-15).
 import '../styles/global.css'
+import Beacon from '../components/Beacon.astro'
 import Footer from '../components/Footer.astro'
 import Header from '../components/Header.astro'
+import { API_URL, BING_SITE_VERIFICATION, GOOGLE_SITE_VERIFICATION } from '../config'
 import type { FaqItem } from '../data/faq'
 
 interface Props {
@@ -13,9 +16,11 @@ interface Props {
   /** Emits a FAQPage block from the same items the page shows. */
   faq?: FaqItem[]
   noindex?: boolean
+  /** Leaves the analytics beacon off this page (it also skips /demo/ and data-no-analytics). */
+  noAnalytics?: boolean
 }
 
-const { title, description, jsonLd = [], faq, noindex = false } = Astro.props
+const { title, description, jsonLd = [], faq, noindex = false, noAnalytics = false } = Astro.props
 if (title.length > 60) throw new Error(`Title over 60 characters: ${title}`)
 if (description.length > 155) throw new Error(`Description over 155 characters on ${Astro.url.pathname}`)
 
@@ -27,7 +32,10 @@ const ogImage = new URL('/og/cloudoptics.png', site).href
 const organization = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
+  '@id': new URL('/#organization', site).href,
   name: 'Cloudboosta',
+  url: new URL('/', site).href,
+  logo: new URL('/favicon.svg', site).href,
   brand: { '@type': 'Brand', name: 'Cloudoptics' },
 }
 const faqPage = faq && {
@@ -46,13 +54,15 @@ const ld = (o: object) => JSON.stringify(o).replace(/</g, '\\u003c')
 // Only first-party resources may load on this origin: it shares the app's origin (layout H1),
 // so no third-party script ever runs here (ADR-016). Dev mode injects inline scripts, so the
 // policy is set on production builds only.
+// The beacon posts to the API: same origin under layout H1, else the API's origin is allowed.
+const apiOrigin = /^https?:\/\//.test(API_URL) ? new URL(API_URL).origin : ''
 const csp = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self'",
   "img-src 'self' data:",
   "font-src 'self'",
-  "connect-src 'self'",
+  `connect-src 'self'${apiOrigin ? ` ${apiOrigin}` : ''}`,
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -74,19 +84,25 @@ const csp = [
     <meta name="color-scheme" content="light dark" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Cloudoptics by Cloudboosta" />
+    <meta property="og:locale" content="en_GB" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     <meta property="og:image" content={ogImage} />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:alt" content="Cloudoptics: your AWS bill in dollars and your local currency, and what is safe to cut." />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImage} />
+    <meta name="twitter:image:alt" content="Cloudoptics: your AWS bill in dollars and your local currency, and what is safe to cut." />
+    {GOOGLE_SITE_VERIFICATION && <meta name="google-site-verification" content={GOOGLE_SITE_VERIFICATION} />}
+    {BING_SITE_VERIFICATION && <meta name="msvalidate.01" content={BING_SITE_VERIFICATION} />}
     {blocks.map((b) => <script type="application/ld+json" set:html={ld(b)} />)}
     <slot name="head" />
+    {!noAnalytics && <Beacon />}
   </head>
   <body class="min-h-screen antialiased">
     <a

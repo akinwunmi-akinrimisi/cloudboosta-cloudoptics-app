@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from cloudoptics.analytics import funnel
 from cloudoptics.audit import log as audit
 from cloudoptics.audit.log import Actor
 from cloudoptics.connectors.aws import SessionFactory, session_name
@@ -230,6 +231,7 @@ async def run_validation(
     if not stored:
         return None
     if result.status != "failed":
+        await funnel.emit(session, "connected", tenant_id=tenant_id)
         await session.execute(
             text(
                 "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "

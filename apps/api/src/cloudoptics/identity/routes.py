@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request, status
 from pydantic import EmailStr, Field, field_validator
 from sqlalchemy import text
 
+from cloudoptics.analytics import funnel
 from cloudoptics.audit import log as audit
 from cloudoptics.identity.deps import (
     AdminAccess,
@@ -94,6 +95,8 @@ class TenantCreate(ApiModel):
     country_code: str = Field(pattern=r"^[A-Z]{2}$")
     display_currency: str | None = None
     time_zone: str | None = None
+    # First-touch campaign from the sign-in link (SITE-15), sent once by the app.
+    attribution: funnel.Attribution | None = None
 
     _tz = field_validator("time_zone")(_check_timezone)
     _ccy = field_validator("display_currency")(_check_currency)
@@ -228,6 +231,10 @@ async def patch_me(body: MePatch, user: User, session: Session) -> Me:
     return await _me(user, session)
 
 
+def _not_tracked(request: Request) -> bool:
+    return request.headers.get("dnt") == "1" or request.headers.get("sec-gpc") == "1"
+
+
 @router.post(
     "/tenants",
     response_model=Tenant,
@@ -255,6 +262,14 @@ async def create_tenant(
     await session.execute(
         text("INSERT INTO membership (tenant_id, user_id, role) VALUES (:t, :u, 'admin')"),
         {"t": tenant_id, "u": user.id},
+    )
+    await funnel.emit(
+        session,
+        "workspace_created",
+        tenant_id=tenant_id,
+        user_id=user.id,
+        # Not kept when the browser asks not to be tracked (Do Not Track, Global Privacy Control).
+        attribution=None if _not_tracked(request) else body.attribution,
     )
     await audit.record(
         session,

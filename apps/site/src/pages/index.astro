@@ -21,7 +21,9 @@ const software = {
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Web',
   description,
-  publisher: { '@type': 'Organization', name: 'Cloudboosta' },
+  url: new URL('/', Astro.site).href,
+  image: new URL('/og/cloudoptics.png', Astro.site).href,
+  publisher: { '@id': new URL('/#organization', Astro.site).href },
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: claims.pricing.headline },
 }
 

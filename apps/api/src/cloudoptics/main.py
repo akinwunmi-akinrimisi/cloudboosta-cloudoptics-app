@@ -8,6 +8,8 @@ from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from cloudoptics import __version__
+from cloudoptics.analytics import routes as analytics_routes
+from cloudoptics.analytics import site as site_routes
 from cloudoptics.anomalies import routes as anomaly_routes
 from cloudoptics.audit import routes as audit_routes
 from cloudoptics.budgets import routes as budget_routes
@@ -126,6 +128,8 @@ def create_app() -> FastAPI:
     app.include_router(privacy_routes.router)
     app.include_router(export_routes.router)
     app.include_router(support_routes.router)
+    app.include_router(site_routes.router)
+    app.include_router(analytics_routes.router)
     if settings.auth_mode == "dev":
         app.include_router(dev_routes.router)
     return app

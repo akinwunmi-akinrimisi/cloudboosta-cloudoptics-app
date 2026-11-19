@@ -23,6 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cloudoptics.analytics import funnel
 from cloudoptics.identity.auth import Claims, ProviderError, bearer_claims, get_verifier
 from cloudoptics.platform import ratelimit
 from cloudoptics.platform.api import ApiProblem
@@ -105,7 +106,7 @@ UPSERT_USER_SQL = (
     "ON CONFLICT (auth_subject) DO UPDATE SET email = EXCLUDED.email, "
     "email_verified = EXCLUDED.email_verified, "
     "display_name = COALESCE(EXCLUDED.display_name, app_user.display_name) "
-    "RETURNING id, email, display_name"
+    "RETURNING id, email, display_name, (xmax = 0) AS created"
 )
 
 
@@ -156,6 +157,8 @@ async def current_user(
     except IntegrityError as exc:
         raise email_in_use_problem() from exc
     await scope(session, user_id=row.id)
+    if row.created:
+        await funnel.emit(session, "signup_completed", user_id=row.id)
     return CurrentUser(
         id=row.id,
         email=row.email,

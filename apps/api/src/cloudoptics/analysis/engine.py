@@ -40,6 +40,7 @@ from cloudoptics.analysis.rules import (
 )
 from cloudoptics.analysis.schedule import SCHEDULE_RULES, TEMPLATE_PATH
 from cloudoptics.analysis.settings import RuleSettings, load_rule_settings
+from cloudoptics.analytics import funnel
 from cloudoptics.metrics.puller import load_usage
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
@@ -245,6 +246,8 @@ async def store(
                 {"p": primary, "ids": [ids[s.fingerprint] for s in group[1:]]},
             )
 
+    if scored:
+        await funnel.emit(session, "first_recommendation", tenant_id=tenant_id)
     return {"recommendations": len(scored)}
 
 

@@ -28,6 +28,7 @@ from pydantic import Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
+from cloudoptics.analytics import funnel
 from cloudoptics.audit import log as audit
 from cloudoptics.audit.log import Actor
 from cloudoptics.connectors import aws
@@ -168,6 +169,7 @@ async def create_intent(access: AdminAccess, session: Session) -> IntentSetup:
             },
         )
     ).scalar_one()
+    await funnel.emit(session, "connect_started", tenant_id=access.tenant_id)
     ref = f"i:{intent_id}"
     return IntentSetup(
         intent=Intent(
