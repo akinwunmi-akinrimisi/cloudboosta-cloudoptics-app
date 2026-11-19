@@ -17,6 +17,7 @@ import type { CurrencyMode } from '../lib/currency'
 import { MFA_REQUIRED_MESSAGE, isMfaRequired } from '../api/types'
 import { Alert, Button, Logo, cx } from '../components/ui'
 import { DeletionBanner } from '../pages/DataDeletion'
+import { SupportBanner } from '../pages/Staff'
 import { useApi, useCurrentTenantId, useMe } from './context'
 
 const NAV = [
@@ -59,6 +60,7 @@ export function AppShell() {
   }
   // Every workspace page would fail the same way, so explain once instead.
   const mfaRequired = isMfaRequired(tenant.error)
+  const membership = me?.memberships.find((m) => m.tenantId === tenantId)
 
   return (
     <div className="min-h-screen md:grid md:grid-cols-[240px_1fr] print:block">
@@ -93,12 +95,17 @@ export function AppShell() {
               >
                 {me.memberships.map((m) => (
                   <option key={m.tenantId} value={m.tenantId}>
-                    {m.tenantName}
+                    {m.support ? `${m.tenantName} (support, read-only)` : m.tenantName}
                   </option>
                 ))}
               </select>
             ) : (
               <span className="truncate text-sm font-medium">{tenant.data?.name ?? ''}</span>
+            )}
+            {me?.staff && (
+              <Link to="/staff" className="text-xs font-medium text-secondary underline">
+                Staff
+              </Link>
             )}
             {api.mode === 'demo' && (
               <span className="rounded-full bg-brand-yellow px-2 py-0.5 text-xs font-semibold text-brand-navy">
@@ -143,6 +150,9 @@ export function AppShell() {
             </div>
           ) : (
             <>
+              {membership?.support && (
+                <SupportBanner tenantName={membership.tenantName} support={membership.support} />
+              )}
               {tenant.data && (
                 <DeletionBanner
                   tenant={tenant.data}

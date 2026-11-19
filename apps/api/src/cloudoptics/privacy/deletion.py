@@ -110,6 +110,9 @@ TABLES: dict[str, TenantTable] = {
     "notification_preference": TenantTable(None),
     "monthly_report": TenantTable(None),
     "report_setting": TenantTable(None),
+    # Staff break-glass grants and their requests; the audit log keeps the record of each.
+    "support_access_grant": TenantTable(None),
+    "support_access_request": TenantTable(None),
 }
 
 # Tables with a tenant_id that a deletion keeps, and why.

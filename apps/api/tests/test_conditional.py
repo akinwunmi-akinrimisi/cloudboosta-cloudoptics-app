@@ -44,6 +44,8 @@ UNVERSIONED = {
     "data_version_pending",
     "export_job",  # a user's export files; downloads re-check access, no cached read
     "data_deletion",  # deletion requests and verification records (no cached read uses them)
+    "support_access_grant",  # staff break-glass grants (no cached read uses them)
+    "support_access_request",  # requests made under those grants
 }
 
 

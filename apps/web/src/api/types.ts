@@ -4,10 +4,18 @@ import type { CurrencyMode } from '../lib/currency'
 
 export type Role = 'admin' | 'member' | 'viewer'
 
+/** A Cloudoptics staff member's active break-glass grant: read-only until `expiresAt`. */
+export interface SupportSession {
+  grantId: string
+  expiresAt: string
+}
+
 export interface Membership {
   tenantId: string
   tenantName: string
   role: Role
+  /** Set for a workspace staff reads under support access (role viewer). */
+  support?: SupportSession | null
 }
 
 export interface Me {
@@ -16,6 +24,37 @@ export interface Me {
   displayName: string | null
   preferredCurrencyView: CurrencyMode
   memberships: Membership[]
+  /** Cloudoptics staff (platform admins): the support access tool is shown. */
+  staff?: boolean
+}
+
+export type SupportGrantStatus = 'active' | 'ended' | 'expired'
+
+/** Staff break-glass access to one workspace (internal tool, /staff). */
+export interface SupportGrant {
+  id: string
+  tenantId: string
+  tenantName: string
+  staffEmail: string
+  staffName: string | null
+  justification: string
+  ticketRef: string
+  createdAt: string
+  expiresAt: string
+  endedAt: string | null
+  endedByEmail: string | null
+  status: SupportGrantStatus
+  /** Requests made under the grant (each one is recorded). */
+  requests: number
+}
+
+export interface SupportGrantRequest {
+  tenantId: string
+  justification: string
+  /** The support ticket (required, docs/11b §7.4). */
+  ticketRef: string
+  /** 15 to 120 minutes; 60 by default. */
+  durationMinutes: number
 }
 
 export interface Tenant {
@@ -1137,6 +1176,12 @@ export interface Api {
   savingsPlanAdvisory(tenantId: string): Promise<SavingsPlanAdvisory>
   /** Admins only: read commitments and ask Cost Explorer again now (about USD 0.08 a connection). */
   refreshCommitments(tenantId: string): Promise<{ status: string; connections: number }>
+  /** Staff only (platform admins with MFA): every grant, newest first. */
+  listSupportGrants(): Promise<SupportGrant[]>
+  /** Staff only: open read-only access to one workspace now; its admins are emailed. */
+  requestSupportGrant(body: SupportGrantRequest): Promise<SupportGrant>
+  /** Staff only: end an active grant now. */
+  endSupportGrant(grantId: string): Promise<SupportGrant>
 }
 
 export class ApiError extends Error {

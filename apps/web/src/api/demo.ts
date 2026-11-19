@@ -62,6 +62,8 @@ import type {
   RuleSettingsView,
   SavingsPlanAdvisory,
   StackSteps,
+  SupportGrant,
+  SupportGrantRequest,
   Tenant,
   TenantChange,
   TenantDeletion,
@@ -2621,6 +2623,22 @@ export class DemoApi implements Api {
     this.tenant(tenantId)
     const payer = this.payer(tenantId)
     return payer ? { status: 'succeeded', connections: 1 } : { status: 'skipped', connections: 0 }
+  }
+
+  // The staff support-access tool is internal: the demo has no staff and hides it.
+  async listSupportGrants(): Promise<SupportGrant[]> {
+    await this.tick()
+    return []
+  }
+
+  async requestSupportGrant(_body: SupportGrantRequest): Promise<SupportGrant> {
+    await this.tick()
+    throw new ApiError(403, 'Support access is not available in the demo.')
+  }
+
+  async endSupportGrant(_grantId: string): Promise<SupportGrant> {
+    await this.tick()
+    throw new ApiError(403, 'Support access is not available in the demo.')
   }
 
   private hasData(tenantId: string): boolean {
