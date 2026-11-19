@@ -133,10 +133,30 @@ async def test_a_database_failure_lets_requests_through(
         def connect(self) -> None:
             raise OperationalError("SELECT 1", {}, Exception("down"))
 
-    monkeypatch.setattr(ratelimit, "get_engine", lambda: Broken())
+    monkeypatch.setattr(ratelimit, "get_side_engine", lambda: Broken())
     limits.rate_limit_public_per_minute = 1
     for _ in range(2):
         assert (await client.get("/v1/auth/config")).status_code == 200
+
+
+async def test_counting_does_not_need_a_main_pool_connection(limits) -> None:
+    """Regression (k6 load test, PR #87): every request holds a main-pool connection, so the
+    counter must not wait for another one. With the main pool fully checked out, a hit still
+    completes at once instead of waiting for the 30 s pool timeout."""
+    import asyncio
+
+    from cloudoptics.platform.db import get_engine
+
+    engine = get_engine()
+    held = []
+    try:
+        for _ in range(engine.pool.size() + engine.pool._max_overflow):  # type: ignore[attr-defined]
+            held.append(await engine.connect())
+        limits.rate_limit_user_per_minute = 100
+        await asyncio.wait_for(ratelimit.per_user(f"pool-{secrets.token_hex(4)}"), timeout=5)
+    finally:
+        for conn in held:
+            await conn.close()
 
 
 def _request(headers: dict[str, str], peer: str = "10.0.0.7") -> Request:

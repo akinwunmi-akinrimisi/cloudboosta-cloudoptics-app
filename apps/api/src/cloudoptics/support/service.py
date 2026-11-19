@@ -27,7 +27,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.notifications.email import Email, EmailError, get_mailer
-from cloudoptics.platform.db import get_engine
+from cloudoptics.platform.db import get_side_engine
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 
@@ -120,7 +120,7 @@ async def record_request(
     """Write one request under a grant on its own short transaction (kept even if the
     request fails or is refused). Raises 503 if it cannot be written: no unrecorded access."""
     try:
-        async with get_engine().connect() as conn:
+        async with get_side_engine().connect() as conn:
             await conn.execute(TENANT_SCOPE, {"t": str(tenant_id)})
             await conn.execute(
                 LOG_REQUEST,

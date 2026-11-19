@@ -29,6 +29,24 @@ def get_engine() -> AsyncEngine:
 
 
 @lru_cache
+def get_side_engine() -> AsyncEngine:
+    """A small, separate pool for short writes made while a request already holds a
+    connection from the main pool (rate-limit counters, break-glass request log).
+
+    Taking a second connection from the main pool inside a request deadlocks under load:
+    once every pooled connection belongs to a request waiting for another one, they all wait
+    for the pool timeout (found by the k6 load test, PR #87). Kept tiny because the managed
+    PostgreSQL allows few connections; callers fail fast when it is busy (``pool_timeout``)."""
+    return create_async_engine(
+        get_settings().app_database_url,
+        pool_pre_ping=True,
+        pool_size=2,
+        max_overflow=2,
+        pool_timeout=2,
+    )
+
+
+@lru_cache
 def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(get_engine(), expire_on_commit=False)
 
