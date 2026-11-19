@@ -152,3 +152,43 @@ def test_alerting_sets_recipients_and_uptime_checks_once(
     provision.configure_alerting("app-1")  # a second run updates, never duplicates
     assert not [c for c in api.calls if c[0] == "POST" and "/uptime/" in c[1]]
     assert sum(len(v) for v in api.alerts.values()) == 4
+
+
+def test_roles_anywhere_and_kms_settings_reach_api_and_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLOUDOPTICS_BROKER_CREDENTIALS", "roles_anywhere")
+    monkeypatch.setenv("CLOUDOPTICS_ROLES_ANYWHERE_CERTIFICATE", "Q0VSVA==")
+    monkeypatch.setenv("CLOUDOPTICS_ROLES_ANYWHERE_PRIVATE_KEY", "S0VZ")
+    monkeypatch.setenv("CLOUDOPTICS_KMS_KEY_ID", "arn:aws:kms:eu-west-2:1:key/k")
+    monkeypatch.setenv("CLOUDOPTICS_KMS_REQUIRED", "false")
+    spec = app_spec()
+    provision.apply_runtime_config(spec, None)
+    for name in ("api", "worker"):
+        e = envs(spec, name)
+        assert e["CLOUDOPTICS_ROLES_ANYWHERE_PRIVATE_KEY"]["type"] == "SECRET"
+        assert "type" not in e["CLOUDOPTICS_ROLES_ANYWHERE_CERTIFICATE"]
+        assert e["CLOUDOPTICS_BROKER_CREDENTIALS"]["value"] == "roles_anywhere"
+        assert e["CLOUDOPTICS_KMS_KEY_ID"]["value"].endswith("key/k")
+    assert "CLOUDOPTICS_ROLES_ANYWHERE_PRIVATE_KEY" not in envs(spec, "migrate")
+
+
+def test_the_deleted_broker_users_key_is_taken_off_the_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for var in (*provision.RUNTIME_PLAIN.values(), *provision.RUNTIME_SECRET.values()):
+        monkeypatch.delenv(var, raising=False)
+    current = app_spec()
+    for comp in current["services"] + current["workers"]:
+        comp["envs"] += [
+            {"key": "AWS_ACCESS_KEY_ID", "type": "SECRET", "value": "EV[1:a]"},
+            {"key": "AWS_SECRET_ACCESS_KEY", "type": "SECRET", "value": "EV[1:b]"},
+        ]
+    spec = app_spec()
+    provision.apply_runtime_config(spec, current)
+    assert "AWS_ACCESS_KEY_ID" in envs(spec, "api")  # kept on a plain redeploy
+    monkeypatch.setenv("BROKER_USER_DELETED", "true")
+    spec = app_spec()
+    provision.apply_runtime_config(spec, current)
+    for name in ("api", "worker"):
+        assert not {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} & set(envs(spec, name))

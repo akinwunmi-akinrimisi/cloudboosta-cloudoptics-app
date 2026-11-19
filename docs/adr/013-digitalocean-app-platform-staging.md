@@ -27,7 +27,7 @@ Staging runs with `environment=staging`, which the settings guard turns into har
 
 - Same image and settings as Codespaces and the future cluster: moving to DOKS is a deployment change.
 - No fixed outgoing IP from App Platform, so customers cannot yet pin our role with `aws:SourceIp` (ADR-011). Acceptable for staging; DOKS + egress proxy when a customer requires it.
-- The local AES data key is held as an App Platform secret. KMS (ADR-007) replaces it before production data.
+- The local AES data key is held as an App Platform secret. KMS envelope encryption (ADR-007 amendment) replaces it once Staging setup turns it on; the local key then only reads older ciphertexts.
 - Until the WorkOS keys are configured, the API answers 503 "Sign-in is not configured yet".
 
 ## When to move to DOKS (ADR-008)

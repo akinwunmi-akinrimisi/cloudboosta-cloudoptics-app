@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import secrets
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlencode
 
 import boto3
@@ -216,14 +217,28 @@ class AssumedSession:
         return self.session.client(service, region_name=region, config=CLIENT_CONFIG)
 
 
+class CredentialSource(Protocol):
+    """Broker credentials that expire (``RolesAnywhereCredentials``)."""
+
+    role_arn: str
+
+    def fetch(self) -> dict[str, Any]: ...
+
+
+# Broker credentials are renewed this long before they expire.
+REFRESH_BEFORE = timedelta(minutes=5)
+
+
 class SessionFactory:
     """Assumes customer roles from the broker identity.
 
-    The process credentials come from the default chain: an IAM user key on App Platform
-    staging, IAM Roles Anywhere via ``credential_process`` on DOKS later (ADR-007). With
-    ``broker_role_arn`` set, they are only allowed to assume Cloudoptics' broker role; that
-    role (the principal customers trust) then assumes the customer's role. The broker session
-    is reused until five minutes before it expires.
+    The broker's own credentials come from ``credentials`` when given: IAM Roles Anywhere
+    (ADR-007), fetched again five minutes before they expire. Without it they come from
+    boto3's default chain (the IAM user key on App Platform staging, the explicit fallback).
+    With ``broker_role_arn`` set, and different from the role Roles Anywhere already gives,
+    those credentials may only assume Cloudoptics' broker role; that role (the principal
+    customers trust) then assumes the customer's role with its External ID. Every session is
+    reused until five minutes before it expires. Thread-safe: AWS calls run in a threadpool.
     """
 
     def __init__(
@@ -232,12 +247,19 @@ class SessionFactory:
         broker_role_arn: str | None = None,
         make_session: Callable[..., Any] = boto3.Session,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        credentials: CredentialSource | None = None,
     ) -> None:
-        self._base = base or make_session()
+        self._credentials = credentials
+        self._base = base if base is not None or credentials else make_session()
+        if credentials and broker_role_arn == credentials.role_arn:
+            broker_role_arn = None  # Roles Anywhere already gives the broker role
         self._broker_role_arn = broker_role_arn
         self._make_session = make_session
         self._clock = clock
+        self._process: tuple[Any, datetime] | None = None
         self._broker: tuple[Any, datetime] | None = None
+        self._clients: dict[tuple[str, str], tuple[Any, Any]] = {}
+        self._lock = threading.RLock()
 
     def _from_credentials(self, creds: dict[str, Any]) -> Any:
         return self._make_session(
@@ -246,18 +268,50 @@ class SessionFactory:
             aws_session_token=creds["SessionToken"],
         )
 
-    def _source(self) -> Any:
-        if not self._broker_role_arn:
+    def _fresh(self, held: tuple[Any, datetime] | None) -> bool:
+        return held is not None and held[1] - self._clock() > REFRESH_BEFORE
+
+    def _process_session(self) -> Any:
+        if self._credentials is None:
             return self._base
-        if self._broker and self._broker[1] - self._clock() > timedelta(minutes=5):
+        if not self._fresh(self._process):
+            creds = self._credentials.fetch()
+            self._process = (self._from_credentials(creds), creds["Expiration"])
+        assert self._process is not None
+        return self._process[0]
+
+    def _source(self) -> Any:
+        with self._lock:
+            if not self._broker_role_arn:
+                return self._process_session()
+            if self._fresh(self._broker):
+                assert self._broker is not None
+                return self._broker[0]
+            creds = (
+                self._process_session()
+                .client("sts", region_name=STACK_REGION)
+                .assume_role(
+                    RoleArn=self._broker_role_arn,
+                    RoleSessionName="cloudoptics-broker",
+                    DurationSeconds=3600,
+                )["Credentials"]
+            )
+            self._broker = (self._from_credentials(creds), creds["Expiration"])
             return self._broker[0]
-        creds = self._base.client("sts", region_name=STACK_REGION).assume_role(
-            RoleArn=self._broker_role_arn,
-            RoleSessionName="cloudoptics-broker",
-            DurationSeconds=3600,
-        )["Credentials"]
-        self._broker = (self._from_credentials(creds), creds["Expiration"])
-        return self._broker[0]
+
+    def broker_session(self) -> Any:
+        """The broker's own session (KMS in Cloudoptics' account uses it)."""
+        return self._source()
+
+    def broker_client(self, service: str, region: str) -> Any:
+        """A client on the broker session, rebuilt only when the session was renewed."""
+        session = self._source()
+        with self._lock:
+            held = self._clients.get((service, region))
+            if held is None or held[0] is not session:
+                held = (session, session.client(service, region_name=region, config=CLIENT_CONFIG))
+                self._clients[(service, region)] = held
+            return held[1]
 
     def assume(self, role_arn: str, external_id: str, name: str) -> AssumedSession:
         sts = self._source().client("sts", region_name=STACK_REGION)

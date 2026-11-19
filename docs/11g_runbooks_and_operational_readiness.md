@@ -456,18 +456,18 @@ curl -sSf https://cloudoptics.cloudboosta.com/api/readyz && echo
 
 ### RB-09: Staging setup (what it changes and rotates)
 
-**Actions → Staging setup → Run workflow** (from `main`; input: the GitHub environment with the credentials, default `github-pages`). Run it when settings change: a new WorkOS or Postmark value, `ALERT_EMAILS`, an `app.yaml` change other than the image, or a key rotation.
+**Actions → Staging setup → Run workflow** (from `main`; inputs: the GitHub environment with the credentials, default `github-pages`; `kms`, `broker_credentials`, `certificate_days` and `delete_broker_user`, see RB-20; the defaults change nothing). Run it when settings change: a new WorkOS or Postmark value, `ALERT_EMAILS`, an `app.yaml` change other than the image, or a key rotation.
 
 | Step | Effect |
 |---|---|
 | Credential checks | Fails early if AWS, WorkOS or DigitalOcean secrets are missing; checks the Postmark token and the WorkOS API key against their APIs |
-| `infra/aws/bootstrap.py` | Template bucket `cloudoptics-public-<account>` and templates (re-uploaded), broker role `CloudopticsBroker`, broker user `cloudoptics-staging-broker`. **Rotates the broker user's access key on every run**: creates a new key and deletes the older ones |
+| `infra/aws/bootstrap.py` | Template bucket `cloudoptics-public-<account>` and templates (re-uploaded), broker role `CloudopticsBroker`. With `broker_credentials=iam-user` (default): broker user `cloudoptics-staging-broker`, and **rotates its access key on every run** (creates a new key and deletes the older ones). With `roles-anywhere`: **rotates the Roles Anywhere certificate** instead (RB-20). With `kms`: the KMS key for connection secrets |
 | `provision.py app` | Renders `app.yaml` (database URLs read from the DigitalOcean API; the existing data key kept), adds the broker key, template URLs, WorkOS and Postmark settings, validates and **replaces the app spec** (this is when alert rules and sizes change), resets the database firewall to "only the app", sets alert recipients and Uptime checks when `ALERT_EMAILS` is set |
 | Wait and smoke test | Waits for the new deployment to be `ACTIVE`; checks `/api/readyz`, that sign-in is WorkOS, and that the template is reachable |
 
-Not rotated: database passwords (RB-18), the data key `CLOUDOPTICS_LOCAL_DATA_KEY` (replacing it makes stored External IDs unreadable; KMS replaces it before production), WorkOS and Postmark keys (re-applied from the secrets, which you rotate in RB-18).
+Not rotated: database passwords (RB-18), the data key `CLOUDOPTICS_LOCAL_DATA_KEY` (replacing it makes stored External IDs unreadable; once KMS is on it only reads secrets stored before KMS, RB-20), WorkOS and Postmark keys (re-applied from the secrets, which you rotate in RB-18).
 
-Side effect to expect: between the key rotation and the new deployment going live (a few minutes), the running app holds a deleted AWS key, so validations and syncs fail with an AWS authentication error and retry. Run it outside busy hours and check RB-12 for failed jobs afterwards.
+Side effect to expect with `iam-user` (none with `roles-anywhere`, whose previous certificate stays valid): between the key rotation and the new deployment going live (a few minutes), the running app holds a deleted AWS key, so validations and syncs fail with an AWS authentication error and retry. Run it outside busy hours and check RB-12 for failed jobs afterwards.
 
 ### RB-10: Incident response (staging, practical)
 
@@ -594,17 +594,37 @@ Rotate on schedule (RB-04 periods), when someone leaves, and at once on suspecte
 
 | Secret | How to rotate | Downtime |
 |---|---|---|
-| AWS broker key (`cloudoptics-staging-broker`) | Run Staging setup: it creates a new key, deletes the old and deploys it | A few minutes of AWS errors (RB-09) |
+| AWS broker key (`cloudoptics-staging-broker`) | Run Staging setup: it creates a new key, deletes the old and deploys it. Gone once Roles Anywhere is on (RB-20 step 6) | A few minutes of AWS errors (RB-09) |
+| Roles Anywhere certificate and key | Staging setup with `broker_credentials=roles-anywhere`, before `certificate_days` (default 30) runs out | None |
+| KMS key (`alias/cloudoptics-staging-secrets`) | Automatic yearly rotation by KMS; old versions keep decrypting | None |
 | AWS admin key used by Staging setup (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) | IAM → the admin user → create a second key → update both GitHub secrets → run Staging setup to prove it → deactivate, then delete the old key | None |
 | WorkOS API key | WorkOS dashboard (same environment as the client ID) → API Keys → create → update `WORKOS_API_KEY` → Staging setup (it checks the key) → revoke the old key | None |
 | DigitalOcean token (`DIGITALOCEAN_TOKEN`) | DigitalOcean → API → Tokens → new token with the same scopes (apps, databases, uptime, monitoring) → update the secret in every environment that has it (Staging setup's environment, `staging`) → run Deploy staging by hand to prove it → delete the old token | None |
 | Postmark server token (`POSTMARK_API`) | Postmark → the server → API Tokens → add a token → update the secret → Staging setup (it checks the token) → delete the old token | None (emails are logged, not sent, if it is missing) |
 | Database app password (`cloudoptics_app`) | `doctl databases user reset $DB cloudoptics_app` then run Staging setup at once (it reads the new password and redeploys) | API and worker fail until the deploy is live (about 5 minutes) |
 | Database owner password (`doadmin`) | `doctl databases user reset $DB doadmin`, then Staging setup (the `migrate` job uses it) | None for users; the next deploy needs the new value |
-| Data key (`CLOUDOPTICS_LOCAL_DATA_KEY`) | Not rotatable today: stored External IDs would become unreadable. Replace with KMS before production (ADR-007) | |
+| Data key (`CLOUDOPTICS_LOCAL_DATA_KEY`) | Not rotatable: it reads External IDs stored before KMS. Turn KMS on and re-encrypt (RB-20); afterwards it is no longer needed | |
 | GHCR, signing | No secrets: `GITHUB_TOKEN` and keyless signing | |
 
 After any rotation: smoke test (`/api/readyz`, sign in, one connection Check), and note the date in the private rotation tracker.
+
+### RB-20: Secrets under KMS and broker credentials from Roles Anywhere (ADR-007)
+
+The full owner steps, in order, with costs, are in the ADR-007 amendment. In short, one Staging setup run each:
+
+| # | Inputs | Result |
+|---|---|---|
+| 1 | `kms=optional` | KMS key created; new secrets encrypted under it |
+| 2 | (none) | In the worker console: `python -m cloudoptics.connectors.reencrypt`, then `--check` until it exits 0. The hourly job does the same |
+| 3 | `kms=required` | API and worker refuse to start without KMS |
+| 4 | `broker_credentials=roles-anywhere` | Trust anchors, profile and certificate; the app uses Roles Anywhere |
+| 5 | (none) | Check a connection on staging; CloudTrail shows `CreateSession`. To go back: `broker_credentials=iam-user` |
+| 6 | `broker_credentials=roles-anywhere`, `delete_broker_user=true` | IAM user and its key deleted, and taken off the app |
+| 7 | `broker_credentials=roles-anywhere`, every 3–4 weeks | New certificate before the old one expires |
+
+**All AWS calls fail with `RolesAnywhereError`:** the message says why. `expired`: run step 7 now. `HTTP 403 Untrusted certificate`: the anchor no longer holds the certificate's CA (two rotations without a deployment going live); run step 7. `AccessDenied` on the broker role: check its trust policy names both anchors (re-run step 4). To stop a leaked certificate at once: disable its trust anchor in IAM Roles Anywhere, then run step 7.
+
+**`InvalidCiphertextException` or `AccessDeniedException` from KMS:** the key policy must name `CloudopticsBroker` (re-run with `kms` set), and the key must be enabled. A ciphertext copied between workspaces fails this way by design.
 
 ### RB-19: Security-audit follow-ups
 

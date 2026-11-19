@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_AUTH_SECRET = "dev-only-secret-change-me-0123456789abcdef"  # noqa: S105 - refused outside dev
@@ -46,8 +46,34 @@ class Settings(BaseSettings):
     workos_api_base: str = "https://api.workos.com"
     dev_auth_secret: str = DEV_AUTH_SECRET
 
-    # Base64 32-byte key for the local envelope encryptor. KMS replaces it in staging/prod.
+    # Base64 32-byte key for the local encryptor (connectors/crypto.py): local, test and demo
+    # encrypt with it. With a KMS key it only reads ciphertexts written before KMS, until the
+    # re-encryption job has rewritten them all; then staging and production may drop it.
     local_data_key: str = DEV_DATA_KEY
+    # AWS KMS envelope encryption (ADR-007): a symmetric key in Cloudoptics' broker account,
+    # used through the broker credentials. Set: new secrets are encrypted under KMS data keys.
+    kms_key_id: str = ""
+    kms_region: str = "eu-west-2"
+    # Staging setup turns this on once the re-encryption has run. The API and worker then
+    # refuse to start without a KMS key, and the development data key is no longer refused
+    # (it is ignored: with KMS required, old ciphertexts need the real local key or none).
+    kms_required: bool = False
+    data_key_cache_seconds: int = Field(default=300, ge=0, le=3600)
+    data_key_cache_entries: int = Field(default=1024, ge=1, le=100_000)
+    data_key_max_uses: int = Field(default=1000, ge=1)
+
+    # Where the broker's own AWS credentials come from (ADR-007). "roles_anywhere": IAM Roles
+    # Anywhere with the X.509 certificate and key below (short-lived, refreshed before
+    # expiry). "default_chain": boto3's default chain, i.e. the IAM user key on App Platform;
+    # the explicit fallback. "auto": Roles Anywhere once a certificate is set, else the chain.
+    broker_credentials: Literal["auto", "roles_anywhere", "default_chain"] = "auto"
+    # PEM (or base64 of PEM): the end-entity certificate first, then any intermediates.
+    roles_anywhere_certificate: str = ""
+    roles_anywhere_private_key: SecretStr = SecretStr("")
+    roles_anywhere_trust_anchor_arn: str = ""
+    roles_anywhere_profile_arn: str = ""
+    roles_anywhere_role_arn: str = ""
+    roles_anywhere_session_seconds: int = Field(default=3600, ge=900, le=3600)
 
     # AWS connection (PRD FR-CON-01/13). Templates must be served from S3 for quick-create.
     # The defaults are local placeholders; the API and worker refuse them in staging and
@@ -172,9 +198,34 @@ class Settings(BaseSettings):
                 raise ValueError(f"auth_mode=dev is not allowed in {self.environment}")
             if self.jobs_mode != "queue":
                 raise ValueError(f"jobs_mode must be 'queue' in {self.environment}")
-            if self.local_data_key == DEV_DATA_KEY:
+            if self.local_data_key == DEV_DATA_KEY and not self.kms_required:
                 raise ValueError(f"the development data key is not allowed in {self.environment}")
+        if self.kms_required and not self.kms_key_id:
+            raise ValueError("kms_required is set but CLOUDOPTICS_KMS_KEY_ID is not")
         return self
+
+    @property
+    def uses_roles_anywhere(self) -> bool:
+        if self.broker_credentials == "auto":
+            return bool(self.roles_anywhere_certificate)
+        return self.broker_credentials == "roles_anywhere"
+
+    def roles_anywhere_problems(self) -> list[str]:
+        if not self.uses_roles_anywhere:
+            return []
+        missing = [
+            f"CLOUDOPTICS_{name.upper()}"
+            for name in (
+                "roles_anywhere_certificate",
+                "roles_anywhere_trust_anchor_arn",
+                "roles_anywhere_profile_arn",
+                "roles_anywhere_role_arn",
+            )
+            if not getattr(self, name)
+        ]
+        if not self.roles_anywhere_private_key.get_secret_value():
+            missing.append("CLOUDOPTICS_ROLES_ANYWHERE_PRIVATE_KEY")
+        return [f"{name} is not set (Roles Anywhere)" for name in missing]
 
     def require_aws_connection_settings(self) -> None:
         """In staging/production, refuse placeholder or foreign AWS connection settings.
@@ -206,6 +257,7 @@ class Settings(BaseSettings):
                     f"{env} must be https://cloudoptics-public-<account>.s3.<region>"
                     f".amazonaws.com/.../{name}"
                 )
+        problems += self.roles_anywhere_problems()
         if problems:
             raise RuntimeError(f"refusing to start in {self.environment}: " + "; ".join(problems))
 

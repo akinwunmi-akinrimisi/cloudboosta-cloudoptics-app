@@ -42,7 +42,7 @@ class CloudProvider(Protocol):
 
 | Provider | Flow |
 |---|---|
-| **AWS (MVP)** | 1) The worker pod holds a short-lived X.509 cert (issued by AWS Private CA, ≤ 24h, renewed by a sidecar/init job). 2) `rolesanywhere:CreateSession` → broker role credentials (≤ 1h). 3) `sts:AssumeRole(RoleArn=customer, ExternalId=decrypt(conn.external_id_enc), RoleSessionName=co-{tenant}-{job}, DurationSeconds=3600)`. 4) Customer credentials are cached **in memory per job** only. Optional: customer trust policy restricts `aws:SourceIp` to our egress IPs |
+| **AWS (MVP)** | 1) The worker pod holds a short-lived X.509 cert (issued by AWS Private CA, ≤ 24h, renewed by a sidecar/init job; on App Platform staging a self-managed CA and a ≤ 30-day certificate, see the ADR-007 amendment). 2) `rolesanywhere:CreateSession` → broker role credentials (≤ 1h). 3) `sts:AssumeRole(RoleArn=customer, ExternalId=decrypt(conn.external_id_enc), RoleSessionName=co-{tenant}-{job}, DurationSeconds=3600)`. 4) Customer credentials are cached **in memory per job** only. Optional: customer trust policy restricts `aws:SourceIp` to our egress IPs |
 | **Azure (v2)** | Multi-tenant Entra ID app + admin consent; federated credential (workload identity) → Cost Management Reader + Reader roles |
 | **GCP (v2)** | Workload Identity Federation → service account impersonation with `billing.viewer` / BigQuery data viewer on the export dataset |
 

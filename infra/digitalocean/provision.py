@@ -147,14 +147,25 @@ RUNTIME_PLAIN = {
     "CLOUDOPTICS_CFN_RESOURCE_TEMPLATE_URL": "CLOUDOPTICS_CFN_RESOURCE_TEMPLATE_URL",
     "CLOUDOPTICS_WORKOS_CLIENT_ID": "WORKOS_CLIENT_ID",
     "CLOUDOPTICS_EMAIL_FROM": "POSTMARK_FROM",
+    # ADR-007: how the broker gets its AWS credentials, and the KMS key for secrets.
+    "CLOUDOPTICS_BROKER_CREDENTIALS": "CLOUDOPTICS_BROKER_CREDENTIALS",
+    "CLOUDOPTICS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN": "CLOUDOPTICS_ROLES_ANYWHERE_TRUST_ANCHOR_ARN",
+    "CLOUDOPTICS_ROLES_ANYWHERE_PROFILE_ARN": "CLOUDOPTICS_ROLES_ANYWHERE_PROFILE_ARN",
+    "CLOUDOPTICS_ROLES_ANYWHERE_ROLE_ARN": "CLOUDOPTICS_ROLES_ANYWHERE_ROLE_ARN",
+    "CLOUDOPTICS_ROLES_ANYWHERE_CERTIFICATE": "CLOUDOPTICS_ROLES_ANYWHERE_CERTIFICATE",
+    "CLOUDOPTICS_KMS_KEY_ID": "CLOUDOPTICS_KMS_KEY_ID",
+    "CLOUDOPTICS_KMS_REQUIRED": "CLOUDOPTICS_KMS_REQUIRED",
 }
 RUNTIME_SECRET = {
     "AWS_ACCESS_KEY_ID": "BROKER_AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY": "BROKER_AWS_SECRET_ACCESS_KEY",
     "CLOUDOPTICS_WORKOS_API_KEY": "WORKOS_API_KEY",
     "CLOUDOPTICS_POSTMARK_SERVER_TOKEN": "POSTMARK_API",
+    "CLOUDOPTICS_ROLES_ANYWHERE_PRIVATE_KEY": "CLOUDOPTICS_ROLES_ANYWHERE_PRIVATE_KEY",
 }
 RUNTIME_COMPONENTS = ("api", "worker")
+# Taken off the app when bootstrap.py reports BROKER_USER_DELETED: the user's key is dead.
+BROKER_USER_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
 
 
 def apply_runtime_config(spec: dict[str, Any], current: dict[str, Any] | None) -> None:
@@ -180,14 +191,19 @@ def apply_runtime_config(spec: dict[str, Any], current: dict[str, Any] | None) -
     previous: dict[str, dict[str, dict[str, Any]]] = {}
     for comp in (current or {}).get("services", []) + (current or {}).get("workers", []):
         previous[comp["name"]] = {e["key"]: e for e in comp.get("envs", []) if e["key"] in managed}
+    dropped = BROKER_USER_KEYS if os.environ.get("BROKER_USER_DELETED") == "true" else ()
     for comp in spec.get("services", []) + spec.get("workers", []):
         if comp["name"] not in RUNTIME_COMPONENTS:
             continue
         merged = {**previous.get(comp["name"], {}), **supplied}
+        for key in dropped:
+            merged.pop(key, None)
         comp["envs"] = [e for e in comp.get("envs", []) if e["key"] not in merged]
         comp["envs"] += list(merged.values())
     if supplied:
         print("runtime config supplied:", ", ".join(sorted(supplied)))
+    if dropped:
+        print("removed the deleted broker user's key:", ", ".join(dropped))
 
 
 def find_app() -> dict[str, Any] | None:

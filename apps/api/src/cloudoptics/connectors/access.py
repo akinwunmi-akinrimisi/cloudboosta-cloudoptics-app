@@ -279,6 +279,14 @@ def _same_secret(enc: bytes, tenant_id: uuid.UUID, external_id: str) -> bool:
     return hmac.compare_digest(stored.encode(), external_id.encode())
 
 
+def _current_ciphertext(enc: bytes, tenant_id: uuid.UUID) -> bytes:
+    """The intent's ciphertext for the new connection, under KMS if it was written before."""
+    encryptor = get_encryptor()
+    if not encryptor.needs_upgrade(enc):
+        return enc
+    return encryptor.encrypt(encryptor.decrypt(enc, tenant_id), tenant_id)
+
+
 async def _connection_from_intent(
     session: Session, body: StackCallback, intent_id: uuid.UUID, created_by: uuid.UUID | None
 ) -> uuid.UUID:
@@ -305,7 +313,7 @@ async def _connection_from_intent(
         "acct": body.account_id,
         "type": "management" if body.management else "standalone",
         "arn": aws.billing_role_arn(body.account_id, body.stack_name),
-        "ext": bytes(intent.external_id_enc),
+        "ext": _current_ciphertext(bytes(intent.external_id_enc), body.tenant_id),
         "stack": body.stack_name,
         "by": created_by,
     }

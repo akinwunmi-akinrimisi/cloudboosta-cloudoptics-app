@@ -44,8 +44,21 @@ _session_factory: SessionFactory | None = None
 def get_session_factory() -> SessionFactory:
     global _session_factory
     if _session_factory is None:
+        settings = get_settings()
+        credentials = None
+        if settings.uses_roles_anywhere:
+            from cloudoptics.connectors.rolesanywhere import RolesAnywhereCredentials
+
+            credentials = RolesAnywhereCredentials(
+                certificate=settings.roles_anywhere_certificate,
+                private_key=settings.roles_anywhere_private_key.get_secret_value(),
+                trust_anchor_arn=settings.roles_anywhere_trust_anchor_arn,
+                profile_arn=settings.roles_anywhere_profile_arn,
+                role_arn=settings.roles_anywhere_role_arn,
+                session_seconds=settings.roles_anywhere_session_seconds,
+            )
         _session_factory = SessionFactory(
-            broker_role_arn=get_settings().aws_broker_role_arn or None
+            broker_role_arn=settings.aws_broker_role_arn or None, credentials=credentials
         )
     return _session_factory
 
@@ -166,7 +179,7 @@ async def run_validation(
     stack: dict[str, Any] | None = conn.pending_stack
     role_arn = stack["roleArn"] if stack else conn.role_arn
     account_type = stack["accountType"] if stack else conn.account_type
-    external_id = get_encryptor().decrypt(bytes(conn.external_id_enc), tenant_id)
+    external_id = await read_external_id(session, conn, tenant_id)
     factory = get_session_factory()
     started = datetime.now(UTC)
 
@@ -319,10 +332,37 @@ ROLE_GONE = {"AccessDenied", "AccessDeniedException", "NoSuchEntity", "NoSuchEnt
 RemovalCheck = Literal["disconnected", "kept", "unknown", "skipped"]
 
 
-def secret_tag(external_id_enc: bytes) -> str:
+def secret_tag(external_id: str) -> str:
     """Names the External ID a check was queued for without revealing it. A reconnect issues
-    a new one, and a check queued before it must not touch the reconnected connection."""
+    a new one, and a check queued before it must not touch the reconnected connection.
+
+    Taken from the External ID itself (256 random bits, so 64 bits of its hash reveal nothing),
+    not from its ciphertext: re-encryption under KMS rewrites the ciphertext of the same ID.
+    """
+    return hashlib.sha256(b"cloudoptics/secret-tag:" + external_id.encode()).hexdigest()[:16]
+
+
+def _legacy_secret_tag(external_id_enc: bytes) -> str:
+    """The tag checks queued before KMS carry: a hash of the version 1 ciphertext."""
     return hashlib.sha256(bytes(external_id_enc)).hexdigest()[:16]
+
+
+UPGRADE_CONNECTION_SECRET = text(
+    "UPDATE cloud_connection SET external_id_enc = :new WHERE id = :c AND external_id_enc = :old"
+)
+
+
+async def read_external_id(session: AsyncSession, conn: Any, tenant_id: uuid.UUID) -> str:
+    """Decrypt a connection's External ID; a ciphertext written before KMS is rewritten under
+    KMS in the caller's transaction (lazy re-encryption). The update only applies while the
+    row still holds the old ciphertext, so racing readers and reconnects are safe."""
+    enc = bytes(conn.external_id_enc)
+    encryptor = get_encryptor()
+    external_id = encryptor.decrypt(enc, tenant_id)
+    if encryptor.needs_upgrade(enc):
+        new = encryptor.encrypt(external_id, tenant_id)
+        await session.execute(UPGRADE_CONNECTION_SECRET, {"new": new, "old": enc, "c": conn.id})
+    return external_id
 
 
 async def check_stack_removed(
@@ -342,13 +382,12 @@ async def check_stack_removed(
     gave another error) is left to the caller to retry or record.
     """
     conn = await get_connection(session, connection_id)
-    if (
-        conn.status == "disconnected"
-        or conn.stack_name != stack_name
-        or secret_tag(conn.external_id_enc) != tag
-    ):
+    if conn.status == "disconnected" or conn.stack_name != stack_name:
         return "skipped", None
-    external_id = get_encryptor().decrypt(bytes(conn.external_id_enc), tenant_id)
+    legacy_tag = _legacy_secret_tag(conn.external_id_enc)
+    external_id = await read_external_id(session, conn, tenant_id)
+    if tag not in (secret_tag(external_id), legacy_tag):
+        return "skipped", None
     factory = get_session_factory()
 
     def _assume() -> str | None:

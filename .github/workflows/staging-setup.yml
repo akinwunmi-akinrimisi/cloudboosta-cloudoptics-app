@@ -1,5 +1,8 @@
 # One-off / occasional setup of staging's external services (ADR-007, ADR-013, ADR-006):
-#   1. Cloudoptics' AWS account: template bucket, broker role, broker user (key rotated).
+#   1. Cloudoptics' AWS account: template bucket, broker role, and the broker's credentials:
+#      the broker user (key rotated) or IAM Roles Anywhere (certificate rotated); with the
+#      kms input, the KMS key for connection secrets (owner steps: ADR-007 amendment,
+#      docs/11g RB-20).
 #   2. App Platform: broker key, template URLs, WorkOS client ID and API key, and the
 #      Postmark server token (POSTMARK_API) and sender (POSTMARK_FROM) when present; the
 #      app spec's alert rules, and with ALERT_EMAILS their recipients and uptime checks.
@@ -17,6 +20,31 @@ on:
         description: GitHub environment that holds the credentials
         default: github-pages
         required: true
+      kms:
+        description: >-
+          KMS envelope encryption of connection secrets. off: unchanged. optional: create
+          the key and encrypt new secrets with it. required: refuse to start without it
+          (only after the re-encryption job reports nothing left).
+        type: choice
+        options: ["off", optional, required]
+        default: "off"
+      broker_credentials:
+        description: >-
+          How the broker gets AWS credentials. iam-user: rotate the user's key (fallback).
+          roles-anywhere: issue a new short-lived certificate and use IAM Roles Anywhere.
+        type: choice
+        options: [iam-user, roles-anywhere]
+        default: iam-user
+      certificate_days:
+        description: Days the Roles Anywhere certificate is valid (1-90); re-run before then.
+        default: "30"
+        required: true
+      delete_broker_user:
+        description: >-
+          With roles-anywhere: delete the IAM user and its key. Only once Roles Anywhere
+          has been seen working on staging.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -87,9 +115,14 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          KMS_MODE: ${{ inputs.kms }}
+          BROKER_CREDENTIALS: ${{ inputs.broker_credentials }}
+          CERTIFICATE_DAYS: ${{ inputs.certificate_days }}
+          DELETE_BROKER_USER: ${{ inputs.delete_broker_user }}
         run: uv run python infra/aws/bootstrap.py
       - name: Apply settings to App Platform and deploy
-        # Also reads the broker key, role ARN and template URLs bootstrap.py wrote to GITHUB_ENV.
+        # Also reads what bootstrap.py wrote to GITHUB_ENV: the broker key or Roles Anywhere
+        # certificate (the private key masked), role ARN, KMS key and template URLs.
         env:
           DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
           WORKOS_API_KEY: ${{ secrets.WORKOS_API_KEY }}
