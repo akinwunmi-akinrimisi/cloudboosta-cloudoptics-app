@@ -246,6 +246,14 @@ def seed_workspace(owner_sql: Sql, tenant: str) -> None:
             tenant,
         ),
         (
+            "INSERT INTO export_job (id, tenant_id, requested_by, kind, file_name) "
+            "SELECT %s, %s, m.user_id, 'costs', 'costs.csv' FROM membership m "
+            "WHERE m.tenant_id = %s LIMIT 1",
+            uuid.uuid4(),
+            tenant,
+            tenant,
+        ),
+        (
             "INSERT INTO notification (id, tenant_id, kind, dedupe_key, recipients, subject, "
             "status) VALUES (%s, %s, 'digest', %s, '{}', 'Digest', 'sent')",
             uuid.uuid4(),

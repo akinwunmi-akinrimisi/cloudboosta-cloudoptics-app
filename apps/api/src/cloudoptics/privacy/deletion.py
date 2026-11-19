@@ -100,6 +100,7 @@ TABLES: dict[str, TenantTable] = {
     "anomaly": TenantTable("account"),
     # Shared by every connection's cost rows; unused ones go with a connection's data.
     "tag_set": TenantTable(None),
+    "export_job": TenantTable(None),  # export files hold the workspace's data
     "aws_api_usage": TenantTable(None),
     "budget": TenantTable(None),
     "credit_balance": TenantTable(None),
