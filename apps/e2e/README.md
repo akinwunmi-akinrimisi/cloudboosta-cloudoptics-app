@@ -40,7 +40,7 @@ pnpm --filter @cloudoptics/e2e report        # the HTML report
 
 Playwright reuses servers already running on :8000 and :4173 (except in CI). The API resets its
 database each time it starts. Reports go to `reports/`: `html/`, `junit.xml`, and `a11y/`
-(`summary.md` and one JSON file per page).
+(`summary.md` and one JSON file per page), and `performance/overview.json`.
 
 ## Journeys
 
@@ -54,10 +54,13 @@ database each time it starts. Reports go to `reports/`: `html/`, `junit.xml`, an
 | `settings` | J5: invite a Viewer, they join on sign-in, Viewer refused in UI and API, promote, remove |
 | `privacy` | Disconnect an account and delete its data; schedule workspace deletion and cancel it |
 | `security` | MFA-required workspace message for a member without MFA; admin with MFA unaffected; rate-limit 429 message |
-| `a11y` | axe-core (WCAG 2.0-2.2 A/AA and best practices) on 12 pages; reports only, `E2E_A11Y_STRICT=1` fails on any violation |
+| `a11y` | axe-core (WCAG 2.0-2.2 A/AA and best practices) on 28 views: the main pages, onboarding (create workspace, connect AWS), opened panels (dismiss form, reload bills, delete confirmation, a chart's table), every main page at 390 px and the phone menu. Any violation fails; `E2E_A11Y_STRICT=0` only reports |
+| `keyboard` | What axe cannot see: skip link first and landing on `main`, a focus ring on every control, the phone menu as a modal (focus in, Tab trapped, Escape closes, focus back), Escape on every inline panel, reduced motion, a table behind every chart, page title and focus on route changes |
+| `mobile` | No sideways page scroll at 375, 390 and 768 px on the main pages and onboarding; the phone menu navigates and closes |
+| `performance` | Overview LCP at most 4 s with Chrome's "Fast 3G" (1.6 Mbit/s, 562.5 ms RTT) and the CPU 4x slower, cold cache, production build; writes `reports/performance/overview.json` |
 
-Not covered yet: J6 (monthly report PDF), WebKit and mobile viewports (docs/11f asks for both;
-Chromium only for now to keep CI under 10 minutes), Slack.
+Not covered yet: J6 (monthly report PDF), WebKit (docs/11f asks for it; Chromium only for now to
+keep CI under 10 minutes; phones are emulated in Chromium), Slack.
 
 ## Load
 

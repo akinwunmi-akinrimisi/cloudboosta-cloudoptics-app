@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ExternalLink, ShieldCheck } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { useApi } from '../app/context'
 import type {
@@ -18,6 +18,7 @@ import { UsageChart } from '../components/charts'
 import { Commands, CopyButton } from '../components/commands'
 import { ExportButton } from '../components/exports'
 import { NatRoutes } from '../components/natRoutes'
+import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { RULES } from '../lib/rules'
 import { Kpi, useMoney, useWorkspace } from './Workspace'
@@ -160,6 +161,9 @@ export function Recommendations() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dismissing, setDismissing] = useState(false)
   const [reason, setReason] = useState('')
+  const dismissButton = useRef<HTMLButtonElement>(null)
+  const dismissForm = useRef<HTMLFormElement>(null)
+  useEscapeToClose(dismissing, () => setDismissing(false), dismissButton, dismissForm)
   const summary = useQuery({
     queryKey: ['recommendation-summary', tenantId],
     queryFn: () => api.recommendationSummary(tenantId as string),
@@ -322,6 +326,7 @@ export function Recommendations() {
             )}
             {dismissing ? (
               <form
+                ref={dismissForm}
                 className="flex flex-wrap items-center gap-2"
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -355,7 +360,7 @@ export function Recommendations() {
                 <Button variant="secondary" disabled={bulk.isPending} onClick={() => bulk.mutate({ status: 'done' })}>
                   Mark as done
                 </Button>
-                <Button variant="ghost" onClick={() => setDismissing(true)}>
+                <Button ref={dismissButton} variant="ghost" onClick={() => setDismissing(true)}>
                   Dismiss…
                 </Button>
                 <select
@@ -392,9 +397,10 @@ export function Recommendations() {
           {recs.map((r) => (
             <li key={r.id} className="flex items-center hover:bg-surface-2">
               {canChange && (
+                // 24 px: WCAG 2.2 target size (2.5.8); the row's link starts right beside it.
                 <input
                   type="checkbox"
-                  className="ml-5"
+                  className="ml-4 size-6 shrink-0 cursor-pointer accent-accent"
                   aria-label={`Select ${r.title}`}
                   checked={selected.has(r.id)}
                   onChange={() => toggle(r.id)}
@@ -413,7 +419,7 @@ export function Recommendations() {
                     {r.assigneeId && ` · ${r.assigneeId === me?.id ? 'You' : (names.get(r.assigneeId) ?? 'A teammate')}`}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                   {r.status === 'verified' && <VerifiedBadge />}
                   <Pill tone={r.riskLevel}>{`${capitalise(r.riskLevel)} risk`}</Pill>
                   <Pill tone="neutral">{`${capitalise(r.confidence)} confidence`}</Pill>
@@ -622,6 +628,9 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
   const qc = useQueryClient()
   const [dismissing, setDismissing] = useState(false)
   const [reason, setReason] = useState('')
+  const dismissButton = useRef<HTMLButtonElement>(null)
+  const dismissForm = useRef<HTMLFormElement>(null)
+  useEscapeToClose(dismissing, () => setDismissing(false), dismissButton, dismissForm)
   const change = useMutation({
     mutationFn: (body: RecommendationChange) => api.updateRecommendation(tenantId, rec.id, body),
     onSuccess: (updated) => {
@@ -660,6 +669,7 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
       )}
       {dismissing ? (
         <form
+          ref={dismissForm}
           className="flex flex-col gap-2"
           onSubmit={(e) => {
             e.preventDefault()
@@ -706,7 +716,7 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
                   Start
                 </Button>
               )}
-              <Button variant="ghost" onClick={() => setDismissing(true)}>
+              <Button ref={dismissButton} variant="ghost" onClick={() => setDismissing(true)}>
                 Dismiss…
               </Button>
             </>

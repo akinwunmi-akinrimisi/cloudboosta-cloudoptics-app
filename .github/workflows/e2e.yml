@@ -56,12 +56,17 @@ jobs:
           VITE_API_URL: http://127.0.0.1:8000
       - name: Playwright
         # Starts the test-only API (apps/e2e/server/serve.py) and `vite preview` itself.
+        # Any axe violation fails (FE-12); the Overview LCP budget (4 s, Fast 3G, CPU 4x) is
+        # tests/performance.spec.ts.
         run: pnpm --filter @cloudoptics/e2e test
         env:
           E2E_SKIP_WEB_BUILD: "1"
-      - name: Accessibility summary
+          E2E_A11Y_STRICT: "1"
+      - name: Accessibility and performance summary
         if: always()
-        run: cat apps/e2e/reports/a11y/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+        run: |
+          cat apps/e2e/reports/a11y/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+          { echo; echo '## Overview load (Fast 3G, CPU 4x)'; echo; echo '```json'; cat apps/e2e/reports/performance/overview.json; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 
 import { useApi } from '../app/context'
 import type { CostDimension, CostMonth, CreditsRunway } from '../api/types'
 import { DailySpendChart } from '../components/charts'
 import { ExportButton } from '../components/exports'
+import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, Field, cx } from '../components/ui'
 import { ForecastPanel, WhatChanged } from './Forecast'
 import { DIMENSIONS, useMoney, useWorkspace } from './Workspace'
@@ -277,6 +278,9 @@ export function CreditsCard({ tenantId }: { tenantId: string }) {
   const { money } = useMoney()
   const isAdmin = me?.memberships.find((m) => m.tenantId === tenantId)?.role === 'admin'
   const [editing, setEditing] = useState(false)
+  const editButton = useRef<HTMLButtonElement>(null)
+  const editPanel = useRef<HTMLDivElement>(null)
+  useEscapeToClose(editing, () => setEditing(false), editButton, editPanel)
   const credits = useQuery({ queryKey: ['credits', tenantId], queryFn: () => api.getCredits(tenantId) })
   const c = credits.data
   if (!c || (c.status === 'no_credits' && !isAdmin)) return null
@@ -291,7 +295,7 @@ export function CreditsCard({ tenantId }: { tenantId: string }) {
           </p>
         </div>
         {isAdmin && !editing && (
-          <Button variant="secondary" onClick={() => setEditing(true)}>
+          <Button ref={editButton} variant="secondary" onClick={() => setEditing(true)}>
             {c.balance ? 'Update the balance' : 'Enter the balance'}
           </Button>
         )}
@@ -332,7 +336,11 @@ export function CreditsCard({ tenantId }: { tenantId: string }) {
           {c.balance.note && ` (${c.balance.note})`}. Credits applied since: {money(c.usedSinceBalanceUsd ?? 0)}.
         </p>
       )}
-      {editing && <BalanceForm tenantId={tenantId} current={c} onDone={() => setEditing(false)} />}
+      {editing && (
+        <div ref={editPanel}>
+          <BalanceForm tenantId={tenantId} current={c} onDone={() => setEditing(false)} />
+        </div>
+      )}
     </Card>
   )
 }

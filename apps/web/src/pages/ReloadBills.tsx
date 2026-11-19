@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { useApi } from '../app/context'
 import type { Connection, PeriodReload, ReloadStatus } from '../api/types'
+import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button } from '../components/ui'
 
 const OUTCOME: Record<PeriodReload['outcome'], string> = {
@@ -48,6 +49,9 @@ export function ReloadBills({ connection: c, tenantId }: { connection: Connectio
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [period, setPeriod] = useState('')
+  const trigger = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
+  useEscapeToClose(open, () => setOpen(false), trigger, panel)
   const refreshCosts = () => {
     for (const key of REFRESH_AFTER) void qc.invalidateQueries({ queryKey: [key, tenantId] })
   }
@@ -87,13 +91,13 @@ export function ReloadBills({ connection: c, tenantId }: { connection: Connectio
           </p>
         </div>
         {!open && (
-          <Button variant="secondary" onClick={() => setOpen(true)}>
+          <Button ref={trigger} variant="secondary" onClick={() => setOpen(true)}>
             Reload bills…
           </Button>
         )}
       </div>
       {open && (
-        <div className="flex flex-col gap-3 border-t border-border pt-3">
+        <div ref={panel} className="flex flex-col gap-3 border-t border-border pt-3">
           <p className="text-secondary">
             Reloading reads the bills for this account again from your S3 bucket ({c.curBucket}), the latest version AWS
             delivered for each month, and replaces what Cloudoptics holds for those months. Use it when a month looks

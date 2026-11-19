@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 import { formatMoney } from '../lib/currency'
 
 export interface DailyBar {
@@ -11,6 +13,55 @@ function dayLabel(isoDate: string): string {
     month: 'short',
     timeZone: 'UTC',
   })
+}
+
+/**
+ * The chart's figures as a table (PRD FR-UI-06: every chart has a table alternative), behind
+ * a disclosure so it does not lengthen the page; screen readers and keyboards reach it like
+ * any other content.
+ */
+export function ChartTable({ label, head, rows }: { label: string; head: string[]; rows: ReactNode[][] }) {
+  return (
+    <details className="text-xs">
+      <summary className="w-fit cursor-pointer py-1 text-secondary hover:text-primary">
+        Show {label.charAt(0).toLowerCase() + label.slice(1)} as a table
+      </summary>
+      {/* Focusable so keyboard users can scroll a long table (WCAG 2.1.1). */}
+      <div
+        className="mt-1 max-h-72 overflow-auto rounded-sm border border-border"
+        role="region"
+        aria-label={label}
+        tabIndex={0}
+      >
+        <table className="w-full text-left text-xs tabular-nums">
+          <caption className="sr-only">{label}</caption>
+          <thead className="sticky top-0 bg-surface-2">
+            <tr>
+              {head.map((h, i) => (
+                <th key={h} scope="col" className={i === 0 ? 'px-3 py-1.5 font-medium' : 'px-3 py-1.5 text-right font-medium'}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([first, ...rest], r) => (
+              <tr key={r} className="border-t border-border">
+                <th scope="row" className="px-3 py-1 font-normal">
+                  {first}
+                </th>
+                {rest.map((cell, c) => (
+                  <td key={c} className="px-3 py-1 text-right">
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  )
 }
 
 /**
@@ -69,6 +120,13 @@ export function DailySpendChart({
           <span>Highest day {formatMoney(max, currency)}</span>
           <span>{dayLabel(last.date)}</span>
         </figcaption>
+      )}
+      {points.length > 0 && (
+        <ChartTable
+          label={label}
+          head={['Day', currency]}
+          rows={points.map((p) => [dayLabel(p.date), formatMoney(p.amount, currency)])}
+        />
       )}
     </figure>
   )
@@ -136,6 +194,13 @@ export function UsageChart({
           <span>{dayLabel(last.date)}</span>
         </figcaption>
       )}
+      {points.length > 0 && (
+        <ChartTable
+          label={label}
+          head={['Day', unit.trim() ? `Value (${unit.trim()})` : 'Value']}
+          rows={points.map((p) => [dayLabel(p.date), p.value === null ? 'No data' : show(p.value)])}
+        />
+      )}
     </figure>
   )
 }
@@ -162,7 +227,8 @@ export function ShareList({ items, currency }: { items: ShareItem[]; currency: s
               <span className="text-xs text-muted">{Math.round(item.share * 100)}%</span>
             </span>
           </div>
-          <div className="h-1.5 rounded-full bg-surface-2">
+          {/* The amount and share are in the text above; the bar only draws them. */}
+          <div className="h-1.5 rounded-full bg-surface-2" aria-hidden="true">
             <div
               className="h-1.5 rounded-full bg-accent"
               style={{ width: `${Math.max(item.share * 100, 1)}%` }}
@@ -246,6 +312,18 @@ export function AnomalyChart({ points, highlight, currency }: { points: Expected
           <span>Bars: daily cost · line: expected · dashed: alert level</span>
           <span>{dayLabel(last.date)}</span>
         </figcaption>
+      )}
+      {points.length > 0 && (
+        <ChartTable
+          label="Daily cost against the expected level"
+          head={['Day', 'Cost', 'Expected', 'Alert level']}
+          rows={points.map((p) => [
+            p.date === highlight ? <strong className="font-semibold">{dayLabel(p.date)} (anomaly)</strong> : dayLabel(p.date),
+            formatMoney(p.actual, currency),
+            p.expected === null ? '—' : formatMoney(p.expected, currency),
+            p.upper === null ? '—' : formatMoney(p.upper, currency),
+          ])}
+        />
       )}
     </figure>
   )

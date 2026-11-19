@@ -418,7 +418,7 @@ function MembersCard({ tenantId, meId, isAdmin }: { tenantId: string; meId: stri
       {isAdmin && (
         <>
           <form
-            className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end"
+            className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,14rem)_auto] sm:items-end"
             onSubmit={(e) => {
               e.preventDefault()
               setNotice(null)

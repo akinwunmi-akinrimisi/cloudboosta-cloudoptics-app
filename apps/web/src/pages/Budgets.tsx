@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 
 import { useApi } from '../app/context'
 import type { Budget, BudgetInput, BudgetStatus, BudgetThresholdInput } from '../api/types'
 import { ExportButton } from '../components/exports'
+import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, Field, cx } from '../components/ui'
 import { useWorkspace } from './Workspace'
 
@@ -35,6 +36,9 @@ export function Budgets() {
   const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
   const canEdit = role === 'admin' || role === 'member'
   const [creating, setCreating] = useState(false)
+  const newButton = useRef<HTMLButtonElement>(null)
+  const newPanel = useRef<HTMLDivElement>(null)
+  useEscapeToClose(creating, () => setCreating(false), newButton, newPanel)
   const budgets = useQuery({
     queryKey: ['budgets', tenantId],
     queryFn: () => api.listBudgets(tenantId as string),
@@ -54,17 +58,19 @@ export function Budgets() {
         <div className="flex flex-wrap items-start gap-2">
           {(budgets.data?.length ?? 0) > 0 && <ExportButton tenantId={tenantId} request={{ kind: 'budgets' }} />}
           {canEdit && !creating && (
-            <Button onClick={() => setCreating(true)}>
+            <Button ref={newButton} onClick={() => setCreating(true)}>
               <Plus size={16} /> New budget
             </Button>
           )}
         </div>
       </div>
       {creating && (
-        <Card>
-          <h2 className="mb-4 text-lg font-semibold">New budget</h2>
-          <BudgetForm tenantId={tenantId} onDone={() => setCreating(false)} />
-        </Card>
+        <div ref={newPanel}>
+          <Card>
+            <h2 className="mb-4 text-lg font-semibold">New budget</h2>
+            <BudgetForm tenantId={tenantId} onDone={() => setCreating(false)} />
+          </Card>
+        </div>
       )}
       {budgets.isLoading && <p className="text-sm text-secondary">Loading…</p>}
       {budgets.error && <Alert tone="error">{budgets.error.message}</Alert>}
@@ -84,6 +90,12 @@ function BudgetCard({ budget: b, tenantId, canEdit }: { budget: Budget; tenantId
   const qc = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [confirming, setConfirming] = useState(false)
+  const editButton = useRef<HTMLButtonElement>(null)
+  const editPanel = useRef<HTMLDivElement>(null)
+  const deleteButton = useRef<HTMLButtonElement>(null)
+  const deletePanel = useRef<HTMLSpanElement>(null)
+  useEscapeToClose(editing, () => setEditing(false), editButton, editPanel)
+  useEscapeToClose(confirming, () => setConfirming(false), deleteButton, deletePanel)
   const refresh = () => void qc.invalidateQueries({ queryKey: ['budgets', tenantId] })
   const toggle = useMutation({
     mutationFn: () => api.updateBudget(tenantId, b.id, { isActive: !b.isActive }),
@@ -96,10 +108,12 @@ function BudgetCard({ budget: b, tenantId, canEdit }: { budget: Budget; tenantId
   const usd = b.currency !== 'USD'
   if (editing) {
     return (
-      <Card>
-        <h2 className="mb-4 text-lg font-semibold">Edit {b.name}</h2>
-        <BudgetForm tenantId={tenantId} budget={b} onDone={() => setEditing(false)} />
-      </Card>
+      <div ref={editPanel}>
+        <Card>
+          <h2 className="mb-4 text-lg font-semibold">Edit {b.name}</h2>
+          <BudgetForm tenantId={tenantId} budget={b} onDone={() => setEditing(false)} />
+        </Card>
+      </div>
     )
   }
   return (
@@ -169,24 +183,24 @@ function BudgetCard({ budget: b, tenantId, canEdit }: { budget: Budget; tenantId
       </ul>
       {canEdit && (
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={() => setEditing(true)}>
+          <Button ref={editButton} variant="secondary" onClick={() => setEditing(true)}>
             Edit
           </Button>
           <Button variant="secondary" disabled={toggle.isPending} onClick={() => toggle.mutate()}>
             {b.isActive ? 'Pause alerts' : 'Resume alerts'}
           </Button>
           {confirming ? (
-            <>
+            <span ref={deletePanel} className="contents">
               <Button disabled={remove.isPending} onClick={() => remove.mutate()}>
                 Delete {b.name}
               </Button>
               <Button variant="ghost" onClick={() => setConfirming(false)}>
                 Cancel
               </Button>
-            </>
+            </span>
           ) : (
-            <Button variant="ghost" onClick={() => setConfirming(true)}>
-              <Trash2 size={16} /> Delete…
+            <Button ref={deleteButton} variant="ghost" onClick={() => setConfirming(true)}>
+              <Trash2 size={16} aria-hidden="true" /> Delete…
             </Button>
           )}
         </div>

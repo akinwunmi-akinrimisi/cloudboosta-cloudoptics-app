@@ -151,7 +151,7 @@ function AnomalyDetailPanel({ anomaly: a, tenantId, canEdit }: { anomaly: Anomal
       {a.contributors.length > 0 && (
         <div>
           <h3 className="mb-2 text-sm font-medium">What rose most</h3>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" role="region" aria-label="What rose most" tabIndex={0}>
           <table className="w-full whitespace-nowrap text-sm">
             <thead className="text-left text-xs text-muted">
               <tr>

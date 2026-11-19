@@ -14,6 +14,36 @@ body {
   outline-offset: 2px;
 }
 
+/* Small screens: a select with long options (time zones, people) never widens the page. */
+select,
+input,
+textarea {
+  max-width: 100%;
+}
+
+/* On the navy sidebar and drawer the ring is white (WCAG 2.4.13 / 1.4.11: 3:1 against both sides). */
+.bg-brand-navy :focus-visible {
+  outline-color: #fff;
+}
+
+/* Headings and main take focus after a route change or the skip link; no ring for a mouse user. */
+[tabindex='-1']:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* WCAG 2.3.3 / docs/08: people who ask for less motion get none (spinners stop, bars jump). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Printing (the monthly report): white page, A4 margins, no app background. */
 @media print {
   @page {

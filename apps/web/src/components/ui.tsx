@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
+import type { ComponentPropsWithRef, InputHTMLAttributes, ReactNode } from 'react'
 import { useId } from 'react'
 
 import type { CheckStatus, ConnectionStatus } from '../api/types'
@@ -13,7 +13,7 @@ export function Button({
   variant = 'primary',
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+}: ComponentPropsWithRef<'button'> & { variant?: Variant }) {
   return (
     <button
       type="button"

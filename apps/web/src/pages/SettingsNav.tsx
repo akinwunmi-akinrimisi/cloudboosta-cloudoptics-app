@@ -33,8 +33,8 @@ export function SettingsLayout({
   children: ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-6 md:grid md:grid-cols-[180px_1fr] md:items-start">
-      <nav aria-label="Settings" className="flex gap-1 overflow-x-auto md:sticky md:top-4 md:flex-col">
+    <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[180px_minmax(0,1fr)] lg:items-start">
+      <nav aria-label="Settings" className="flex gap-1 overflow-x-auto lg:sticky lg:top-4 lg:flex-col">
         <Link to="/settings/connections" className={`${itemClass} ${current === 'connections' ? activeClass : ''}`}>
           AWS connections
         </Link>
