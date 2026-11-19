@@ -1,41 +1,55 @@
 ---
-// "What the stack creates" (docs/14 §5.4). Names, region, expiry and versions come from the
-// template through the generated permission data.
+// "What the stack creates" (docs/14 §5.4), drawn as the stack with its six resources. Names,
+// region, expiry and versions come from the template through the generated permission data.
+import type { IconName } from './icons'
+import Icon from './Icon.astro'
 import { billingRole, claims, facts, resourceRole, sessionHours } from '../config'
 
 const hours = sessionHours === 1 ? '1 hour' : `${sessionHours} hours`
 const rows = [
   {
+    icon: 'receipt' as IconName,
+    readOnly: true,
     kind: 'IAM role',
     name: billingRole.roleName,
     purpose: 'Read costs, the bill export, Savings Plans, budgets, AWS prices and the account list.',
     who: `Cloudoptics, with your ExternalId, in sessions of up to ${hours}.`,
   },
   {
+    icon: 'server' as IconName,
+    readOnly: true,
     kind: 'IAM role',
     name: resourceRole.roleName,
     purpose: 'Read resource settings, tags and usage metrics. In an Organization, every member account gets the same role.',
     who: 'Cloudoptics, on the same conditions.',
   },
   {
+    icon: 'bucket' as IconName,
+    readOnly: false,
     kind: 'S3 bucket',
     name: facts.bucketName,
     purpose: `Holds the bill export. Public access blocked, encrypted, HTTPS only, files expire after ${facts.exportExpiryDays} days. Only AWS's billing services may write to it.`,
     who: 'AWS writes, Cloudoptics reads.',
   },
   {
+    icon: 'file' as IconName,
+    readOnly: false,
     kind: 'Bill export',
     name: facts.exportName,
     purpose: `The detailed bill: CUR 2.0, ${facts.exportGranularity?.toLowerCase()}, in ${facts.exportFormat === 'PARQUET' ? 'Parquet' : facts.exportFormat} files.`,
     who: 'AWS.',
   },
   {
+    icon: 'bolt' as IconName,
+    readOnly: false,
     kind: 'Setup function and its role',
     name: `Lambda (${facts.setupRuntime?.replace('python', 'Python ')})`,
     purpose: 'Runs only while the stack is created, updated or deleted. Makes the bucket, rolls out member-account access and removes older Cloudoptics stacks. Its write actions are limited to Cloudoptics-named resources where AWS allows it.',
     who: 'CloudFormation. Never Cloudoptics.',
   },
   {
+    icon: 'users' as IconName,
+    readOnly: false,
     kind: 'StackSet (management accounts only)',
     name: facts.stackSetName,
     purpose: 'Gives each member account the resource role, including accounts added later.',
@@ -44,31 +58,21 @@ const rows = [
 ]
 ---
 
-<div role="region" tabindex="0" aria-label="What the stack creates (scrolls sideways)" class="overflow-x-auto rounded-md border border-border bg-surface-1">
-  <table class="w-full min-w-[40rem] text-left text-sm">
-    <caption class="sr-only">
-      Resources the {claims.stackName} stack creates in your account (template version {facts.templateVersion})
-    </caption>
-    <thead class="bg-surface-2 text-secondary">
-      <tr>
-        <th scope="col" class="px-4 py-3 font-semibold">Resource</th>
-        <th scope="col" class="px-4 py-3 font-semibold">Name</th>
-        <th scope="col" class="px-4 py-3 font-semibold">What it is for</th>
-        <th scope="col" class="px-4 py-3 font-semibold">Who uses it</th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-border align-top">
-      {
-        rows.map((r) => (
-          <tr>
-            <th scope="row" class="px-4 py-3 font-medium">{r.kind}</th>
-            <td class="px-4 py-3"><code>{r.name}</code></td>
-            <td class="px-4 py-3 text-secondary">{r.purpose}</td>
-            <td class="px-4 py-3 text-secondary">{r.who}</td>
-          </tr>
-        ))
-      }
-    </tbody>
-  </table>
-</div>
-<p class="mt-3 text-sm text-muted">From <code>cloudoptics-access.yaml</code> version {facts.templateVersion}.</p>
+<figure class="stack">
+  <figcaption class="stack-head">
+    <b>Stack <code>{claims.stackName}</code></b><span>{facts.region} · template v{facts.templateVersion}</span>
+  </figcaption>
+  <ul class="stack-grid">
+    {
+      rows.map((r) => (
+        <li class={r.readOnly ? 'ro' : undefined}>
+          <Icon name={r.icon} />
+          <span class="k">{r.kind}{r.readOnly && ' · read only'}</span>
+          <code>{r.name}</code>
+          <span>{r.purpose}</span>
+          <span class="who">Who uses it: {r.who}</span>
+        </li>
+      ))
+    }
+  </ul>
+</figure>

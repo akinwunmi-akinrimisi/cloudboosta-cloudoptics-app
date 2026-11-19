@@ -1,6 +1,7 @@
 ---
-// Header (docs/14 §4.2). The mobile menu is a native <details>, so it works without JavaScript.
-import { DEMO_URL, SIGN_IN_URL, START_URL } from '../config'
+// Masthead (docs/14 §4.2): a dateline strip, then the sticky header. The mobile menu is a native
+// <details>, so it works without JavaScript.
+import { DEMO_URL, SIGN_IN_URL, START_URL, claims } from '../config'
 import Logo from './Logo.astro'
 
 const path = Astro.url.pathname.replace(/\/$/, '') || '/'
@@ -11,55 +12,31 @@ const links = [
   { href: DEMO_URL, label: 'Demo' },
 ]
 const current = (href: string) => (href === path ? 'page' : undefined)
+// The countries whose currency the sample figures can switch to.
+const rates = claims.sampleRates as Record<string, number>
+const countries = claims.localCurrencies.filter((c) => c.code in rates).map((c) => c.country)
 ---
 
-<header class="sticky top-0 z-40 border-b border-border bg-surface-1">
-  <div class="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-    <a href="/" class="rounded-sm" aria-label="Cloudoptics by Cloudboosta, home"><Logo /></a>
-    <nav aria-label="Main" class="hidden items-center gap-1 md:flex">
-      {
-        links.map((l) => (
-          <a
-            href={l.href}
-            aria-current={current(l.href)}
-            class="rounded-sm px-3 py-2 text-sm font-medium text-secondary hover:text-primary aria-[current=page]:text-link"
-          >
-            {l.label}
-          </a>
-        ))
-      }
+<aside class="strip" aria-label="At a glance">
+  <div class="wrap"><span>{claims.pricing.headline} · No card needed</span><span>{countries.join(' · ')}</span></div>
+</aside>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="Cloudoptics by Cloudboosta, home"><Logo /></a>
+    <nav class="nav" aria-label="Main">
+      {links.map((l) => <a href={l.href} aria-current={current(l.href)}>{l.label}</a>)}
     </nav>
-    <div class="hidden items-center gap-2 md:flex">
-      <a href={SIGN_IN_URL} class="rounded-sm px-3 py-2 text-sm font-medium text-primary hover:text-link">Sign in</a>
-      <a href={START_URL} class="rounded-sm bg-accent px-4 py-2 text-sm font-semibold text-on-accent hover:bg-accent-hover">
-        Start free
-      </a>
+    <div class="actions">
+      <a class="signin" href={SIGN_IN_URL}>Sign in</a>
+      <a class="btn btn-primary" href={START_URL}>Start free</a>
+      <details class="menu">
+        <summary>Menu</summary>
+        <nav aria-label="Main (mobile)">
+          {links.map((l) => <a href={l.href} aria-current={current(l.href)}>{l.label}</a>)}
+          <a href={SIGN_IN_URL}>Sign in</a>
+          <a href={START_URL}>Start free</a>
+        </nav>
+      </details>
     </div>
-    <details class="relative md:hidden">
-      <summary
-        class="flex min-h-11 min-w-11 list-none items-center justify-center rounded-sm border border-border-strong px-3 text-sm font-medium [&::-webkit-details-marker]:hidden"
-      >
-        Menu
-      </summary>
-      <nav aria-label="Main (mobile)" class="absolute right-0 mt-2 w-64 rounded-md border border-border bg-surface-1 p-2 shadow-lg">
-        <ul>
-          {
-            links.map((l) => (
-              <li>
-                <a href={l.href} aria-current={current(l.href)} class="flex min-h-11 items-center rounded-sm px-3 text-primary">
-                  {l.label}
-                </a>
-              </li>
-            ))
-          }
-          <li><a href={SIGN_IN_URL} class="flex min-h-11 items-center rounded-sm px-3 text-primary">Sign in</a></li>
-          <li>
-            <a href={START_URL} class="mt-1 flex min-h-11 items-center justify-center rounded-sm bg-accent px-3 font-semibold text-on-accent">
-              Start free
-            </a>
-          </li>
-        </ul>
-      </nav>
-    </details>
   </div>
 </header>

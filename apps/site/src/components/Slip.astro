@@ -1,0 +1,69 @@
+---
+// The hero's statement slip (docs/14 §5.1 row 2): sample figures in USD and a local currency.
+// Every figure is rendered at build time in each currency, so with JavaScript off the slip shows
+// USD and naira; the script only reveals the buttons and swaps pre-rendered text.
+import { claims } from '../config'
+
+interface Figure {
+  label: string
+  usd: number
+  highlight?: boolean
+}
+interface Props {
+  figures: Figure[]
+  caption: string
+}
+const { figures, caption } = Astro.props
+const rates = claims.sampleRates as Record<string, number>
+const codes = Object.keys(rates)
+const names: Record<string, string> = { NGN: 'Naira', KES: 'Kenyan shillings', ZAR: 'Rand', GHS: 'Cedis' }
+const money = (amount: number, currency: string, digits = 0) =>
+  new Intl.NumberFormat('en-GB', { style: 'currency', currency, currencyDisplay: 'narrowSymbol', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(amount)
+const local = (usd: number) => Object.fromEntries(codes.map((c) => [`data-${c.toLowerCase()}`, money(usd * rates[c]!, c)]))
+const rateText = (c: string) => `Rate: ${money(rates[c]!, c, 2)} = $1`
+const rateData = Object.fromEntries(codes.map((c) => [`data-${c.toLowerCase()}`, rateText(c)]))
+const first = codes[0]!
+---
+
+<figure class="slip" aria-labelledby="slip-cap" data-currency-toggle>
+  <div class="slip-head"><b id="slip-cap">{caption}</b><span class="tag-sample">Sample data</span></div>
+  <div class="ccy" role="group" aria-label="Local currency" data-buttons hidden>
+    {
+      codes.map((c, i) => (
+        <button type="button" data-code={c.toLowerCase()} aria-pressed={i === 0 ? 'true' : 'false'} title={names[c]}>
+          {c}
+        </button>
+      ))
+    }
+  </div>
+  <dl class="lines" aria-live="polite">
+    {
+      figures.map((f) => (
+        <div class="line">
+          <dt>{f.label}</dt>
+          <dd>
+            <span class="usd">{f.highlight ? <mark>{money(f.usd, 'USD', 2)}</mark> : money(f.usd, 'USD', 2)}</span>
+            <span class="loc" data-local {...local(f.usd)}>
+              {money(f.usd * rates[first]!, first)}
+            </span>
+          </dd>
+        </div>
+      ))
+    }
+  </dl>
+  <figcaption class="slip-foot"><span data-local {...rateData}>{rateText(first)}</span><span>Illustrative rate, not today's</span></figcaption>
+</figure>
+
+<script>
+  for (const root of document.querySelectorAll<HTMLElement>('[data-currency-toggle]')) {
+    const group = root.querySelector<HTMLElement>('[data-buttons]')
+    if (!group) continue
+    group.hidden = false
+    group.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest('button')
+      if (!button?.dataset.code) return
+      for (const b of group.querySelectorAll('button')) b.setAttribute('aria-pressed', String(b === button))
+      for (const el of root.querySelectorAll<HTMLElement>('[data-local]')) el.textContent = el.dataset[button.dataset.code] ?? ''
+    })
+  }
+</script>

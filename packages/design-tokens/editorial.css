@@ -1,0 +1,50 @@
+/* Editorial theme, design Direction A "The Statement" (founder decision, Nov 2026): warm paper,
+   navy ink, ruled lines, figures set like a financial statement. Used by apps/site now; the app's
+   onboarding adopts it later. The names do not overlap tokens.css, so importing both is safe and
+   this file restyles nothing in the app on its own.
+   Import it after `@import 'tailwindcss'` to get utilities such as bg-paper, text-ink, font-display.
+   Contrast pairs: editorial-contrast-pairs.json (checked in CI by apps/site). */
+:root {
+  --paper: #f6f3ea;
+  --paper-2: #efeadc;
+  --sheet: #fffdf7;
+  --ink: #0b1f4b; /* brand navy: text, rules that carry meaning */
+  --ink-2: #4a5266; /* secondary text */
+  --ink-on-dark: #c6d3f2; /* secondary text on --ink */
+  --rule: rgba(11, 31, 75, 0.16); /* hairlines, decoration only */
+  --rule-strong: #0b1f4b;
+  --control-border: #6b7385; /* borders that identify a control (3:1 on paper and sheet) */
+  --button: #2c68fc; /* Boosta Blue: button fill only, never text on paper (4.21:1) */
+  --button-hover: #1f54d6;
+  --on-button: #ffffff;
+  --link: #1f54d6; /* text links on paper and sheet */
+  --highlight: #fac812; /* yellow is a highlighter fill, never text on paper */
+  --highlight-tint: #feeeb7; /* the yellow at 28% on --sheet, for a highlighted row */
+  --good: #08704f;
+  --bad: #b42318;
+  --focus: #1f54d6;
+  --focus-on-dark: #fac812;
+
+  --type-display: 'Newsreader', Georgia, 'Times New Roman', serif;
+  --type-text: 'IBM Plex Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --type-figures: 'IBM Plex Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+
+  --ease-paper: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-sheet: var(--sheet);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-on-dark: var(--ink-on-dark);
+  --color-rule: var(--rule);
+  --color-link: var(--link);
+  --color-highlight: var(--highlight);
+  --color-good: var(--good);
+  --color-bad: var(--bad);
+  --font-display: var(--type-display);
+  --font-text: var(--type-text);
+  --font-figures: var(--type-figures);
+}

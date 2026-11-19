@@ -1,0 +1,32 @@
+{
+  "$comment": "Foreground/background pairs of the editorial theme (editorial.css, Direction A). apps/site checks each pair in CI (scripts/check-a11y.mjs): names are custom properties read from the :root block of editorial.css. The theme has one (light, paper) appearance. min is the WCAG 2.x ratio: 4.5 for normal text, 3 for large text and UI parts.",
+  "pairs": [
+    { "fg": "--ink", "bg": "--paper", "min": 4.5, "use": "body text on the page" },
+    { "fg": "--ink", "bg": "--paper-2", "min": 4.5, "use": "body text on the darker paper" },
+    { "fg": "--ink", "bg": "--sheet", "min": 4.5, "use": "body text on slips, ledgers and tables" },
+    { "fg": "--ink", "bg": "--highlight", "min": 4.5, "use": "text on the yellow highlighter" },
+    { "fg": "--ink", "bg": "--highlight-tint", "min": 4.5, "use": "text in a highlighted ledger row" },
+    { "fg": "--ink-2", "bg": "--paper", "min": 4.5, "use": "secondary text on the page" },
+    { "fg": "--ink-2", "bg": "--paper-2", "min": 4.5, "use": "secondary text on the darker paper" },
+    { "fg": "--ink-2", "bg": "--sheet", "min": 4.5, "use": "secondary text on slips and tables" },
+    { "fg": "--ink-2", "bg": "--highlight", "min": 4.5, "use": "secondary text on the yellow node" },
+    { "fg": "--ink-2", "bg": "--highlight-tint", "min": 4.5, "use": "secondary text in a highlighted row" },
+    { "fg": "--link", "bg": "--paper", "min": 4.5, "use": "text links on the page" },
+    { "fg": "--link", "bg": "--sheet", "min": 4.5, "use": "text links on slips and tables" },
+    { "fg": "--link", "bg": "--paper-2", "min": 4.5, "use": "text links on the darker paper" },
+    { "fg": "--on-button", "bg": "--button", "min": 4.5, "use": "primary button label" },
+    { "fg": "--on-button", "bg": "--button-hover", "min": 4.5, "use": "primary button label, hover" },
+    { "fg": "--button", "bg": "--paper", "min": 3, "use": "primary button edge on the page" },
+    { "fg": "--focus", "bg": "--paper", "min": 3, "use": "focus ring on the page" },
+    { "fg": "--focus", "bg": "--sheet", "min": 3, "use": "focus ring on slips and tables" },
+    { "fg": "--control-border", "bg": "--sheet", "min": 3, "use": "currency buttons and other control borders" },
+    { "fg": "--control-border", "bg": "--paper", "min": 3, "use": "control borders on the page" },
+    { "fg": "--good", "bg": "--sheet", "min": 4.5, "use": "the Verified stamp and ticks" },
+    { "fg": "--good", "bg": "--paper", "min": 4.5, "use": "ticks on the page" },
+    { "fg": "--bad", "bg": "--sheet", "min": 3, "use": "the never icons" },
+    { "fg": "--sheet", "bg": "--ink", "min": 4.5, "use": "text on navy (final call, dark nodes, pressed buttons)" },
+    { "fg": "--ink-on-dark", "bg": "--ink", "min": 4.5, "use": "secondary text on navy" },
+    { "fg": "--highlight", "bg": "--ink", "min": 4.5, "use": "yellow emphasis and focus ring on navy" },
+    { "fg": "--focus-on-dark", "bg": "--ink", "min": 3, "use": "focus ring on navy" }
+  ]
+}
