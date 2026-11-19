@@ -5,6 +5,7 @@ import { useState } from 'react'
 
 import { ApiError } from '../api/types'
 import { useApi } from '../app/context'
+import { DEMO_URL } from '../app/paths'
 import { Alert, Button, Card, Field, Logo } from '../components/ui'
 
 export function SignIn() {
@@ -49,10 +50,7 @@ export function SignIn() {
             <div className="mt-6">
               <Alert tone="info">
                 Sign-in is being set up for this environment. Try the{' '}
-                <a
-                  className="font-medium text-accent underline"
-                  href="https://akinwunmi-akinrimisi.github.io/cloudboosta-cloudoptics-app/"
-                >
+                <a className="font-medium text-accent underline" href={DEMO_URL}>
                   public demo
                 </a>{' '}
                 in the meantime.

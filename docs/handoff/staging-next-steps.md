@@ -6,7 +6,7 @@
 
 1. Merge the open PR so `main` has the code and the API image.
 2. Add `DIGITALOCEAN_TOKEN` to the same GitHub environment (and as a repository secret for `deploy-staging.yml`).
-3. In the WorkOS dashboard (Redirects): add `https://cloudoptics.cloudboosta.com/` as a redirect URI, the sign-in endpoint `https://cloudoptics.cloudboosta.com/sign-in`, and `https://cloudoptics.cloudboosta.com` as an allowed origin (CORS).
+3. In the WorkOS dashboard (Redirects): add `https://cloudoptics.cloudboosta.com/app/` as a redirect URI, the sign-in endpoint `https://cloudoptics.cloudboosta.com/app/sign-in`, and `https://cloudoptics.cloudboosta.com` as an allowed origin (CORS). Since SITE-13 the app is served under `/app/`; the earlier `https://cloudoptics.cloudboosta.com/` redirect URI can be removed once sign-in through `/app/` is verified.
 4. After a successful run, delete the admin AWS key from the GitHub environment (the app uses the narrowly scoped broker key the workflow creates; re-add the admin key only to run setup again).
 
 The sections below record the design the automation follows.
@@ -15,8 +15,8 @@ The sections below record the design the automation follows.
 
 | Item | State |
 |---|---|
-| Public demo | https://akinwunmi-akinrimisi.github.io/cloudboosta-cloudoptics-app/ (GitHub Pages, demo data) |
-| Staging | https://cloudoptics.cloudboosta.com: DigitalOcean App Platform `cloudoptics-staging` (id `3294882e-35ce-45b0-bb33-e7ce55062f22`), London, API under `/api` |
+| Public demo | https://cloudoptics.cloudboosta.com/demo/ (sample data; mirror on GitHub Pages: https://akinwunmi-akinrimisi.github.io/cloudboosta-cloudoptics-app/) |
+| Staging | https://cloudoptics.cloudboosta.com: DigitalOcean App Platform `cloudoptics-staging` (id `3294882e-35ce-45b0-bb33-e7ce55062f22`), London. Site at `/`, app at `/app/`, demo at `/demo/`, API under `/api`, templates at `/cfn/` (SITE-13) |
 | Database | Managed PostgreSQL 16 `cloudoptics-pg`, database `cloudoptics`, app user `cloudoptics_app`; firewall admits only the app |
 | Deploys | `uv run python infra/digitalocean/provision.py app` (idempotent; `--branch` for trial deploys). After PR #6 merges, `deploy-staging.yml` redeploys on every merge once the repository secret `DIGITALOCEAN_TOKEN` exists |
 | Sign-in on staging | Not configured: API answers 503 on signed-in routes, the sign-in page says "being set up" |

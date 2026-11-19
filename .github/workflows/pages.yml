@@ -1,5 +1,7 @@
 # Publishes the web app to GitHub Pages as a self-contained demo (ADR-012): it runs on
-# in-browser demo data, never calls AWS and holds no customer data.
+# in-browser demo data, never calls AWS and holds no customer data. Since SITE-14 the demo's
+# home is /demo/ on the Cloudoptics origin (infra/digitalocean/app.yaml); this copy is a
+# mirror for links already shared, built the same way (noindex, sample-data banner).
 name: Pages
 
 on:
@@ -30,6 +32,8 @@ jobs:
         env:
           VITE_API_MODE: demo
           VITE_BASE: /${{ github.event.repository.name }}/
+          # Not on the Cloudoptics origin, so "Start free" needs the absolute address.
+          VITE_SIGNUP_URL: https://cloudoptics.cloudboosta.com/app/sign-in?intent=signup
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: apps/web/dist

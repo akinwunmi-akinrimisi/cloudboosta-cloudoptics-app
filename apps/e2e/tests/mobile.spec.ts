@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-import { openSignedIn, seedWorkspace, signInApi, uniqueEmail } from './support'
+import { appPath, openSignedIn, seedWorkspace, signInApi, uniqueEmail } from './support'
 
 // Mobile layouts (docs/08 breakpoints 375-414 and 768; FE-12): no sideways page scroll on
 // the main pages (a wide table scrolls inside its own box), and the navigation works on a
@@ -51,7 +51,7 @@ for (const width of [375, 390, 768]) {
     await openSignedIn(page, ws.api.token, ws.tenantId, '/overview')
     for (const [url, heading] of [...PAGES, [`/recommendations/${recs[0].id}`, /./] as [string, RegExp]]) {
       await test.step(url, async () => {
-        await page.goto(url)
+        await page.goto(appPath(url))
         await expect(page.getByRole('heading', { level: 1, name: heading }).first()).toBeVisible()
         await page.waitForLoadState('networkidle')
         const o = await overflow(page)

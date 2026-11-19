@@ -15,12 +15,21 @@ alerts:
   - rule: DEPLOYMENT_FAILED
   - rule: DOMAIN_FAILED
 
+# One origin, split by path (ADR-016 layout H1, docs/14 §7.2, SITE-13): the API at /api, the
+# app at /app, the demo at /demo and the public site (with /cfn/* templates) at /. App Platform
+# trims the matched prefix before it forwards a request (preserve_path_prefix: false), so the
+# app and the demo are built with VITE_BASE=/app/ and /demo/ but their files sit at the root of
+# their own build. Old app paths (/overview, ...) reach the site, whose 404 page forwards them.
 ingress:
   rules:
     - match: { path: { prefix: /api } }
       component: { name: api, preserve_path_prefix: false }
+    - match: { path: { prefix: /app } }
+      component: { name: web, preserve_path_prefix: false }
+    - match: { path: { prefix: /demo } }
+      component: { name: demo, preserve_path_prefix: false }
     - match: { path: { prefix: / } }
-      component: { name: web }
+      component: { name: site }
 
 services:
   - name: api
@@ -53,9 +62,13 @@ services:
         key: CLOUDOPTICS_LOCAL_DATA_KEY
         type: SECRET
         value: __LOCAL_DATA_KEY__
-      - &env_app_url { key: CLOUDOPTICS_APP_URL, value: https://cloudoptics.cloudboosta.com }
+      # Links in emails go to the app under /app. The stack callback goes to the API, set
+      # explicitly: derived from the app URL it would become .../app/api (docs/14 §7.2 item 3).
+      - &env_app_url { key: CLOUDOPTICS_APP_URL, value: https://cloudoptics.cloudboosta.com/app }
+      - &env_api_url { key: CLOUDOPTICS_API_PUBLIC_URL, value: https://cloudoptics.cloudboosta.com/api }
       - key: CLOUDOPTICS_CORS_ORIGINS
         value: '["https://cloudoptics.cloudboosta.com"]'
+      # Served by the site component (apps/site/scripts/copy-templates.mjs).
       - key: CLOUDOPTICS_CFN_TEMPLATE_DOWNLOAD_BASE
         value: https://cloudoptics.cloudboosta.com/cfn
 
@@ -70,7 +83,7 @@ workers:
       - { rule: CPU_UTILIZATION, operator: GREATER_THAN, value: 90, window: ONE_HOUR }
       - *alert_mem
       - *alert_restarts
-    envs: [*env_environment, *env_auth, *env_jobs, *env_app_db, *env_data_key, *env_app_url]
+    envs: [*env_environment, *env_auth, *env_jobs, *env_app_db, *env_data_key, *env_app_url, *env_api_url]
 
 jobs:
   - name: migrate
@@ -89,14 +102,41 @@ jobs:
         value: __OWNER_DATABASE_URL__
 
 static_sites:
-  - name: web
-    git:
+  # The public site at /: real 404s (error_document), never a catch-all.
+  - name: site
+    git: &git
       repo_clone_url: https://github.com/akinwunmi-akinrimisi/cloudboosta-cloudoptics-app.git
       branch: main
+    dockerfile_path: apps/site/Dockerfile
+    output_dir: /src/apps/site/dist
+    error_document: 404.html
+    envs:
+      - key: SITE_URL
+        value: https://cloudoptics.cloudboosta.com
+        scope: BUILD_TIME
+  # The app at /app: every path that is not a file gets index.html (client-side routes).
+  - name: web
+    git: *git
     dockerfile_path: apps/web/Dockerfile
     output_dir: /src/apps/web/dist
     catchall_document: index.html
     envs:
       - key: VITE_API_URL
         value: /api
+        scope: BUILD_TIME
+      - key: VITE_BASE
+        value: /app/
+        scope: BUILD_TIME
+  # The demo at /demo (SITE-14): sample data in the browser, no API calls, noindex, no analytics.
+  - name: demo
+    git: *git
+    dockerfile_path: apps/web/Dockerfile
+    output_dir: /src/apps/web/dist
+    catchall_document: index.html
+    envs:
+      - key: VITE_API_MODE
+        value: demo
+        scope: BUILD_TIME
+      - key: VITE_BASE
+        value: /demo/
         scope: BUILD_TIME

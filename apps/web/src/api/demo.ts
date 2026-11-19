@@ -870,6 +870,69 @@ export class DemoApi implements Api {
     this.save()
   }
 
+  /**
+   * The sample workspace the public site links to (SITE-14): signed in to "Kola Pay" with one
+   * AWS account already connected and scanned, so /demo/ opens on the Overview in one click.
+   * Does nothing if this browser already has a demo session (its own or the sample).
+   */
+  openSample(): void {
+    if (this.state.me) return
+    const now = new Date().toISOString()
+    const [currency, timeZone] = COUNTRY.NG!
+    const tenant: Tenant = {
+      id: randomId(),
+      name: 'Kola Pay',
+      countryCode: 'NG',
+      displayCurrency: currency,
+      timeZone,
+      mfaRequired: false,
+      status: 'active',
+      createdAt: now,
+      role: 'admin',
+    }
+    const account = '123456789012'
+    const conn: Connection = {
+      id: randomId(),
+      awsAccountId: account,
+      accountType: 'standalone',
+      roleArn: `arn:aws:iam::${account}:role/CloudopticsBillingReadOnly`,
+      status: 'healthy',
+      createCurExport: true,
+      curBucket: `cloudoptics-cur-${account}`,
+      curPrefix: 'cloudoptics',
+      curExportArn: `arn:aws:bcm-data-exports:us-east-1:${account}:export/cloudoptics-cur2-demo`,
+      permissionChecks: [
+        { id: 'assume_role', label: 'Assume the Cloudoptics role', status: 'ok', message: 'Role assumed.', hint: null },
+        { id: 'cost_explorer', label: 'Read Cost Explorer', status: 'ok', message: 'Cost data readable.', hint: null },
+        { id: 'cur_export', label: 'Find the CUR 2.0 export', status: 'ok', message: 'Found export cloudoptics-cur2.', hint: null },
+        { id: 'cur_delivery', label: 'Read the export bucket', status: 'ok', message: 'Bills delivered.', hint: null },
+        { id: 'organization', label: 'Check the account type', status: 'ok', message: 'Account type confirmed.', hint: null },
+        { id: 'savings_plans', label: 'Read Savings Plans', status: 'ok', message: 'Savings Plans readable.', hint: null },
+      ],
+      lastError: null,
+      lastValidatedAt: now,
+      createdAt: now,
+      stackName: 'cloudoptics-access',
+      stackVersion: '2.0.4',
+    }
+    this.state = {
+      ...empty(),
+      me: {
+        id: randomId(),
+        email: 'aisha@kolapay.example',
+        displayName: 'Aisha (sample)',
+        preferredCurrencyView: 'both',
+        memberships: [{ tenantId: tenant.id, tenantName: tenant.name, role: 'admin' }],
+      },
+      tenants: [tenant],
+      connections: { [tenant.id]: [conn] },
+      externalIds: { [conn.id]: externalId() },
+      resourceAccess: { [conn.id]: true },
+      scannedAt: { [conn.id]: now },
+    }
+    this.save()
+  }
+
   async me(): Promise<Me> {
     await this.tick()
     return structuredClone(this.requireMe())

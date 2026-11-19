@@ -15,6 +15,7 @@ import { SignIn } from '../pages/SignIn'
 import { isSection, type SettingsSection } from '../pages/SettingsNav'
 import { Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
+import { routerBasepath } from './paths'
 
 // Route-level code splitting (FR-UI-10 / NFR-PERF-03): sign-in, Overview and Connections are
 // in the first download; every other page is its own chunk, fetched when its route loads (or
@@ -193,6 +194,8 @@ export function createAppRouter(context: RouterContext, history?: RouterHistory)
     context,
     // GitHub Pages cannot rewrite deep links, so the static demo uses hash URLs.
     history: history ?? (import.meta.env.VITE_API_MODE === 'demo' ? createHashHistory() : undefined),
+    // Staging serves the app under /app/ (VITE_BASE), next to the public site at / (SITE-13).
+    basepath: routerBasepath(import.meta.env.VITE_API_MODE, import.meta.env.BASE_URL),
     defaultPreload: 'intent',
   })
 }

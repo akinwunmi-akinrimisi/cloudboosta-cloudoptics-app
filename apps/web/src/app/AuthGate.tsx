@@ -5,6 +5,7 @@ import { useEffect } from 'react'
 
 import { HttpApi } from '../api/http'
 import type { Api } from '../api/types'
+import { authRedirectUri } from './paths'
 
 // Decides how people sign in, from the API's /v1/auth/config: WorkOS AuthKit on hosted
 // environments, the development form elsewhere. Children render once the session is known.
@@ -16,10 +17,12 @@ export function AuthGate({ api, children }: { api: Api; children: ReactNode }) {
   return (
     <AuthKitProvider
       clientId={config.data.clientId}
-      redirectUri={`${window.location.origin}/`}
+      // The app's root under its base path (https://host/app/ on staging): this exact URL must be
+      // a redirect URI in the WorkOS dashboard (docs/handoff/staging-next-steps.md).
+      redirectUri={authRedirectUri(window.location.origin, import.meta.env.BASE_URL)}
       // No custom WorkOS auth domain yet, so the refresh token lives in local storage.
       devMode
-      onRedirectCallback={() => window.history.replaceState(null, '', '/')}
+      onRedirectCallback={() => window.history.replaceState(null, '', import.meta.env.BASE_URL)}
     >
       <WorkOSBridge api={api}>{children}</WorkOSBridge>
     </AuthKitProvider>

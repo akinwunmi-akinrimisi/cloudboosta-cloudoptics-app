@@ -9,8 +9,9 @@ import { ApiError, MFA_REQUIRED_MESSAGE } from '../api/types'
 import { ApiProvider } from './context'
 import { createAppRouter } from './router'
 
-function renderApp(path = '/') {
+function renderApp(path = '/', setup?: (api: DemoApi) => void) {
   const api = new DemoApi(0)
+  setup?.(api)
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createAppRouter({ api, queryClient }, createMemoryHistory({ initialEntries: [path] }))
   render(
@@ -29,6 +30,23 @@ describe('Cloudoptics web app', () => {
   it('sends signed-out visitors to sign in', async () => {
     renderApp('/overview')
     expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeTruthy()
+  })
+
+  it('opens the sample workspace on the Overview, marked as sample data (SITE-14)', async () => {
+    renderApp('/', (api) => api.openSample())
+    expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
+    expect(await screen.findByText('Kola Pay')).toBeTruthy()
+    expect(screen.getByRole('note').textContent).toMatch(/Sample data/)
+    expect(screen.getByRole('link', { name: 'Start free' }).getAttribute('href')).toBe('/app/sign-in?intent=signup')
+  })
+
+  it('keeps a returning demo visitor in their own workspace', async () => {
+    const first = new DemoApi(0)
+    await first.signIn('ada@example.com')
+    await first.createTenant({ name: 'Lagos Ledger', countryCode: 'KE' })
+    const again = new DemoApi(0)
+    again.openSample()
+    expect((await again.me()).memberships.map((m) => m.tenantName)).toEqual(['Lagos Ledger'])
   })
 
   it('walks a new user through onboarding to a healthy connection', async () => {

@@ -1,5 +1,5 @@
-// Build-time settings. Defaults follow hosting layout H1 (ADR-016): the app under /app on the
-// same origin. Until SITE-13 moves the app there, set SITE_APP_PATH to '' for the current layout.
+// Build-time settings. Defaults follow hosting layout H1 (ADR-016, built in SITE-13): this site
+// at /, the app under /app and the demo under /demo, on one origin.
 import claimsJson from './data/claims.json'
 import permissionsJson from './generated/permissions.json'
 
@@ -8,8 +8,8 @@ const env = import.meta.env as Record<string, string | undefined>
 export const APP_PATH = (env.SITE_APP_PATH ?? '/app').replace(/\/$/, '')
 export const SIGN_IN_URL = `${APP_PATH}/sign-in`
 export const START_URL = `${APP_PATH}/sign-in?intent=signup`
-// The public demo (sample data, no analytics). SITE-14 moves it to /demo/ on this origin.
-export const DEMO_URL = env.SITE_DEMO_URL ?? 'https://akinwunmi-akinrimisi.github.io/cloudboosta-cloudoptics-app/'
+// The demo's sample workspace (sample data, no analytics, noindex; SITE-14), on this origin.
+export const DEMO_URL = env.SITE_DEMO_URL ?? '/demo/'
 export const TEMPLATE_URL = '/cfn/cloudoptics-access.yaml'
 
 type Claims = typeof claimsJson

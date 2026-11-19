@@ -259,6 +259,8 @@ UPTIME_CHECKS: dict[str, dict[str, Any]] = {
             },
         ],
     },
+    # "/" is the public site since SITE-13 (the app is at /app); the name is kept so the
+    # existing check is updated rather than a second one created.
     f"{APP_NAME} web": {
         "target": f"{APP_URL}/",
         "alerts": [

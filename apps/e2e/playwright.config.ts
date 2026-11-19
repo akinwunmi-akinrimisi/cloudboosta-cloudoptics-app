@@ -3,9 +3,12 @@ import { defineConfig, devices } from '@playwright/test'
 // The suite runs the real web app (production build, `vite preview`) against the real API,
 // PostgreSQL and inline jobs. Only AWS is replaced, by apps/e2e/server/fake_aws.py; see
 // apps/e2e/README.md. Both servers start here unless already running (locally).
+// The app is built and served under /app/, as on staging (docs/14 §7.2, SITE-13).
 
 const API_URL = process.env.E2E_API_URL ?? 'http://127.0.0.1:8000'
 const WEB_URL = process.env.E2E_WEB_URL ?? 'http://127.0.0.1:4173'
+const APP_BASE = process.env.E2E_APP_BASE ?? '/app/'
+const WEB_PORT = new URL(WEB_URL).port || '4173'
 const CI = Boolean(process.env.CI)
 
 export default defineConfig({
@@ -54,11 +57,11 @@ export default defineConfig({
     {
       command:
         process.env.E2E_SKIP_WEB_BUILD === '1'
-          ? 'pnpm --filter @cloudoptics/web preview --host 127.0.0.1 --port 4173 --strictPort'
-          : 'pnpm --filter @cloudoptics/web build && pnpm --filter @cloudoptics/web preview --host 127.0.0.1 --port 4173 --strictPort',
+          ? `pnpm --filter @cloudoptics/web preview --host 127.0.0.1 --port ${WEB_PORT} --strictPort`
+          : `pnpm --filter @cloudoptics/web build && pnpm --filter @cloudoptics/web preview --host 127.0.0.1 --port ${WEB_PORT} --strictPort`,
       cwd: '../..',
-      url: WEB_URL,
-      env: { VITE_API_URL: API_URL },
+      url: `${WEB_URL}${APP_BASE}`,
+      env: { VITE_API_URL: API_URL, VITE_BASE: APP_BASE },
       reuseExistingServer: !CI,
       timeout: 240_000,
     },

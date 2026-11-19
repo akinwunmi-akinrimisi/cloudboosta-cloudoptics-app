@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { openSignedIn, seedWorkspace } from './support'
+import { appPath, openSignedIn, seedWorkspace } from './support'
 
 // J4 (docs/11f §1.4): a budget in naira, then bills that overspend it, then the alert, once.
 // Without a Postmark token the API logs the email instead of sending it; the thresholds are
@@ -36,7 +36,7 @@ test('a naira budget alerts when new bills cross its thresholds', async ({ page,
     await page.getByRole('button', { name: 'Reload', exact: true }).click()
     await expect(page.getByText(/Bills reloaded/)).toBeVisible({ timeout: 30_000 })
     // A fresh load: the page may still hold the budgets it read before the bills came.
-    await page.goto('/budgets')
+    await page.goto(appPath('/budgets'))
     await expect(page.getByText('Over budget')).toBeVisible()
     await expect(page.getByText(/^Spent NGN [\d,.]+ \([\d.]+%\) · USD [\d,.]+/)).toBeVisible()
     await expect(thresholds.getByText(/^50% of spend · alerted$/)).toBeVisible()

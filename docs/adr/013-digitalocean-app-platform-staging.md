@@ -15,7 +15,7 @@ Run staging on **App Platform** in London, as code in `infra/digitalocean/`:
 | `api` | The GHCR image `cloudoptics-api:main`, health check `/readyz` (checks PostgreSQL) | apps-s-1vcpu-1gb-fixed, $10 |
 | `worker` | Same image, `python -m cloudoptics.worker` (Procrastinate) | apps-s-1vcpu-0.5gb, $5 |
 | `migrate` | Same image, `alembic upgrade head` as a pre-deploy job, as the database owner | billed per run |
-| `web` | Static build from the public repository; templates bundled under `/cfn` | free (static) |
+| `site`, `web`, `demo` | Static builds from the public repository: the public site at `/` (with the templates under `/cfn`), the app at `/app`, the demo at `/demo` (SITE-13, ADR-016) | static (check App Platform static-site pricing: three static components instead of one) |
 | Database | Managed PostgreSQL 16, 1 node, `cloudoptics-pg`; firewall admits only the app | db-s-1vcpu-1gb, $15 |
 | Address | `https://cloudoptics.cloudboosta.com`, API under `/api` (same origin, no CORS) | — |
 

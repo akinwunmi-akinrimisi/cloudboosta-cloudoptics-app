@@ -4,13 +4,13 @@ AWS cost optimisation for African teams: risk-scored recommendations with guided
 
 ## Live demo
 
-**https://akinwunmi-akinrimisi.github.io/cloudboosta-cloudoptics-app/** (published from `main` by `.github/workflows/pages.yml`)
+**https://cloudoptics.cloudboosta.com/demo/** (the `demo` component in `infra/digitalocean/app.yaml`), mirrored at https://akinwunmi-akinrimisi.github.io/cloudboosta-cloudoptics-app/ (published from `main` by `.github/workflows/pages.yml`)
 
-The demo is the real web app running on in-browser demo data: sign in with any email, create a workspace, walk through connecting an AWS account and see the permission checks. It makes no AWS calls and stores nothing outside your browser. Hosting plan: [ADR-012](docs/adr/012-github-first-hosting.md) (GitHub first, then DigitalOcean).
+The demo is the real web app running on in-browser demo data. It opens on a sample workspace ("Kola Pay", marked "Sample data"); sign out and sign in with any email to create your own workspace and walk through connecting an AWS account. It makes no AWS calls, sends no analytics and stores nothing outside your browser. Hosting plan: [ADR-012](docs/adr/012-github-first-hosting.md) (GitHub first, then DigitalOcean).
 
 ## Staging (DigitalOcean)
 
-**https://cloudoptics.cloudboosta.com** runs on DigitalOcean App Platform in London with managed PostgreSQL ([ADR-013](docs/adr/013-digitalocean-app-platform-staging.md)). The API is under `/api`. `infra/digitalocean/provision.py` creates or updates everything from `infra/digitalocean/app.yaml`, reading secrets from the DigitalOcean API at deploy time. After each merge to `main`, `deploy-staging.yml` redeploys once the new image is published (repository secret `DIGITALOCEAN_TOKEN`).
+**https://cloudoptics.cloudboosta.com** runs on DigitalOcean App Platform in London with managed PostgreSQL ([ADR-013](docs/adr/013-digitalocean-app-platform-staging.md)). One origin, split by path ([ADR-016](docs/adr/016-public-site-astro-static-and-path-split-hosting.md)): the public site (`apps/site`) at `/`, the web app at `/app/`, the demo at `/demo/`, the API at `/api`, and the CloudFormation templates at `/cfn/` (served by the site). Old app links such as `/overview` forward to `/app/overview`. `infra/digitalocean/provision.py` creates or updates everything from `infra/digitalocean/app.yaml`, reading secrets from the DigitalOcean API at deploy time. After each merge to `main`, `deploy-staging.yml` redeploys once the new image is published (repository secret `DIGITALOCEAN_TOKEN`).
 
 Sign-in uses WorkOS AuthKit (ADR-006). **Actions → Staging setup** (run from `main`) sets up Cloudoptics' AWS account (template bucket, broker role and user) and pushes the broker key and WorkOS settings to App Platform; see `docs/handoff/staging-next-steps.md` for the one-time WorkOS dashboard settings.
 

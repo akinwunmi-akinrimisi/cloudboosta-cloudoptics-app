@@ -23,6 +23,7 @@ import { Alert, Button, Logo, cx } from '../components/ui'
 import { DeletionBanner } from '../pages/DataDeletion'
 import { SupportBanner } from '../pages/Staff'
 import { useApi, useCurrentTenantId, useMe } from './context'
+import { SIGNUP_URL } from './paths'
 import { useRouteFocus } from './routeFocus'
 
 const NAV = [
@@ -123,6 +124,7 @@ export function AppShell() {
         <MainNav onNavigate={() => setMenuOpen(false)} />
       </Drawer>
       <div className="min-w-0" inert={menuOpen}>
+        {api.mode === 'demo' && <SampleDataBanner />}
         <header className="flex h-14 items-center justify-between gap-2 border-b border-border bg-surface-1 px-2 sm:gap-3 sm:px-4 print:hidden">
           <div className="flex min-w-0 items-center gap-2">
             <button
@@ -219,6 +221,23 @@ export function AppShell() {
           )}
         </main>
       </div>
+    </div>
+  )
+}
+
+/** The demo's sample-data notice (SITE-14), with the way to a real workspace. */
+function SampleDataBanner() {
+  return (
+    <div
+      role="note"
+      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border bg-brand-yellow-soft px-4 py-2 text-sm text-primary print:hidden"
+    >
+      <p className="min-w-0">
+        <strong>Sample data.</strong> This demo runs in your browser and never calls AWS.
+      </p>
+      <a href={SIGNUP_URL} className="font-semibold underline">
+        Start free
+      </a>
     </div>
   )
 }

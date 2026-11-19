@@ -119,3 +119,5 @@ jobs:
           curl -sSf "$APP_URL/api/v1/auth/config" | tee /dev/stderr | jq -e '.provider == "workos"'
           curl -sSf -o /dev/null "$CLOUDOPTICS_CFN_BILLING_TEMPLATE_URL"
           echo "templates reachable at $CLOUDOPTICS_CFN_BILLING_TEMPLATE_URL"
+          # Site at /, app at /app, demo at /demo, /cfn from the site (docs/14 §7.2, SITE-13).
+          scripts/check-staging-layout.sh "$APP_URL"
