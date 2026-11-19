@@ -209,3 +209,17 @@ async def poll_accounts(timestamp: int) -> int:
     for tenant_id, connection_id in rows:
         await defer_discovery(app, str(tenant_id), str(connection_id))
     return len(rows)
+
+
+@blueprint.periodic(cron="53 * * * *")
+@blueprint.task(name="secrets.reencrypt", queue="connections", queueing_lock="secrets.reencrypt")
+async def reencrypt_secrets(timestamp: int) -> str:
+    """Hourly: rewrite External IDs stored before KMS under KMS data keys (ADR-007). Does
+    nothing until a KMS key is configured, and nothing once every secret is rewritten."""
+    from cloudoptics.connectors.crypto import KmsEnvelopeEncryptor, get_encryptor
+    from cloudoptics.connectors.reencrypt import reencrypt_all
+
+    if not isinstance(get_encryptor(), KmsEnvelopeEncryptor):
+        return "kms not configured"
+    report = await reencrypt_all()
+    return f"{report.connections} connections, {report.links} links, {report.failed} failed"

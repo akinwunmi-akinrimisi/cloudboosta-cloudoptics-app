@@ -154,3 +154,35 @@ def test_the_worker_refuses_to_start(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(worker, "get_job_app", lambda: pytest.fail("worker started"))
     with pytest.raises(RuntimeError, match="refusing to start in staging"):
         asyncio.run(worker.main())
+
+
+RA = {
+    "roles_anywhere_certificate": "CERT",
+    "roles_anywhere_private_key": "KEY",
+    "roles_anywhere_trust_anchor_arn": "arn:aws:rolesanywhere:eu-west-2:1:trust-anchor/a",
+    "roles_anywhere_profile_arn": "arn:aws:rolesanywhere:eu-west-2:1:profile/p",
+    "roles_anywhere_role_arn": "arn:aws:iam::123456789012:role/CloudopticsBroker",
+}
+
+
+def test_roles_anywhere_is_used_once_a_certificate_is_set() -> None:
+    assert not deployed().uses_roles_anywhere
+    assert deployed(**RA).uses_roles_anywhere
+    assert not deployed(broker_credentials="default_chain", **RA).uses_roles_anywhere
+    deployed(**RA).require_aws_connection_settings()
+
+
+@pytest.mark.parametrize("field", [f for f in RA if f != "roles_anywhere_certificate"])
+def test_incomplete_roles_anywhere_settings_refuse_to_start(field: str) -> None:
+    values = {k: v for k, v in RA.items() if k != field}
+    with pytest.raises(RuntimeError, match=f"CLOUDOPTICS_{field.upper()} is not set"):
+        deployed(**values).require_aws_connection_settings()
+
+
+def test_explicit_roles_anywhere_without_a_certificate_refuses_to_start() -> None:
+    with pytest.raises(RuntimeError, match="ROLES_ANYWHERE_CERTIFICATE is not set"):
+        deployed(broker_credentials="roles_anywhere").require_aws_connection_settings()
+
+
+def test_the_private_key_is_not_shown_in_the_settings_repr() -> None:
+    assert "KEY" not in repr(deployed(**RA).roles_anywhere_private_key)

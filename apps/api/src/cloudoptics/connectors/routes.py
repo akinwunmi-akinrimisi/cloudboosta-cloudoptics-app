@@ -24,6 +24,7 @@ from cloudoptics.connectors.service import (
     get_connection,
     get_session_factory,
     mark_disconnected,
+    read_external_id,
     record_delete_ignored,
     run_validation,
     secret_tag,
@@ -332,7 +333,7 @@ async def get_setup(
     connection_id: uuid.UUID, access: AdminAccess, session: Session
 ) -> ConnectionSetup:
     row = await _load(session, connection_id)
-    return _setup(row, get_encryptor().decrypt(bytes(row.external_id_enc), access.tenant_id))
+    return _setup(row, await read_external_id(session, row, access.tenant_id))
 
 
 @router.post(
@@ -411,7 +412,7 @@ async def start_removal_check(
     Inline jobs check straight away and answer ``disconnected`` or ``kept``; queued jobs
     answer ``verifying`` and the worker checks later (``connectors:connection.verify_removed``).
     """
-    tag = secret_tag(conn.external_id_enc)
+    tag = secret_tag(get_encryptor().decrypt(bytes(conn.external_id_enc), tenant_id))
     if get_settings().jobs_mode == "inline":
         outcome, code = await check_stack_removed(
             session,
@@ -453,7 +454,7 @@ async def scan_resources(
             "Check the billing connection first: resources are scanned for working connections.",
         )
     account_ids = await accounts.scan_account_ids(session, connection_id)
-    external_id = get_encryptor().decrypt(bytes(row.external_id_enc), access.tenant_id)
+    external_id = await read_external_id(session, row, access.tenant_id)
     factory = get_session_factory()
     checked: list[AccountAccess] = []
     for account_id in account_ids:
