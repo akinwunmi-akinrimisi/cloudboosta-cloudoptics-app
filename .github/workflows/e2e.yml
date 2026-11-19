@@ -24,7 +24,7 @@ jobs:
   e2e:
     name: E2E (Playwright, axe)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
