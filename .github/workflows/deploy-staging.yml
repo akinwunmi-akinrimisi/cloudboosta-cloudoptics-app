@@ -37,6 +37,21 @@ jobs:
       name: staging
       url: https://cloudoptics.cloudboosta.com
     steps:
+      # App Platform has no admission policy (the role Kyverno plays on Kubernetes, WBS
+      # OPS-9), so the deploy checks that the image `main` points to was signed by the
+      # Container workflow on main before it lets App Platform pull it.
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3 (cosign v3.1.4)
+      - name: Verify the image signature
+        env:
+          TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/cloudoptics-api
+          IDENTITY: https://github.com/${{ github.repository }}/.github/workflows/container.yml@refs/heads/main
+        run: |
+          if [ -z "$TOKEN" ]; then exit 0; fi  # the next step skips the deploy
+          # cosign resolves the tag to its digest and checks the signature on that digest.
+          cosign verify "$IMAGE:main" --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          echo "$IMAGE:main is signed by container.yml on main"
       - name: Start deployment
         id: start
         env:

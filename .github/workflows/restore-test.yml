@@ -1,0 +1,70 @@
+# Monthly restore test of the staging database (WBS OPS-8, docs/11g RB-11). Restores the
+# latest DigitalOcean backup into a TEMPORARY cluster, checks it (alembic current, row
+# counts, audit-chain verification) and deletes it. Each run bills the temporary cluster for
+# 30-60 minutes (about $0.02 an hour at db-s-1vcpu-1gb, Nov 2026): run it only with the
+# owner's approval. Manual only; the schedule below stays commented out until the owner
+# agrees to a monthly run.
+#
+# This repository's logs are public: the script prints pass/fail lines and timings, never
+# row counts or workspace IDs. The full record (with table counts) is written on the runner
+# and deliberately not uploaded; run the script locally when you need the counts.
+name: Restore test
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type "restore" to create (and then delete) a temporary database cluster
+        required: true
+      backup:
+        description: created_at of the backup to restore (empty = latest)
+        required: false
+        default: ""
+  # schedule:
+  #   - cron: "0 6 3 * *" # 06:00 UTC on the 3rd of each month (07:00 WAT)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-test
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    name: Restore the latest backup and check it
+    if: inputs.confirm == 'restore'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: staging
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - run: uv sync --all-packages --locked
+      - name: Restore test
+        env:
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+          BACKUP: ${{ inputs.backup }}
+        run: |
+          args=(--output "$RUNNER_TEMP/restore-test.json")
+          if [ -n "$BACKUP" ]; then args+=(--backup "$BACKUP"); fi
+          uv run python infra/digitalocean/restore_test.py "${args[@]}"
+      - name: Summary
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/restore-test.json"
+          if [ ! -f "$f" ]; then echo "No result recorded." >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          jq -r '"## Restore test: \(if .ok then "passed" else "FAILED" end)",
+            "",
+            "| | |", "|---|---|",
+            "| Backup | \(.backup_created_at) |",
+            "| Restore took | \(.restore_seconds) s |",
+            "| alembic current / code head | \(.alembic_current) / \(.alembic_head) |",
+            "| Audit chains verified / failed | \(.audit_chains_verified) / \(.audit_chains_failed) |",
+            "| Temporary cluster deleted | \(.cluster_deleted) |",
+            "", (.checks[] | "- \(if .ok then "pass" else "FAIL" end): \(.name)")' \
+            "$f" >> "$GITHUB_STEP_SUMMARY"
+      - name: Warn if the temporary cluster was left running
+        if: failure()
+        run: |
+          echo "::warning::If the log shows no 'deleted temporary cluster' line, delete the cloudoptics-pg-restore-test-* cluster by hand (docs/11g RB-11) - it bills until deleted."

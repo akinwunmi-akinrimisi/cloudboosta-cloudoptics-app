@@ -7,7 +7,11 @@ be re-run safely. Secrets (database passwords, generated keys) are never printed
     python infra/digitalocean/provision.py app [--branch B] # create or update the App Platform app
     python infra/digitalocean/provision.py status          # summary of what exists
 
-Reads the API token from DIGITALOCEAN_TOKEN (or Digital_Ocean_Token).
+Reads the API token from DIGITALOCEAN_TOKEN (or Digital_Ocean_Token). With ALERT_EMAILS
+(comma-separated; each must be a member of the DigitalOcean team), ``app`` also sends every
+alert rule of the spec to those addresses and keeps the uptime checks on / and /api/readyz
+(WBS OPS-7, docs/11g RB-05). Without it the alert rules exist but recipients are left as
+they are, and no uptime checks are created.
 """
 
 from __future__ import annotations
@@ -234,6 +238,103 @@ def deploy_app(branch: str = "main") -> None:
         {"rules": [{"type": "app", "value": app["id"]}]},
     )
     print("database firewall: only the app may connect")
+    configure_alerting(str(app["id"]))
+
+
+APP_URL = "https://cloudoptics.cloudboosta.com"
+# DigitalOcean Uptime probes from these regions (us_east, us_west, eu_west, se_asia are the
+# choices; there is no African probe). One check is free per month, then $1 a check.
+UPTIME_REGIONS = ["eu_west", "us_east"]
+UPTIME_CHECKS: dict[str, dict[str, Any]] = {
+    f"{APP_NAME} api readyz": {
+        "target": f"{APP_URL}/api/readyz",
+        "alerts": [
+            {"name": "api down", "type": "down", "period": "2m"},
+            {
+                "name": "api slow",
+                "type": "latency",
+                "threshold": 2000,
+                "comparison": "greater_than",
+                "period": "10m",
+            },
+        ],
+    },
+    f"{APP_NAME} web": {
+        "target": f"{APP_URL}/",
+        "alerts": [
+            {"name": "web down", "type": "down", "period": "2m"},
+            {
+                "name": "certificate expiring",
+                "type": "ssl_expiry",
+                "threshold": 14,
+                "comparison": "less_than",
+                "period": "1h",
+            },
+        ],
+    },
+}
+
+
+def alert_emails() -> list[str]:
+    raw = os.environ.get("ALERT_EMAILS", "")
+    return [e.strip() for e in raw.split(",") if e.strip()]
+
+
+def assign_alert_destinations(app_id: str, emails: list[str]) -> int:
+    """Send every app and component alert rule to ``emails``; Slack webhooks are kept."""
+    alerts = call("GET", f"/apps/{app_id}/alerts").get("alerts") or []
+    for alert in alerts:
+        call(
+            "POST",
+            f"/apps/{app_id}/alerts/{alert['id']}/destinations",
+            {"emails": emails, "slack_webhooks": alert.get("slack_webhooks") or []},
+        )
+    return len(alerts)
+
+
+def ensure_uptime_checks(emails: list[str]) -> None:
+    """Create or update the uptime checks and their alerts, found by name (idempotent)."""
+    existing = {
+        c["name"]: c for c in call("GET", "/uptime/checks?per_page=200").get("checks") or []
+    }
+    for name, want in UPTIME_CHECKS.items():
+        body = {
+            "name": name,
+            "type": "https",
+            "target": want["target"],
+            "regions": UPTIME_REGIONS,
+            "enabled": True,
+        }
+        if name in existing:
+            check_id = existing[name]["id"]
+            call("PUT", f"/uptime/checks/{check_id}", body)
+        else:
+            check_id = call("POST", "/uptime/checks", body)["check"]["id"]
+            print(f"created uptime check {name}")
+        current = {
+            a["name"]: a
+            for a in call("GET", f"/uptime/checks/{check_id}/alerts").get("alerts") or []
+        }
+        for alert in want["alerts"]:
+            payload = {**alert, "notifications": {"email": emails, "slack": []}}
+            if alert["name"] in current:
+                alert_id = current[alert["name"]]["id"]
+                call("PUT", f"/uptime/checks/{check_id}/alerts/{alert_id}", payload)
+            else:
+                call("POST", f"/uptime/checks/{check_id}/alerts", payload)
+
+
+def configure_alerting(app_id: str) -> None:
+    emails = alert_emails()
+    if not emails:
+        print("ALERT_EMAILS not set: alert recipients unchanged, uptime checks not managed")
+        return
+    count = assign_alert_destinations(app_id, emails)
+    ensure_uptime_checks(emails)
+    print(
+        f"alerting: {count} alert rules and {len(UPTIME_CHECKS)} uptime checks notify "
+        f"{len(emails)} address(es)"
+    )
 
 
 def status() -> None:
