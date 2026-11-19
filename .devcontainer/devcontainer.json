@@ -8,7 +8,7 @@
   "forwardPorts": [5173, 8000],
   "portsAttributes": {
     "5173": { "label": "Web", "onAutoForward": "openBrowser" },
-    "8000": { "label": "API", "visibility": "public" }
+    "8000": { "label": "API" }
   },
   "postCreateCommand": "bash scripts/dev-setup.sh",
   "postStartCommand": "bash scripts/dev-start.sh",

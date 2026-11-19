@@ -1,13 +1,24 @@
 """Process settings, read from environment variables prefixed ``CLOUDOPTICS_``."""
 
+import re
 from functools import lru_cache
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_AUTH_SECRET = "dev-only-secret-change-me-0123456789abcdef"  # noqa: S105 - refused outside dev
 DEV_DATA_KEY = "Y2xvdWRvcHRpY3MtbG9jYWwtZGV2LWtleS0zMmJ5dGU="  # dev only gitleaks:allow
+
+# Local placeholders for the AWS connection settings. The template host is under the reserved
+# ".invalid" TLD, so nobody can register it and serve a template to a customer who copies it.
+PLACEHOLDER_PRINCIPAL_ARN = "arn:aws:iam::000000000000:role/CloudopticsBroker"
+PLACEHOLDER_TEMPLATE_BASE = "https://cloudoptics-templates.invalid/cfn/v1"
+# Templates are served only from the bucket infra/aws/bootstrap.py creates:
+# cloudoptics-public-<12-digit account ID>, virtual-hosted-style S3 URL over HTTPS.
+_TEMPLATE_HOST = re.compile(r"cloudoptics-public-\d{12}\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com")
+_PRINCIPAL_ARN = re.compile(r"arn:aws:iam::(\d{12}):role/[\w+=,.@/-]+")
 
 
 class Settings(BaseSettings):
@@ -39,13 +50,11 @@ class Settings(BaseSettings):
     local_data_key: str = DEV_DATA_KEY
 
     # AWS connection (PRD FR-CON-01/13). Templates must be served from S3 for quick-create.
-    cloudoptics_principal_arn: str = "arn:aws:iam::000000000000:role/CloudopticsBroker"
-    cfn_billing_template_url: str = (
-        "https://cloudoptics-public.s3.eu-west-2.amazonaws.com/cfn/v1/billing-role.yaml"
-    )
-    cfn_resource_template_url: str = (
-        "https://cloudoptics-public.s3.eu-west-2.amazonaws.com/cfn/v1/resource-role.yaml"
-    )
+    # The defaults are local placeholders; the API and worker refuse them in staging and
+    # production (require_aws_connection_settings).
+    cloudoptics_principal_arn: str = PLACEHOLDER_PRINCIPAL_ARN
+    cfn_billing_template_url: str = f"{PLACEHOLDER_TEMPLATE_BASE}/billing-role.yaml"
+    cfn_resource_template_url: str = f"{PLACEHOLDER_TEMPLATE_BASE}/resource-role.yaml"
     aws_region: str = "eu-west-2"
     # Cloudoptics' broker role (the principal in customers' trust policies). When set, the
     # process credentials assume it first and it assumes the customer role (role chaining).
@@ -126,6 +135,52 @@ class Settings(BaseSettings):
             if self.local_data_key == DEV_DATA_KEY:
                 raise ValueError(f"the development data key is not allowed in {self.environment}")
         return self
+
+    def require_aws_connection_settings(self) -> None:
+        """In staging/production, refuse placeholder or foreign AWS connection settings.
+
+        Customers deploy the template at these URLs (the resource template as an org-wide
+        StackSet) and trust the principal, so they must be explicitly set to Cloudoptics'
+        own bucket and role. The API and worker call this at start-up; the migrate job, which
+        does not get these settings, does not.
+        """
+        if self.environment not in ("staging", "production"):
+            return
+        problems: list[str] = []
+        arn = self.cloudoptics_principal_arn
+        match = _PRINCIPAL_ARN.fullmatch(arn)
+        if "cloudoptics_principal_arn" not in self.model_fields_set:
+            problems.append("CLOUDOPTICS_CLOUDOPTICS_PRINCIPAL_ARN is not set")
+        elif arn == PLACEHOLDER_PRINCIPAL_ARN or not match or match.group(1) == "0" * 12:
+            problems.append("CLOUDOPTICS_CLOUDOPTICS_PRINCIPAL_ARN is not an IAM role ARN")
+        for field, name in (
+            ("cfn_billing_template_url", "billing-role.yaml"),
+            ("cfn_resource_template_url", "resource-role.yaml"),
+        ):
+            env = f"CLOUDOPTICS_{field.upper()}"
+            url = getattr(self, field)
+            if field not in self.model_fields_set:
+                problems.append(f"{env} is not set")
+            elif not _is_template_url(url, name):
+                problems.append(
+                    f"{env} must be https://cloudoptics-public-<account>.s3.<region>"
+                    f".amazonaws.com/.../{name}"
+                )
+        if problems:
+            raise RuntimeError(f"refusing to start in {self.environment}: " + "; ".join(problems))
+
+
+def _is_template_url(url: str, name: str) -> bool:
+    parts = urlsplit(url)
+    return (
+        parts.scheme == "https"
+        and parts.netloc == parts.hostname  # no user info, port or upper case
+        and _TEMPLATE_HOST.fullmatch(parts.hostname or "") is not None
+        and parts.path.startswith("/")
+        and parts.path.endswith(f"/{name}")
+        and not parts.query
+        and not parts.fragment
+    )
 
 
 @lru_cache

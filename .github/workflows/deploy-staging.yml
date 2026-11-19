@@ -23,7 +23,15 @@ env:
 jobs:
   deploy:
     name: Deploy to App Platform
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # The branches filter above matches the triggering run's head branch, which a fork's pull
+    # request also controls (Container runs on pull_request). Deploy only after a successful
+    # Container run for a push to main of this repository, or when run by hand.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     environment:
       name: staging
