@@ -3,6 +3,7 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -21,8 +22,16 @@ from test_inventory import world  # noqa: F401 - fixture
 from test_metrics import scanned
 
 from cloudoptics.analysis import engine, schedule
+from cloudoptics.analysis import settings as settings_module
 from cloudoptics.analysis.rules import Context, Resource
-from cloudoptics.analysis.settings import RuleSettings, pattern_problem, window_problem
+from cloudoptics.analysis.settings import (
+    DEFAULT_NONPROD_PATTERN,
+    SLOW_PATTERN,
+    NonprodMatcher,
+    RuleSettings,
+    pattern_problem,
+    window_problem,
+)
 from cloudoptics.metrics import puller
 
 OFF_MONTH = (168 - 65) * 730 / 168  # weekdays 07:00-20:00 is 65 of 168 hours
@@ -226,6 +235,101 @@ def test_pattern_and_window_checks() -> None:
     assert window_problem("07:00", "20:00") is None
     assert window_problem("7:00", "20:00") is not None
     assert window_problem("20:00", "07:00") is not None
+
+
+@pytest.mark.parametrize(
+    "slow",
+    [
+        "(a|a)*$",  # overlapping alternation under a quantifier
+        "((a)+)+$",  # nested group the old check could not see
+        "(dev|d|ev|v|e)*$",
+        "(?:a|aa)+$",
+    ],
+)
+def test_patterns_that_backtrack_are_refused(slow: str) -> None:
+    """Shapes the nested-quantifier check misses are timed on adversarial text instead."""
+    assert pattern_problem(slow) == SLOW_PATTERN
+    # Stored before this check existed: the analysis falls back to the default.
+    assert RuleSettings.from_json({"nonprodPattern": slow}) == RuleSettings()
+
+
+def test_ordinary_patterns_still_pass() -> None:
+    for ok in (
+        DEFAULT_NONPROD_PATTERN,
+        "dev|test",
+        r"\w*\w*\w*\w*\w*\w*\w*\w*!",  # adjacent quantifiers: linear on this engine
+        r"^(qa|uat)-\d+$",
+        "lab-[0-9]{2}",
+    ):
+        assert pattern_problem(ok) is None, ok
+
+
+def test_a_match_that_runs_out_of_time_stops_the_pattern(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    matcher = NonprodMatcher("(a|a)*$")  # as if stored and never checked
+    monkeypatch.setattr(settings_module, "MATCH_TIMEOUT", 0.01)
+    started = datetime.now(UTC)
+    assert matcher.search("a" * 40 + "!") is False
+    assert matcher.timed_out
+    # From then on it matches nothing and costs nothing.
+    assert matcher.search("a") is False
+    assert datetime.now(UTC) - started < timedelta(seconds=2)
+    # Text is cut to 256 characters before matching.
+    assert NonprodMatcher("x$").search("y" * 256 + "x") is False
+    assert NonprodMatcher("DEV").search("my-dev-box") is True
+
+
+async def test_rules_run_off_the_event_loop(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import threading
+
+    seen: list[bool] = []
+
+    def evaluate(ctx: Context, resources: list[Resource]) -> list[Any]:
+        seen.append(threading.current_thread() is threading.main_thread())
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(engine, "evaluate", evaluate)
+    monkeypatch.setattr(engine, "get_sessionmaker", lambda: _NoDatabase)
+    monkeypatch.setattr(engine, "scope", _no_scope)
+    monkeypatch.setattr(engine, "_load", _no_resources)
+    for loader in ("load_price_book", "load_usage", "load_billing"):
+        monkeypatch.setattr(engine, loader, _nothing)
+    with pytest.raises(RuntimeError, match="stop here"):
+        await engine.run_analysis(uuid4(), settings=RuleSettings())
+    assert seen == [False]
+
+
+class _NoSession:
+    async def __aenter__(self) -> "_NoSession":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+    def begin(self) -> "_NoSession":
+        return self
+
+    async def execute(self, *args: object, **kwargs: object) -> Any:
+        class _Result:
+            def scalar_one_or_none(self) -> None:
+                return None
+
+        return _Result()
+
+
+def _NoDatabase() -> _NoSession:  # noqa: N802 - stands in for a sessionmaker
+    return _NoSession()
+
+
+async def _no_scope(*args: object, **kwargs: object) -> None:
+    return None
+
+
+async def _no_resources(*args: object) -> list[Resource]:
+    return []
+
+
+async def _nothing(*args: object) -> Any:
+    return {}
 
 
 def test_unknown_time_zone_falls_back_to_utc_and_quick_create_when_hosted() -> None:

@@ -24,7 +24,13 @@ ASSIGNED_TASK = "recommendations:assignment.email"
 
 
 async def defer_verification(app: procrastinate.App, tenant_id: str) -> None:
-    await defer_once(app, VERIFY_TASK, f"verification:{tenant_id}", tenant_id=tenant_id)
+    await defer_once(
+        app,
+        VERIFY_TASK,
+        f"verification:{tenant_id}",
+        run_lock=f"recommendations:{tenant_id}",
+        tenant_id=tenant_id,
+    )
 
 
 @blueprint.task(name="verification.run", queue="analysis", retry=1)

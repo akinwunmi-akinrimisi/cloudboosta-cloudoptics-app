@@ -144,16 +144,9 @@ def _utilisation(c: aws.Commitment, by_id: dict[str, float]) -> float | None:
 
 
 async def _accounts(session: AsyncSession, connection_id: uuid.UUID) -> list[str]:
-    return [
-        r.aws_account_id.strip()
-        for r in await session.execute(
-            text(
-                "SELECT aws_account_id FROM cloud_account WHERE connection_id = :c AND "
-                "coalesce(org_status, 'ACTIVE') = 'ACTIVE' ORDER BY aws_account_id"
-            ),
-            {"c": connection_id},
-        )
-    ]
+    from cloudoptics.connectors.accounts import scan_account_ids
+
+    return await scan_account_ids(session, connection_id)
 
 
 async def refresh(

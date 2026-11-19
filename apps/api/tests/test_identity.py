@@ -172,3 +172,94 @@ async def test_auth_config_tells_the_web_app_which_sign_in_to_show(client: Async
     finally:
         settings.auth_mode = "dev"
     assert body["mode"] == "oidc" and body["configured"] is False
+
+
+class FixedClaims:
+    """A verifier like WorkOS's, where each token names an identity set by the test."""
+
+    def __init__(self) -> None:
+        from cloudoptics.identity.auth import Claims
+
+        self.claims: dict[str, Claims] = {}
+        self.make = Claims
+
+    def add(self, token: str, email: str, verified: bool) -> dict[str, str]:
+        self.claims[token] = self.make(
+            subject=f"workos|{token}", email=email, name=None, email_verified=verified
+        )
+        return {"Authorization": f"Bearer {token}"}
+
+    async def verify(self, token: str):  # type: ignore[no-untyped-def]
+        return self.claims[token]
+
+    async def mfa_enrolled(self, subject: str) -> bool:
+        return False
+
+
+@pytest.fixture
+def identities(monkeypatch) -> FixedClaims:  # type: ignore[no-untyped-def]
+    from cloudoptics.identity import auth, deps
+
+    fake = FixedClaims()
+    monkeypatch.setattr(auth, "get_verifier", lambda: fake)
+    monkeypatch.setattr(deps, "get_verifier", lambda: fake)
+    return fake
+
+
+async def test_a_verified_identity_takes_an_email_over_from_an_unverified_one(
+    client: AsyncClient, identities: FixedClaims, owner_sql
+) -> None:
+    """Audit run 1, lead 17: the email is unique, so a second subject presenting it got a
+    500 on every request. The policy (identity/deps.py) is deterministic instead."""
+    email = f"shared-{uuid.uuid4().hex[:8]}@example.com"
+    first = identities.add(f"a{uuid.uuid4().hex[:8]}", email, verified=False)
+    me = await client.get("/v1/me", headers=first)
+    assert me.status_code == 200
+    first_id = me.json()["id"]
+    tenant = await create_tenant(client, first)
+
+    second = identities.add(f"b{uuid.uuid4().hex[:8]}", email, verified=True)
+    me = await client.get("/v1/me", headers=second)
+    assert me.status_code == 200, me.text
+    assert me.json()["email"] == email
+    assert me.json()["id"] != first_id  # not merged: a new user, with no memberships
+    assert me.json()["memberships"] == []
+    # The first identity keeps its row and workspace under a placeholder address.
+    [(held, verified)] = owner_sql(
+        "SELECT email::text, email_verified FROM app_user WHERE id = %s", first_id
+    )
+    assert held == f"released+{first_id}@email-released.invalid"
+    assert verified is False
+    assert owner_sql(
+        "SELECT count(*) FROM membership WHERE user_id = %s AND tenant_id = %s",
+        first_id,
+        tenant["id"],
+    ) == [(1,)]
+
+    # When the first identity signs in again, the verified holder keeps the email.
+    again = await client.get("/v1/me", headers=first)
+    assert again.status_code == 409
+    assert again.json()["code"] == "email_in_use"
+    assert again.headers["content-type"].startswith("application/problem+json")
+
+
+@pytest.mark.parametrize(("holder_verified", "new_verified"), [(True, True), (True, False),
+                                                                (False, False)])  # fmt: skip
+async def test_other_email_collisions_are_a_clear_409(
+    client: AsyncClient,
+    identities: FixedClaims,
+    owner_sql,
+    holder_verified: bool,
+    new_verified: bool,
+) -> None:
+    email = f"taken-{uuid.uuid4().hex[:8]}@example.com"
+    holder = identities.add(f"h{uuid.uuid4().hex[:8]}", email, verified=holder_verified)
+    holder_id = (await client.get("/v1/me", headers=holder)).json()["id"]
+    newcomer = identities.add(f"n{uuid.uuid4().hex[:8]}", email, verified=new_verified)
+    r = await client.get("/v1/me", headers=newcomer)
+    assert r.status_code == 409
+    assert r.json()["code"] == "email_in_use"
+    assert owner_sql("SELECT email::text FROM app_user WHERE id = %s", holder_id) == [(email,)]
+    assert owner_sql("SELECT count(*) FROM app_user WHERE email = %s", email) == [(1,)]
+    # The holder is unaffected.
+    assert (await client.get("/v1/me", headers=holder)).status_code == 200

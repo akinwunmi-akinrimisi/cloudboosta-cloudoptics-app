@@ -15,6 +15,7 @@ comes back is reopened.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -273,7 +274,9 @@ async def run_analysis(
                 else None
             ),
         )
-        scored = evaluate(ctx, resources)
+        # CPU-bound (and runs the tenant's pattern): off the event loop, so the worker's
+        # other jobs keep running.
+        scored = await asyncio.to_thread(evaluate, ctx, resources)
         # R8 is payer-wide (no resource): sized from the bills, after the open R4-R7 savings.
         from cloudoptics.commitments.service import R8_RULE, r8_candidates
 

@@ -29,6 +29,7 @@ async def defer_ingest(app: procrastinate.App, tenant_id: str, connection_id: st
         app,
         INGEST_TASK,
         f"ingest:{connection_id}",
+        run_lock=f"bills:{connection_id}",  # not at the same time as a reload
         tenant_id=tenant_id,
         connection_id=connection_id,
     )
@@ -53,6 +54,7 @@ async def defer_reload(
         app,
         RELOAD_TASK,
         f"reload:{connection_id}",
+        run_lock=f"bills:{connection_id}",
         tenant_id=tenant_id,
         connection_id=connection_id,
         period=period or "",

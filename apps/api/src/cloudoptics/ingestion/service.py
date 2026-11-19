@@ -28,6 +28,7 @@ from cloudoptics.connectors.service import get_connection, get_session_factory
 from cloudoptics.ingestion.pipeline import LoadedExport, load_export
 from cloudoptics.ingestion.source import (
     ExportSource,
+    ExportTooLargeError,
     Manifest,
     ManifestError,
     S3ExportSource,
@@ -91,6 +92,8 @@ def _discover(source: ExportSource, conn: Any) -> tuple[list[Manifest], list[str
 
 
 def _error_code(exc: Exception) -> str:
+    if isinstance(exc, ExportTooLargeError):
+        return f"too_large: {exc}"
     if isinstance(exc, ClientError):
         return str(exc.response.get("Error", {}).get("Code", "ClientError"))
     return type(exc).__name__

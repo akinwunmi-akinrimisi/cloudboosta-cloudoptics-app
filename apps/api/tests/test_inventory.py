@@ -752,3 +752,50 @@ async def test_route_tables_access_denied_keeps_the_scan_going(
     world.route_tables_error, world.route_tables = None, ROUTE_TABLES
     assert await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection)) == "succeeded"
     assert nat_configs(owner_sql, connection)["nat-routed"]["routeTablesStatus"] == "checked"
+
+
+async def test_bill_only_accounts_are_capped_and_account_ids_are_checked(
+    client: AsyncClient, login, owner_sql, world, monkeypatch
+) -> None:
+    """Accounts known only from the customer's bills (no org_status) are scanned up to a cap,
+    the connection's own account first; every account the Organization lists is scanned
+    (audit run 1, lead 14)."""
+    import psycopg
+
+    from cloudoptics.platform.settings import get_settings
+
+    tenant, connection, account, _ = await setup(client, login, owner_sql)
+    bill_only = [f"5555555555{i:02d}" for i in range(6)]  # 555555555555 is in setup
+    listed = ["700000000001", "700000000002"]
+    for acct in bill_only:
+        owner_sql(
+            "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
+            "account_type) VALUES (gen_random_uuid(), %s, %s, %s, 'member')",
+            tenant,
+            connection,
+            acct,
+        )
+    for acct, status in [*((a, "ACTIVE") for a in listed), ("700000000003", "SUSPENDED")]:
+        owner_sql(
+            "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
+            "account_type, org_status) VALUES (gen_random_uuid(), %s, %s, %s, 'member', %s)",
+            tenant,
+            connection,
+            acct,
+            status,
+        )
+    monkeypatch.setattr(get_settings(), "max_bill_only_accounts", 3)
+    await scanner.scan_connection(uuid.UUID(tenant), uuid.UUID(connection))
+    scanned = sorted({arn.split(":")[4] for arn in world.assumed})
+    assert scanned == sorted([account, "555555555500", "555555555501", *listed])
+
+    # The column takes 12 digits only, as cloud_connection's does.
+    for bad in ("12345", "abcdefghijkl"):
+        with pytest.raises(psycopg.errors.CheckViolation):
+            owner_sql(
+                "INSERT INTO cloud_account (id, tenant_id, connection_id, aws_account_id, "
+                "account_type) VALUES (gen_random_uuid(), %s, %s, %s, 'member')",
+                tenant,
+                connection,
+                bad,
+            )

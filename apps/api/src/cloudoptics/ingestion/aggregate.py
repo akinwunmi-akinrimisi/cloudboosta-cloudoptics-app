@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
@@ -32,6 +33,8 @@ KEY_COLUMNS = (
     "_tag_hash",
     "x_CommitmentKind",
 )
+#: Only real AWS account IDs from the bills become accounts (scanned, assumed into).
+ACCOUNT_ID = re.compile(r"[0-9]{12}")
 SUM_COLUMNS = ("BilledCost", "EffectiveCost", "x_NetCost", "ListCost", "ConsumedQuantity")
 _KIND = KEY_COLUMNS.index("x_CommitmentKind")
 
@@ -129,7 +132,7 @@ class DailyAggregator:
         for acct, name in zip(
             table["SubAccountId"].to_pylist(), table["SubAccountName"].to_pylist(), strict=True
         ):
-            if acct and (name or acct not in self.accounts):
+            if acct and ACCOUNT_ID.fullmatch(acct) and (name or acct not in self.accounts):
                 self.accounts[acct] = name
 
         grouped = table.group_by(list(KEY_COLUMNS), use_threads=False).aggregate(

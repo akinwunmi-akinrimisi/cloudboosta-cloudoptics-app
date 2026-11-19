@@ -15,7 +15,13 @@ RUN_TASK = "analysis:analysis.run"
 
 
 async def defer_analysis(app: procrastinate.App, tenant_id: str) -> None:
-    await defer_once(app, RUN_TASK, f"analysis:{tenant_id}", tenant_id=tenant_id)
+    await defer_once(
+        app,
+        RUN_TASK,
+        f"analysis:{tenant_id}",
+        run_lock=f"recommendations:{tenant_id}",  # not alongside verification
+        tenant_id=tenant_id,
+    )
 
 
 @blueprint.task(name="analysis.run", queue="analysis", retry=1)

@@ -2,6 +2,7 @@
 
 import io
 import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -15,7 +16,9 @@ from cloudoptics.ingestion.focus import normalise
 from cloudoptics.ingestion.pipeline import load_export
 from cloudoptics.ingestion.quality import QualityChecks, blocked
 from cloudoptics.ingestion.source import (
+    ExportTooLargeError,
     LocalExportSource,
+    Manifest,
     ManifestError,
     S3ExportSource,
     manifest_keys,
@@ -253,3 +256,134 @@ def test_s3_source_pages_listings_and_hashes_downloads(tmp_path: Path) -> None:
     assert size == 5
     assert sha == "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
     assert (tmp_path / "a").read_bytes() == b"hello"
+
+
+# --- limits on what a customer's bucket can make the worker read (audit run 1, 13 and 16) ---
+
+
+def export_folder(root: Path, tables: list[pa.Table], execution: str = "e1") -> Manifest:
+    """An export laid out under ``root`` (keys with forward slashes on every OS)."""
+    keys = []
+    for i, table in enumerate(tables):
+        data = root / "p" / "x" / "data" / "BILLING_PERIOD=2026-09" / f"x-{i:05d}.parquet"
+        data.parent.mkdir(parents=True, exist_ok=True)
+        pq.write_table(table, data)
+        keys.append(f"s3://b/{data.relative_to(root).as_posix()}")
+    meta = root / "p" / "x" / "metadata" / "BILLING_PERIOD=2026-09" / "x-Manifest.json"
+    meta.parent.mkdir(parents=True, exist_ok=True)
+    meta.write_text(json.dumps({"executionId": execution, "dataFiles": keys}))
+    return parse_manifest(
+        meta.relative_to(root).as_posix(), meta.read_text(), bucket="b", prefix="p"
+    )
+
+
+@pytest.fixture
+def limits(monkeypatch):  # type: ignore[no-untyped-def]
+    """The process settings, with limits a test may lower (restored afterwards)."""
+    from cloudoptics.platform.settings import get_settings
+
+    settings = get_settings()
+
+    def set_limit(**values: int) -> None:
+        for name, value in values.items():
+            monkeypatch.setattr(settings, name, value)
+
+    return set_limit
+
+
+@pytest.mark.parametrize(
+    "version", ["x/../../../tenant=victim/billing_period=2026-01/version=v", "..", ".", "a\b",
+                "a b", "x" * 129]
+)  # fmt: skip
+def test_execution_id_must_be_one_plain_name(version: str) -> None:
+    key = "cur/exp/metadata/BILLING_PERIOD=2026-10/exp-Manifest.json"
+    body = json.dumps({"executionId": version, "dataFiles": []})
+    with pytest.raises(ManifestError, match="plain name"):
+        parse_manifest(key, body, bucket="bkt", prefix="cur")
+
+
+def test_ordinary_execution_ids_are_kept() -> None:
+    key = "cur/exp/metadata/BILLING_PERIOD=2026-10/exp-Manifest.json"
+    for version in ("2026-09-v1", "a1b2c3d4-0000-4000-8000-0123456789ab", "run.1_x"):
+        body = json.dumps({"executionId": version, "dataFiles": []})
+        assert parse_manifest(key, body, bucket="bkt", prefix="cur").export_version == version
+
+
+def test_normalised_output_stays_in_its_folder(tmp_path: Path) -> None:
+    manifest = export_folder(tmp_path / "bucket", [generate(SEPT).table])
+    # The audit's example: into another tenant's folder next to this one.
+    escaping = replace(
+        manifest, export_version="x/../../../tenant=victim/billing_period=2026-01/version=v"
+    )
+    norm = tmp_path / "norm" / "tenant=attacker"
+    with pytest.raises(ManifestError, match="outside its folder"):
+        load_export(LocalExportSource(tmp_path / "bucket"), escaping, norm)
+    assert not (tmp_path / "norm" / "tenant=victim").exists()
+
+
+def test_rows_files_and_bytes_are_limited(tmp_path: Path, limits) -> None:  # type: ignore[no-untyped-def]
+    table = generate(SEPT).table
+    source = LocalExportSource(tmp_path / "bucket")
+    manifest = export_folder(tmp_path / "bucket", [table, table.slice(0, 10)])
+    assert load_export(source, manifest).row_count == table.num_rows + 10
+
+    limits(cur_max_period_rows=table.num_rows)
+    with pytest.raises(ExportTooLargeError, match="rows in the period"):
+        load_export(source, manifest)
+    # A manifest that says so up front is refused before anything is downloaded.
+    with pytest.raises(ExportTooLargeError, match="lists"):
+        load_export(LocalExportSource(tmp_path / "nothing"), replace(manifest, num_rows=10**9))
+
+    limits(cur_max_period_rows=10**9, cur_max_period_bytes=100)
+    with pytest.raises(ExportTooLargeError, match="byte limit for a period"):
+        load_export(source, manifest)
+
+    limits(cur_max_data_files=1)
+    with pytest.raises(ExportTooLargeError, match="2 data files"):
+        export_folder(tmp_path / "other", [table, table])
+
+    limits(cur_max_manifest_bytes=10)
+    with pytest.raises(ExportTooLargeError, match="Manifest"):
+        source.read_text(manifest.key)
+
+
+def test_s3_reads_stop_at_the_limit(tmp_path: Path, limits) -> None:  # type: ignore[no-untyped-def]
+    source = S3ExportSource(FakeS3({"p/a": b"hello", "p/m": b"{" + b" " * 40 + b"}"}), "bkt")
+    with pytest.raises(ExportTooLargeError):
+        source.download("p/a", tmp_path / "a", max_bytes=3)
+    assert source.download("p/a", tmp_path / "a", max_bytes=5)[1] == 5
+    limits(cur_max_manifest_bytes=20)
+    with pytest.raises(ExportTooLargeError, match="Manifest"):
+        source.read_text("p/m")
+
+
+def test_duplicates_are_found_across_batches_and_files(tmp_path: Path) -> None:
+    table = generate(SEPT).table
+    source = LocalExportSource(tmp_path / "bucket")
+    manifest = export_folder(tmp_path / "bucket", [table, table.slice(5, 3)])
+    loaded = load_export(source, manifest)
+    [dup] = [c for c in loaded.checks if c.id == "duplicates"]
+    assert (dup.status, dup.message.split()[0]) == ("error", "3")
+
+    checks = QualityChecks(SEPT.start.date())
+    focus = focus_of(table)
+    raw = table.combine_chunks().to_batches()[0]
+    for start in range(0, table.num_rows, 7):  # many small batches, no duplicates
+        checks.update(raw.slice(start, 7), focus.slice(start, 7))
+    spill = checks._spill
+    assert spill is not None
+    [dup] = [c for c in checks.finish(None) if c.id == "duplicates"]
+    assert dup.status == "ok"
+    assert not Path(spill.name).exists()  # the fingerprint files are removed
+
+
+def test_only_real_account_ids_become_accounts() -> None:
+    focus = focus_of(generate(SEPT).table)
+    ids = focus["SubAccountId"].to_pylist()
+    bad = ["12345", "abcdefghijkl", "1234567890123", "١٢٣٤٥٦٧٨٩٠١٢"]
+    for i, value in enumerate(bad):
+        ids[i] = value
+    idx = focus.schema.get_field_index("SubAccountId")
+    agg = DailyAggregator()
+    agg.update(focus.set_column(idx, "SubAccountId", pa.array(ids)))
+    assert set(agg.accounts) == {"111111111111", "222222222222", "333333333333"}

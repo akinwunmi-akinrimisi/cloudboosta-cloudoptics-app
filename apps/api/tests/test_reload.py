@@ -164,7 +164,7 @@ async def test_unchanged_not_in_bucket_and_failed(
     assert body["periods"] == [
         {"period": "2026-08", "outcome": "not_in_bucket", "version": None, "detail": None}
     ]
-    # A failed reload does not count towards the hourly limit.
+    # A reload that failed without reading a bill does not count towards the hourly limit.
     manifest = json.loads(manifest_path.read_text())
     manifest["numRows"] += 1  # the delivery is missing rows: it fails the checks
     manifest_path.write_text(json.dumps(manifest))
@@ -182,6 +182,10 @@ async def test_unchanged_not_in_bucket_and_failed(
     assert owner_sql("SELECT status FROM billing_file WHERE connection_id = %s", connection) == [
         ("aggregated",)
     ]
+    # One that read the bills and then failed does (audit run 1, lead 15): the customer
+    # writes the bucket and could make every reload fail after the full read.
+    again = await reload_bills(client, tenant, connection, headers, "2026-09", expect=429)
+    assert again["title"].startswith("Bills for this connection were reloaded less than")
 
 
 async def test_a_new_version_is_loaded_as_a_first_load(
@@ -321,6 +325,7 @@ async def test_queue_mode_defers_the_reload(
         {
             "name": jobs.RELOAD_TASK,
             "lock": f"reload:{connection}",
+            "run_lock": f"bills:{connection}",  # never alongside an ingest of the connection
             "tenant_id": tenant,
             "connection_id": connection,
             "period": "2026-09",

@@ -15,7 +15,11 @@ was created need AWS to backfill it through a support case).
 
 A reload is recorded in ``sync_run`` (``cur.reload``): ``running`` from the request (a
 queued one is taken over by the worker), then the outcome per period in ``scope``. At most
-one an hour per connection (``RELOAD_EVERY``); failed ones do not count.
+one an hour per connection (``RELOAD_EVERY``). A failed reload counts too once it read a
+bill (a period with an outcome other than ``not_in_bucket``): the customer writes the bucket
+and could otherwise make every reload fail after the full read and ask again at once. Only
+a reload that failed before reading any bill (the connection was not working, the bucket
+could not be listed) does not count.
 """
 
 from __future__ import annotations
@@ -87,16 +91,20 @@ def parse_month(month: str) -> date:
 # --- the rate limit and the run record ---------------------------------------------------
 
 
+# A reload counts unless it failed before reading any bill (module docstring).
+LAST_REQUEST_SQL = (
+    "SELECT max(started_at) FROM sync_run WHERE connection_id = :c AND job_type = :job "
+    "AND (status <> 'failed' OR EXISTS (SELECT 1 FROM "
+    "jsonb_array_elements(CASE WHEN jsonb_typeof(scope->'periods') = 'array' "
+    "THEN scope->'periods' ELSE CAST('[]' AS jsonb) END) AS p "
+    "WHERE p->>'outcome' <> 'not_in_bucket'))"
+)
+
+
 async def last_request(session: AsyncSession, connection_id: uuid.UUID) -> datetime | None:
-    """When the latest reload that counts towards the limit (not failed) was asked for."""
+    """When the latest reload that counts towards the limit was asked for."""
     value: datetime | None = (
-        await session.execute(
-            text(
-                "SELECT max(started_at) FROM sync_run WHERE connection_id = :c "
-                "AND job_type = :job AND status <> 'failed'"
-            ),
-            {"c": connection_id, "job": JOB_TYPE},
-        )
+        await session.execute(text(LAST_REQUEST_SQL), {"c": connection_id, "job": JOB_TYPE})
     ).scalar_one()
     return value
 

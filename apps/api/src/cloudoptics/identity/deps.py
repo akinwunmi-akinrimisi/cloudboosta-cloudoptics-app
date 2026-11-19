@@ -1,4 +1,15 @@
-"""Request dependencies: the signed-in user and their access to a tenant (RBAC + MFA policy)."""
+"""Request dependencies: the signed-in user and their access to a tenant (RBAC + MFA policy).
+
+Just-in-time users and email collisions. ``app_user`` is keyed by the provider's subject
+and its email is unique too, so a new identity (or one whose email changed) can present an
+email another subject's row still holds. Identities are never merged. The policy:
+
+- the new identity's email is verified and the holder's is not: the email moves to the new
+  identity, and the holder's row keeps its memberships under a placeholder address
+  (``released+<user id>@email-released.invalid``) until that subject signs in again;
+- any other case (the holder's email is verified, or the new one is not): the sign-in is
+  refused with a 409 ``email_in_use`` problem, and the existing row is left as it is.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +20,7 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.identity.auth import Claims, ProviderError, bearer_claims, get_verifier
@@ -68,24 +80,73 @@ def mfa_required_problem() -> ApiProblem:
     )
 
 
+EMAIL_IN_USE_TITLE = (
+    "This email address is already linked to another sign-in. Sign in the way you did "
+    "before, or contact support to move the address."
+)
+EMAIL_HOLDER_SQL = (
+    "SELECT id, email_verified FROM app_user WHERE email = :email AND auth_subject <> :sub "
+    "FOR UPDATE"
+)
+RELEASE_EMAIL_SQL = (
+    "UPDATE app_user SET email = :placeholder, email_verified = false WHERE id = :id"
+)
+UPSERT_USER_SQL = (
+    "INSERT INTO app_user (id, email, display_name, auth_subject, email_verified) "
+    "VALUES (:id, :email, :name, :sub, :verified) "
+    "ON CONFLICT (auth_subject) DO UPDATE SET email = EXCLUDED.email, "
+    "email_verified = EXCLUDED.email_verified, "
+    "display_name = COALESCE(EXCLUDED.display_name, app_user.display_name) "
+    "RETURNING id, email, display_name"
+)
+
+
+def email_in_use_problem() -> ApiProblem:
+    return ApiProblem(status.HTTP_409_CONFLICT, "email_in_use", EMAIL_IN_USE_TITLE)
+
+
+async def _claim_email(session: AsyncSession, claims: Claims) -> None:
+    """Apply the email collision policy (module docstring) before the upsert."""
+    holder = (
+        await session.execute(
+            text(EMAIL_HOLDER_SQL), {"email": claims.email, "sub": claims.subject}
+        )
+    ).one_or_none()
+    if holder is None:
+        return
+    if not claims.email_verified or holder.email_verified:
+        raise email_in_use_problem()
+    await session.execute(
+        text(RELEASE_EMAIL_SQL),
+        {"id": holder.id, "placeholder": f"released+{holder.id}@email-released.invalid"},
+    )
+    log.warning("Verified sign-in took an unverified email over from user %s", holder.id)
+
+
 async def current_user(
     claims: Annotated[Claims, Depends(bearer_claims)], session: Session
 ) -> CurrentUser:
     """Find or create the user for this token (just-in-time provisioning). Counts the
     request against the user's rate limit first."""
     await ratelimit.per_user(claims.subject)
-    row = (
-        await session.execute(
-            text(
-                "INSERT INTO app_user (id, email, display_name, auth_subject) "
-                "VALUES (:id, :email, :name, :sub) "
-                "ON CONFLICT (auth_subject) DO UPDATE SET email = EXCLUDED.email, "
-                "display_name = COALESCE(EXCLUDED.display_name, app_user.display_name) "
-                "RETURNING id, email, display_name"
-            ),
-            {"id": uuid7(), "email": claims.email, "name": claims.name, "sub": claims.subject},
-        )
-    ).one()
+    await _claim_email(session, claims)
+    try:
+        # A savepoint: another sign-in can take the email between the check and here.
+        async with session.begin_nested():
+            row = (
+                await session.execute(
+                    text(UPSERT_USER_SQL),
+                    {
+                        "id": uuid7(),
+                        "email": claims.email,
+                        "name": claims.name,
+                        "sub": claims.subject,
+                        "verified": claims.email_verified,
+                    },
+                )
+            ).one()
+    except IntegrityError as exc:
+        raise email_in_use_problem() from exc
     await scope(session, user_id=row.id)
     return CurrentUser(
         id=row.id,

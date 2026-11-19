@@ -2,13 +2,23 @@
 
 ``error`` blocks the load: the previous good version stays live. ``warning`` loads the data
 and is kept with the batch for review.
+
+The duplicate check keeps no per-row strings in memory: each line item key (ID and time
+interval) becomes a 16-byte keyed BLAKE2b fingerprint, written to one of ``KEY_PARTITIONS``
+temporary files by its first byte; ``finish`` counts the distinct fingerprints one file at a
+time. Memory is one partition's fingerprints, and a false duplicate needs two different keys
+with the same 128-bit fingerprint, which does not happen in practice.
 """
 
 from __future__ import annotations
 
+import hashlib
+import os
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any, BinaryIO, Literal
 
 import pyarrow as pa
 import pyarrow.compute as _pc
@@ -21,6 +31,8 @@ pc: Any = _pc
 Severity = Literal["ok", "warning", "error"]
 NEGATIVE_ALLOWED = frozenset({"Credit", "Adjustment"})
 NEGATIVE_LINE_TYPES = frozenset({"SavingsPlanNegation"})
+KEY_PARTITIONS = 16
+FINGERPRINT_BYTES = 16
 
 
 @dataclass(frozen=True)
@@ -50,8 +62,11 @@ class QualityChecks:
         self._unexpected_negative = 0.0
         self._currencies: set[str] = set()
         self._unknown_types: set[str] = set()
-        self._keys: list[Any] = []
         self._missing: set[str] = set()
+        self._key_count = 0
+        self._hash_key = os.urandom(16)
+        self._spill: tempfile.TemporaryDirectory[str] | None = None
+        self._parts: list[BinaryIO] = []
 
     def schema(self, schema: pa.Schema) -> None:
         self._missing.update(missing_columns(schema))
@@ -90,13 +105,54 @@ class QualityChecks:
         self._unexpected_negative += neg_sum or 0.0
 
         self._currencies |= {c for c in pc.unique(focus["BillingCurrency"]).to_pylist() if c}
-        self._keys.append(
-            pc.binary_join_element_wise(
-                pc.fill_null(focus["x_LineItemId"], ""),
-                pc.fill_null(focus["x_TimeInterval"], ""),
-                "|",
-            )
+        keys = pc.binary_join_element_wise(
+            pc.fill_null(focus["x_LineItemId"], ""),
+            pc.fill_null(focus["x_TimeInterval"], ""),
+            "|",
         )
+        self._spill_keys(keys.to_pylist())
+
+    def _spill_keys(self, keys: list[str | None]) -> None:
+        if not self._parts:
+            self._spill = tempfile.TemporaryDirectory(prefix="cur-keys-")
+            self._parts = [
+                (Path(self._spill.name) / f"{i:02d}.bin").open("wb") for i in range(KEY_PARTITIONS)
+            ]
+        buffers = [bytearray() for _ in range(KEY_PARTITIONS)]
+        for key in keys:
+            digest = hashlib.blake2b(
+                (key or "").encode(), digest_size=FINGERPRINT_BYTES, key=self._hash_key
+            ).digest()
+            buffers[digest[0] % KEY_PARTITIONS] += digest
+        for part, buffer in zip(self._parts, buffers, strict=True):
+            part.write(buffer)
+        self._key_count += len(keys)
+
+    def _distinct_keys(self) -> int:
+        """Distinct fingerprints, one partition in memory at a time."""
+        distinct = 0
+        try:
+            for part in self._parts:
+                part.close()
+                data = Path(part.name).read_bytes()
+                n = len(data) // FINGERPRINT_BYTES
+                if n:
+                    array = pa.Array.from_buffers(
+                        pa.binary(FINGERPRINT_BYTES), n, [None, pa.py_buffer(data)]
+                    )
+                    distinct += pc.count_distinct(array).as_py()
+        finally:
+            self.close()
+        return distinct
+
+    def close(self) -> None:
+        """Remove the fingerprint files (``finish`` does it)."""
+        for part in self._parts:
+            part.close()
+        self._parts = []
+        if self._spill is not None:
+            self._spill.cleanup()
+            self._spill = None
 
     def finish(self, manifest_rows: int | None) -> list[Check]:
         checks: list[Check] = []
@@ -129,18 +185,14 @@ class QualityChecks:
         else:
             checks.append(Check("nulls", "ok", "No missing key values."))
 
-        keys = (
-            pa.chunked_array(self._keys, pa.string())
-            if self._keys
-            else pa.chunked_array([], pa.string())
-        )
-        distinct = pc.count_distinct(keys).as_py() if len(keys) else 0
-        if distinct != len(keys):
+        distinct = self._distinct_keys()
+        if distinct != self._key_count:
             checks.append(
                 Check(
                     "duplicates",
                     "error",
-                    f"{len(keys) - distinct} duplicate line items (same ID and time interval).",
+                    f"{self._key_count - distinct} duplicate line items "
+                    "(same ID and time interval).",
                 )
             )
         else:
