@@ -22,7 +22,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import Field
 from sqlalchemy import text
@@ -37,12 +37,20 @@ from cloudoptics.identity.deps import AdminAccess, Session
 from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.db import scope
 from cloudoptics.platform.ids import uuid7
+from cloudoptics.platform.ratelimit import per_ip
 from cloudoptics.platform.settings import get_settings
 
 intents_router = APIRouter(
     prefix="/v1/tenants/{tenant_id}/connections/intents", tags=["connections"]
 )
-callback_router = APIRouter(prefix="/v1/cfn", tags=["connections"])
+# Not signed in: limited per client address before anything else runs (WBS API-8).
+callback_router = APIRouter(
+    prefix="/v1/cfn",
+    tags=["connections"],
+    dependencies=[
+        Depends(per_ip("callback", lambda: get_settings().rate_limit_callback_per_minute))
+    ],
+)
 
 
 INTENT_LIFETIME_DAYS = 7  # the column default in migration 0028

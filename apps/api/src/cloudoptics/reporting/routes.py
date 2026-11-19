@@ -13,6 +13,7 @@ from sqlalchemy import text
 from cloudoptics.audit import log as audit
 from cloudoptics.identity.deps import AdminAccess, Session, ViewerAccess
 from cloudoptics.platform.api import ApiModel, user_actor
+from cloudoptics.platform.conditional import ConditionalGet
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.reporting import digest, monthly
 
@@ -111,7 +112,7 @@ async def _month(session: Any, tenant_id: uuid.UUID, month: str) -> date:
 
 
 @reports_router.get("", response_model=ReportList)
-async def list_reports(access: ViewerAccess, session: Session) -> ReportList:
+async def list_reports(access: ViewerAccess, session: Session, cond: ConditionalGet) -> ReportList:
     rows = await session.execute(
         text("SELECT month, generated_at, content FROM monthly_report ORDER BY month DESC")
     )
@@ -163,16 +164,23 @@ async def put_report_settings(
 
 @reports_router.get("/{month}", response_model=ReportView)
 async def get_report(
-    month: Annotated[str, Path(pattern=MONTH)], access: ViewerAccess, session: Session
+    month: Annotated[str, Path(pattern=MONTH)],
+    access: ViewerAccess,
+    session: Session,
+    cond: ConditionalGet,
 ) -> ReportView:
     first = await _month(session, access.tenant_id, month)
     saved = await monthly.stored(session, first)
     if saved is not None:
         return ReportView(report=saved, stored=True)
-    built = await monthly.build(session, access.tenant_id, first)
-    if built is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "No bills for this month")
-    return ReportView(report=built, stored=False)
+
+    async def build() -> ReportView:
+        built = await monthly.build(session, access.tenant_id, first)
+        if built is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No bills for this month")
+        return ReportView(report=built, stored=False)
+
+    return await cond.cached(build)
 
 
 @reports_router.post("/{month}/send", response_model=SendResult)

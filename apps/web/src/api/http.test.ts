@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { HttpApi } from './http'
-import { ApiError, MFA_REQUIRED_MESSAGE } from './types'
+import { HttpApi, parseRetryAfter } from './http'
+import { ApiError, MFA_REQUIRED_MESSAGE, isRateLimited, rateLimitedMessage } from './types'
 
 describe('HttpApi with an identity provider', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -71,5 +71,41 @@ describe('HttpApi when a workspace requires MFA', () => {
     await api.signIn('ada@example.com')
     await expect(api.me()).rejects.toThrow('Invalid or expired token')
     expect(api.isSignedIn()).toBe(false)
+  })
+})
+
+describe('HttpApi and the API rate limits and caching headers', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('turns a 429 into a clear rate-limited error with the wait', async () => {
+    const problem = { title: 'Too many requests. Try again in 12 seconds.', status: 429, code: 'rate_limited' }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(problem), { status: 429, headers: { 'retry-after': '12' } })))
+    const api = new HttpApi('/api')
+    api.attachProvider({ signedIn: true, getToken: async () => 't', signIn: async () => {}, signOut: () => {} })
+    const error = await api.me().catch((e: unknown) => e)
+    expect(isRateLimited(error)).toBe(true)
+    expect((error as ApiError).retryAfter).toBe(12)
+    expect((error as ApiError).code).toBe('rate_limited')
+    expect((error as ApiError).message).toBe(rateLimitedMessage(12))
+    expect(api.isSignedIn()).toBe(true)
+  })
+
+  it('leaves conditional requests to the browser cache (default cache mode, no manual validators)', async () => {
+    const fetch = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ id: 'u1', memberships: [] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetch)
+    const api = new HttpApi('/api')
+    api.attachProvider({ signedIn: true, getToken: async () => 't', signIn: async () => {}, signOut: () => {} })
+    await expect(api.me()).resolves.toEqual({ id: 'u1', memberships: [] })
+    const init = fetch.mock.calls[0]?.[1]
+    expect(init?.cache).toBeUndefined()
+    expect(Object.keys(init?.headers ?? {})).not.toContain('if-none-match')
+  })
+
+  it('reads Retry-After as seconds or an HTTP date', () => {
+    expect(parseRetryAfter('7')).toBe(7)
+    expect(parseRetryAfter(null)).toBeUndefined()
+    expect(parseRetryAfter('soon')).toBeUndefined()
+    const now = Date.parse('2026-11-19T10:00:00Z')
+    expect(parseRetryAfter('Thu, 19 Nov 2026 10:00:30 GMT', now)).toBe(30)
   })
 })

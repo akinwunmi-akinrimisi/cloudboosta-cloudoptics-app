@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from cloudoptics.audit.log import Actor
+from cloudoptics.platform.settings import get_settings
 
 
 class ApiModel(BaseModel):
@@ -27,10 +28,22 @@ class ApiProblem(HTTPException):
         self.code = code
 
 
+def client_ip(request: Request) -> str | None:
+    """The client's address: the trusted forwarding header (App Platform's
+    ``do-connecting-ip``, setting ``client_ip_header``) when configured and present, else the
+    socket peer. Never X-Forwarded-For, which any client can write."""
+    header = get_settings().trusted_ip_header
+    if header:
+        value = request.headers.get(header, "").strip()
+        if value:
+            return value
+    return request.client.host if request.client else None
+
+
 def user_actor(request: Request, user_id: uuid.UUID) -> Actor:
     return Actor(
         type="user",
         id=user_id,
-        ip=request.client.host if request.client else None,
+        ip=client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )

@@ -28,6 +28,7 @@ from cloudoptics.audit import log as audit
 from cloudoptics.identity.deps import AdminAccess, MemberAccess, Session, ViewerAccess
 from cloudoptics.metrics.puller import usage
 from cloudoptics.platform.api import ApiModel, user_actor
+from cloudoptics.platform.conditional import ConditionalGet
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.recommendations.queries import OPEN
@@ -141,6 +142,7 @@ def _model(row: Any) -> Recommendation:
 async def list_recommendations(
     access: ViewerAccess,
     session: Session,
+    cond: ConditionalGet,
     state: Annotated[Literal["open", "all"], Query(alias="status")] = "open",
     rule_id: Annotated[str | None, Query(alias="ruleId")] = None,
     account_id: Annotated[str | None, Query(alias="accountId")] = None,
@@ -188,7 +190,9 @@ OUTCOMES = text(
 
 
 @router.get("/summary", response_model=RecommendationSummary)
-async def recommendation_summary(access: ViewerAccess, session: Session) -> RecommendationSummary:
+async def recommendation_summary(
+    access: ViewerAccess, session: Session, cond: ConditionalGet
+) -> RecommendationSummary:
     rows = (
         await session.execute(
             text(

@@ -1033,18 +1033,32 @@ export class ApiError extends Error {
   readonly fieldErrors: { field: string; message: string }[]
   /** Machine-readable problem code (docs/09 §3.4), e.g. 'mfa_required'. */
   readonly code: string | undefined
+  /** Seconds to wait before trying again (429 ``Retry-After``). */
+  readonly retryAfter: number | undefined
 
   constructor(
     status: number,
     title: string,
     fieldErrors: { field: string; message: string }[] = [],
     code?: string,
+    retryAfter?: number,
   ) {
     super(title)
     this.status = status
     this.fieldErrors = fieldErrors
     this.code = code
+    this.retryAfter = retryAfter
   }
+}
+
+/** Shown when the API refuses a request because of its rate limits (429). */
+export function rateLimitedMessage(seconds: number | undefined): string {
+  const wait = seconds && seconds > 0 ? `in ${seconds} second${seconds === 1 ? '' : 's'}` : 'in a minute'
+  return `Too many requests right now. Wait a moment and try again ${wait}.`
+}
+
+export function isRateLimited(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 429
 }
 
 /** Shown when a workspace requires MFA and this session signed in without it. */

@@ -13,7 +13,7 @@ from sqlalchemy import text
 from cloudoptics.audit.log import Actor
 from cloudoptics.fx import service
 from cloudoptics.identity.deps import Session, User, ViewerAccess
-from cloudoptics.platform.api import ApiModel
+from cloudoptics.platform.api import ApiModel, client_ip
 from cloudoptics.platform.settings import get_settings
 
 router = APIRouter(prefix="/v1", tags=["fx"])
@@ -77,7 +77,7 @@ async def staff_user(user: User, request: Request) -> Actor:
     return Actor(
         type="staff",
         id=user.id,
-        ip=request.client.host if request.client else None,
+        ip=client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
 

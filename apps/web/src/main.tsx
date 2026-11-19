@@ -4,13 +4,14 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { api } from './api'
+import { retryDelay, retryQuery } from './api/retry'
 import { AuthGate } from './app/AuthGate'
 import { ApiProvider } from './app/context'
 import { createAppRouter } from './app/router'
 import './styles.css'
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
+  defaultOptions: { queries: { staleTime: 30_000, retry: retryQuery, retryDelay } },
 })
 const router = createAppRouter({ api, queryClient })
 

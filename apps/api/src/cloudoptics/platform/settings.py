@@ -97,6 +97,30 @@ class Settings(BaseSettings):
     # (App Platform routes /api to the API).
     api_public_url: str = ""
 
+    # Rate limits (WBS API-8, docs/09 §3.1), per minute, shared by every API instance through
+    # PostgreSQL. Users and workspaces on authenticated routes; client addresses on the public
+    # routes (the stack callback, the dev token, the sign-in config).
+    rate_limit_enabled: bool = True
+    rate_limit_user_per_minute: int = 300
+    rate_limit_tenant_per_minute: int = 1_000
+    rate_limit_public_per_minute: int = 60
+    rate_limit_callback_per_minute: int = 20
+    # The request header that carries the client's address. App Platform sets
+    # "do-connecting-ip" (its X-Forwarded-For names DigitalOcean's ingress, and clients can
+    # send their own), so staging and production use that unless set; elsewhere the socket
+    # peer is used. No other forwarding header is ever trusted.
+    client_ip_header: str | None = None
+
+    # In-process cache of the costliest aggregate responses, keyed by tenant and data version.
+    query_cache_entries: int = 512
+    query_cache_ttl_seconds: int = 600
+
+    @property
+    def trusted_ip_header(self) -> str:
+        if self.client_ip_header is not None:
+            return self.client_ip_header.strip().lower()
+        return "do-connecting-ip" if self.environment in ("staging", "production") else ""
+
     @property
     def public_api_url(self) -> str:
         return (self.api_public_url or f"{self.app_url}/api").rstrip("/")

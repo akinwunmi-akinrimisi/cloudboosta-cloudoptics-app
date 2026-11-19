@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 from zoneinfo import available_timezones
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 from pydantic import EmailStr, Field, field_validator
 from sqlalchemy import text
 
@@ -17,6 +17,7 @@ from cloudoptics.identity.invites import accept_invites
 from cloudoptics.platform.api import ApiModel, ApiProblem, user_actor
 from cloudoptics.platform.db import scope
 from cloudoptics.platform.ids import uuid7
+from cloudoptics.platform.ratelimit import per_ip
 from cloudoptics.platform.settings import get_settings
 
 router = APIRouter(prefix="/v1", tags=["identity"])
@@ -134,7 +135,12 @@ class AuthConfig(ApiModel):
     client_id: str | None = None
 
 
-@router.get("/auth/config", response_model=AuthConfig, response_model_by_alias=True)
+@router.get(
+    "/auth/config",
+    response_model=AuthConfig,
+    response_model_by_alias=True,
+    dependencies=[Depends(per_ip("public", lambda: get_settings().rate_limit_public_per_minute))],
+)
 async def auth_config() -> AuthConfig:
     """Public: tells the web app which sign-in to show (no secrets)."""
     settings = get_settings()

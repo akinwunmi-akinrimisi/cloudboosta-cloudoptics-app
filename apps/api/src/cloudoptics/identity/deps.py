@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.identity.auth import Claims, ProviderError, bearer_claims, get_verifier
+from cloudoptics.platform import ratelimit
 from cloudoptics.platform.api import ApiProblem
 from cloudoptics.platform.db import scope, session_dependency
 from cloudoptics.platform.ids import uuid7
@@ -70,7 +71,9 @@ def mfa_required_problem() -> ApiProblem:
 async def current_user(
     claims: Annotated[Claims, Depends(bearer_claims)], session: Session
 ) -> CurrentUser:
-    """Find or create the user for this token (just-in-time provisioning)."""
+    """Find or create the user for this token (just-in-time provisioning). Counts the
+    request against the user's rate limit first."""
+    await ratelimit.per_user(claims.subject)
     row = (
         await session.execute(
             text(
@@ -132,6 +135,8 @@ def require_role(minimum: Role):  # type: ignore[no-untyped-def]
             raise mfa_required_problem()
         if ROLE_RANK[role] < ROLE_RANK[minimum]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, f"Requires the {minimum} role")
+        # Only members count against a workspace's limit, so outsiders cannot use it up.
+        await ratelimit.per_tenant(tenant_id)
         return TenantAccess(tenant_id=tenant_id, user=user, role=role)
 
     return dependency
