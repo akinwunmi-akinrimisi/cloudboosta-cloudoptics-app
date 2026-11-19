@@ -6,7 +6,7 @@ import secrets
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from fake_aws import healthy_clients
+from fake_aws import client_error, healthy_clients
 from httpx import AsyncClient
 from test_connections import workspace
 
@@ -80,6 +80,7 @@ async def test_the_stack_reports_its_account_and_the_connection_is_checked(
         "status": "connected",
         "connectionId": connection_id,
         "error": None,
+        "expiresAt": setup["intent"]["expiresAt"],
     }
     conn = (await client.get(f"/v1/tenants/{tenant}/connections", headers=headers)).json()
     [c] = conn
@@ -178,6 +179,7 @@ async def test_deleting_the_stack_disconnects_the_account(
     params = link_params((await new_link(client, tenant, headers))["quickCreateUrl"])
     fake_aws.clients = healthy_clients(acct)
     await client.post("/v1/cfn/callback", json=callback_body(params, acct))
+    fake_aws.assume_error = client_error("AccessDenied", "AssumeRole")  # the role is gone
     r = await client.post(
         "/v1/cfn/callback", json=callback_body(params, acct, requestType="Delete")
     )
@@ -185,8 +187,18 @@ async def test_deleting_the_stack_disconnects_the_account(
     [c] = (await client.get(f"/v1/tenants/{tenant}/connections", headers=headers)).json()
     assert c["status"] == "disconnected"
 
-    # Creating the stack again from the same link brings it back.
-    await client.post("/v1/cfn/callback", json=callback_body(params, acct))
+    # Creating the stack again from the same link does not bring it back: that needs an
+    # admin (Reconnect, or a new link, both with a new External ID).
+    fake_aws.assume_error = None
+    again = await client.post("/v1/cfn/callback", json=callback_body(params, acct))
+    assert again.status_code == 409
+    [c] = (await client.get(f"/v1/tenants/{tenant}/connections", headers=headers)).json()
+    assert c["status"] == "disconnected"
+
+    fresh = link_params((await new_link(client, tenant, headers))["quickCreateUrl"])
+    assert fresh["param_ExternalId"] != params["param_ExternalId"]
+    r = await client.post("/v1/cfn/callback", json=callback_body(fresh, acct))
+    assert r.json()["connectionId"] == c["id"]
     [c] = (await client.get(f"/v1/tenants/{tenant}/connections", headers=headers)).json()
     assert c["status"] == "healthy"
 
@@ -218,6 +230,7 @@ async def test_member_roles_left_behind_by_a_deleted_stack_are_in_the_audit_log(
     await client.post("/v1/cfn/callback", json=callback_body(params, acct))
     reason = "failed: member roles not removed: RuntimeError: ended FAILED"
     body = callback_body(params, acct, requestType="Delete", memberRollout=reason)
+    fake_aws.assume_error = client_error("AccessDenied", "AssumeRole")
     assert (await client.post("/v1/cfn/callback", json=body)).json()["status"] == "disconnected"
     log = (await client.get(f"/v1/tenants/{tenant}/audit-log", headers=headers)).json()
     [entry] = [e for e in log["entries"] if e["action"] == "connection.member_roles_left"]
