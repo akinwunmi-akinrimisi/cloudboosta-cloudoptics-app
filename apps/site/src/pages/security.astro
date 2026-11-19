@@ -1,11 +1,13 @@
 ---
-// Security, data handling and the full permission reference (docs/14 §5.6). Every statement here
-// is checked against the template (through the generated data) or the code; open decisions say
-// so rather than promise (data location for production, retention, contacts: docs/14 §11).
+// Security, data handling and the full permission reference (docs/14 §5.6), in design Direction A.
+// Every statement here is checked against the template (through the generated data) or the code;
+// open decisions say so rather than promise (data location for production, retention, contacts:
+// docs/14 §11).
 import Faq from '../components/Faq.astro'
 import Icon from '../components/Icon.astro'
 import PermissionTable from '../components/PermissionTable.astro'
-import { START_URL, TEMPLATE_URL, billingRole, claims, facts, permissions, resourceRole, sessionHours, setupRole } from '../config'
+import { START_URL, TEMPLATE_URL, billingRole, claims, facts, resourceRole, sessionHours, setupRole } from '../config'
+import { never, readActionCount, reads } from '../data/access'
 import { SECURITY_FAQ } from '../data/faq'
 import Base from '../layouts/Base.astro'
 
@@ -13,8 +15,6 @@ const title = 'Security and permissions | Cloudoptics'
 const description =
   'How Cloudoptics reads your AWS account: read-only roles, every IAM permission in plain language, where data is kept and how to remove access.'
 const hours = sessionHours === 1 ? 'one hour' : `${sessionHours} hours`
-const h2 = 'text-2xl font-semibold tracking-tight'
-const sectionCls = 'mt-14'
 const sections = [
   { id: 'how-access-works', label: 'How access works' },
   { id: 'permissions', label: 'Every permission' },
@@ -27,188 +27,235 @@ const sections = [
 ---
 
 <Base title={title} description={description} faq={SECURITY_FAQ}>
-  <div class="mx-auto max-w-5xl px-4 pt-12 sm:px-6 lg:pt-16">
-    <p class="text-sm font-semibold text-link">Security</p>
-    <h1 class="mt-2 text-4xl font-bold tracking-tight text-balance">Read-only access, written down action by action</h1>
-    <p class="mt-4 max-w-3xl text-lg text-secondary">
-      This page is for the person who signs off access to your AWS account. Every permission below is generated from the
-      template you deploy (version {facts.templateVersion}), and our build fails if the two disagree.
-    </p>
-
-    <nav aria-labelledby="on-this-page" class="mt-8 rounded-md border border-border bg-surface-1 p-5">
-      <h2 id="on-this-page" class="text-sm font-semibold">On this page</h2>
-      <ol class="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2 lg:grid-cols-3">
-        {sections.map((s) => <li><a class="inline-flex min-h-6 items-center text-link underline" href={`#${s.id}`}>{s.label}</a></li>)}
-      </ol>
-    </nav>
-
-    <section id="how-access-works" aria-labelledby="how-access-works-title" class={sectionCls}>
-      <h2 id="how-access-works-title" class={h2}>How access works</h2>
-      <ul class="mt-4 space-y-3">
-        <li class="flex gap-3">
-          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
-          <span>
-            You create one CloudFormation stack, <code>{claims.stackName}</code>, in {facts.region}. It creates two IAM roles
-            in your account: <code>{billingRole.roleName}</code> and <code>{resourceRole.roleName}</code>.
-          </span>
-        </li>
-        <li class="flex gap-3">
-          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
-          <span>
-            Cloudoptics assumes those roles with AWS STS. Each role trusts only the Cloudoptics principal, and only when the
-            request carries the ExternalId that is unique to your workspace.
-          </span>
-        </li>
-        <li class="flex gap-3">
-          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
-          <span>Each session lasts at most {hours}. You never give us access keys, and we hold none for your account.</span>
-        </li>
-        <li class="flex gap-3">
-          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
-          <span>
-            Both roles allow only read actions (Get, Describe, List, View). The build of this site checks every action in
-            the template for that, and fails if a write action appears in either role.
-          </span>
-        </li>
-        <li class="flex gap-3">
-          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
-          <span>Delete the stack and the access is gone. Nothing in Cloudoptics can recreate it.</span>
-        </li>
-      </ul>
-    </section>
-
-    <section id="permissions" aria-labelledby="permissions-title" class={sectionCls}>
-      <h2 id="permissions-title" class={h2}>Every permission</h2>
-      <p class="mt-4 max-w-3xl text-secondary">
-        The full list from <code>cloudoptics-access.yaml</code> version {facts.templateVersion}, grouped by what it is for.
-        The same data is published as <a class="text-link underline" href="/permissions.json">permissions.json</a>.
-      </p>
-      <PermissionTable role={billingRole} detail="full" />
-      <PermissionTable role={resourceRole} detail="full" />
-
-      <h3 class="mt-10 text-lg font-semibold">What Cloudoptics cannot do</h3>
-      <ul class="mt-3 space-y-2">
-        {permissions.cannot.map((c) => <li class="flex gap-2"><Icon name="x" class="mt-1 h-4 w-4 text-critical-ink" />{c}</li>)}
-      </ul>
-
-      <div class="mt-10 rounded-md border border-border bg-surface-2 p-5">
-        <h3 class="text-lg font-semibold">The setup step's role</h3>
-        <p class="mt-2 text-secondary">
-          The stack also creates a role for its setup function ({facts.setupRuntime?.replace('python', 'Python ')}). It
-          runs only while CloudFormation creates, updates or deletes the stack, and Cloudoptics cannot assume it. Unlike
-          the read roles it has write actions, because it creates the bill-export bucket, rolls the resource role out to
-          member accounts and removes older Cloudoptics stacks. Where AWS allows, each action is limited to resources
-          with Cloudoptics names; the "Applies to" column shows where it is not.
+  <section class="page-hero" aria-labelledby="h1">
+    <div class="wrap">
+      <div>
+        <span class="kicker">Security</span>
+        <h1 id="h1">Read-only, written down <em>action by action</em>.</h1>
+        <p class="intro">
+          For the person who signs off access. Every permission here is generated from the template you deploy (v{facts.templateVersion}); our
+          build fails if they disagree.
         </p>
-        <PermissionTable role={setupRole} detail="full" headingLevel="h4" />
       </div>
-    </section>
+      <nav class="toc" aria-labelledby="on-this-page">
+        <h2 id="on-this-page" class="sr-only">On this page</h2>
+        <ol>{sections.map((s) => <li><a href={`#${s.id}`}>{s.label}</a></li>)}</ol>
+      </nav>
+    </div>
+  </section>
 
-    <section id="data" aria-labelledby="data-title" class={sectionCls}>
-      <h2 id="data-title" class={h2}>Where data is kept</h2>
-      <dl class="mt-4 grid gap-4 md:grid-cols-2">
-        <div class="rounded-md border border-border bg-surface-1 p-4">
-          <dt class="font-semibold">Your bills</dt>
-          <dd class="mt-1 text-secondary">
-            AWS writes the bill export to <code>{facts.bucketName}</code> in your own account. The bucket blocks public
-            access, encrypts files, accepts HTTPS only, and its files expire after {facts.exportExpiryDays} days.
-          </dd>
+  <section id="how-access-works" class="sec" aria-labelledby="how-access-works-title">
+    <div class="wrap sec-grid">
+      <div class="margin"><span class="no" aria-hidden="true">i.</span><span class="kicker">Access</span></div>
+      <div>
+        <h2 id="how-access-works-title">How access works</h2>
+        <ol
+          class="flow"
+          aria-label={`Cloudoptics asks AWS STS with your workspace's ExternalId and gets a session of at most ${hours} in one of two read-only roles in your account, and reads.`}
+        >
+          <li class="node dark"><Icon name="eye" /><b>Cloudoptics</b><span class="mono">no access keys held</span></li>
+          <li class="arrow" aria-hidden="true">
+            <svg viewBox="0 0 64 24"><path d="M2 12h56M50 5l8 7-8 7" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
+            <span>assume role</span>
+          </li>
+          <li class="node"><Icon name="key" /><b>AWS STS</b><span class="mono">your ExternalId only</span></li>
+          <li class="arrow" aria-hidden="true">
+            <svg viewBox="0 0 64 24"><path d="M2 12h56M50 5l8 7-8 7" fill="none" stroke="currentColor" stroke-width="1.5"></path></svg>
+            <span>max {sessionHours} h</span>
+          </li>
+          <li class="node"><Icon name="lock" /><b>Two read-only roles</b><span class="mono">billing · resources</span></li>
+          <li class="arrow" aria-hidden="true">
+            <svg viewBox="0 0 64 24"><path d="M2 12h56M50 5l8 7-8 7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 4"></path></svg>
+            <span>reads only</span>
+          </li>
+          <li class="node end"><Icon name="cloud" /><b>Your AWS account</b><span class="mono">{claims.stackName}</span></li>
+        </ol>
+        <ul class="ruled mt-l">
+          <li>
+            <Icon name="check" /><span
+              >One CloudFormation stack, <code>{claims.stackName}</code>, in {facts.region}, creates two IAM roles in your account:
+              <code>{billingRole.roleName}</code> and <code>{resourceRole.roleName}</code>.</span
+            >
+          </li>
+          <li>
+            <Icon name="check" /><span
+              >Each role trusts only the Cloudoptics principal, and only with the ExternalId unique to your workspace.</span
+            >
+          </li>
+          <li><Icon name="check" /><span>Sessions last at most {hours}. You never give us access keys, and we hold none.</span></li>
+          <li>
+            <Icon name="check" /><span
+              >Both roles allow only read actions (Get, Describe, List, View). The site's build checks every action and fails on a write.</span
+            >
+          </li>
+          <li><Icon name="check" /><span>Delete the stack and the access is gone. Nothing in Cloudoptics can recreate it.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="permissions" class="sec" aria-labelledby="permissions-title">
+    <div class="wrap sec-grid">
+      <div class="margin"><span class="no" aria-hidden="true">ii.</span><span class="kicker">Permissions</span></div>
+      <div>
+        <h2 id="permissions-title">Every permission</h2>
+        <p class="sub">
+          From <code>cloudoptics-access.yaml</code> v{facts.templateVersion}. Also published as <a href="/permissions.json">permissions.json</a>.
+        </p>
+        <div class="split">
+          <div class="yes">
+            <h3><Icon name="eye" />Reads · {readActionCount} actions</h3>
+            <ul>
+              {
+                reads.map((r) => (
+                  <li>
+                    <Icon name={r.icon} />
+                    {r.label}
+                    <span class="count">{r.actions} {r.actions === 1 ? 'action' : 'actions'}</span>
+                  </li>
+                ))
+              }
+            </ul>
+          </div>
+          <div class="no">
+            <h3><Icon name="x" />Never</h3>
+            <ul>{never.map((n) => <li><Icon name="x" />{n.replace(/\.$/, '')}</li>)}</ul>
+          </div>
         </div>
-        <div class="rounded-md border border-border bg-surface-1 p-4">
-          <dt class="font-semibold">Cloudoptics</dt>
-          <dd class="mt-1 text-secondary">
-            Cloudoptics runs on {claims.hosting}. Your browser and the stack's setup step talk to it over HTTPS.
-          </dd>
+        <PermissionTable role={billingRole} detail="full" />
+        <PermissionTable role={resourceRole} detail="full" />
+
+        <div class="panel">
+          <h3>The setup step's role</h3>
+          <p class="body-copy">
+            The stack's setup function ({facts.setupRuntime?.replace('python', 'Python ')}) runs only while CloudFormation creates, updates or deletes
+            the stack, and Cloudoptics cannot assume its role. It has write actions because it creates the bill-export bucket, rolls the resource
+            role out to member accounts and removes older Cloudoptics stacks. Where AWS allows, each is limited to Cloudoptics-named resources;
+            "Applies to" shows where not.
+          </p>
+          <PermissionTable role={setupRole} detail="full" headingLevel="h4" />
         </div>
-        <div class="rounded-md border border-border bg-surface-1 p-4">
-          <dt class="font-semibold">What we read</dt>
-          <dd class="mt-1 text-secondary">
-            Bill files, resource settings and tags, and usage metrics. Not the contents of your files, databases, secrets
-            or logs.
-          </dd>
+      </div>
+    </div>
+  </section>
+
+  <section id="data" class="sec" aria-labelledby="data-title">
+    <div class="wrap sec-grid">
+      <div class="margin"><span class="no" aria-hidden="true">iii.</span><span class="kicker">Data</span></div>
+      <div>
+        <h2 id="data-title">Where data is kept</h2>
+        <dl class="cells">
+          <div>
+            <dt>Your bills</dt>
+            <dd>
+              In <code>{facts.bucketName}</code>, in your account. Public access blocked, encrypted, HTTPS only, files expire after
+              {facts.exportExpiryDays} days.
+            </dd>
+          </div>
+          <div>
+            <dt>Cloudoptics</dt>
+            <dd>Runs on {claims.hosting}. Your browser and the setup step talk to it over HTTPS.</dd>
+          </div>
+          <div>
+            <dt>What we read</dt>
+            <dd>Bill files, resource settings and tags, usage metrics. Not the contents of files, databases, secrets or logs.</dd>
+          </div>
+          <div>
+            <dt>Retention and sub-processors</dt>
+            <dd>Will be set out in our privacy notice, which is being prepared.</dd>
+          </div>
+        </dl>
+        <p class="muted small mt-s">
+          This public site sets no cookies and loads nothing from other websites. It counts page visits itself (first-party, no cookies): the
+          page, the site you came from and any campaign tag, never your IP address or an identifier. It sends nothing if your browser asks not
+          to be tracked.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="sign-in" class="sec" aria-labelledby="sign-in-title">
+    <div class="wrap sec-grid">
+      <div class="margin"><span class="no" aria-hidden="true">iv.</span><span class="kicker">People</span></div>
+      <div>
+        <h2 id="sign-in-title">Sign-in and MFA</h2>
+        <ul class="ruled">
+          <li><Icon name="key" /><span>Sign-in uses WorkOS AuthKit, so Cloudoptics never stores your password.</span></li>
+          <li>
+            <Icon name="shield" /><span
+              >An admin can require multi-factor authentication for the workspace; Cloudoptics then refuses sessions without it.</span
+            >
+          </li>
+          <li><Icon name="users" /><span>Admin, member and viewer roles. Changes such as connecting AWS need an admin.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="our-practice" class="sec" aria-labelledby="our-practice-title">
+    <div class="wrap sec-grid">
+      <div class="margin"><span class="no" aria-hidden="true">v.</span><span class="kicker">Engineering</span></div>
+      <div>
+        <h2 id="our-practice-title">How we build Cloudoptics</h2>
+        <dl class="cells">
+          <div>
+            <dt>Workspace isolation</dt>
+            <dd>PostgreSQL row-level security keeps each workspace's data apart, on every query.</dd>
+          </div>
+          <div>
+            <dt>Audit log</dt>
+            <dd>Changes to members, connections and settings go in an append-only, hash-chained log, under Settings.</dd>
+          </div>
+          <div>
+            <dt>Checks on every change</dt>
+            <dd>Secret scanning, static analysis, dependency and infrastructure scanning on every pull request.</dd>
+          </div>
+          <div>
+            <dt>Pinned dependencies</dt>
+            <dd>Frozen lockfiles, GitHub Actions pinned to commit hashes, automated updates for both.</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <section id="reporting" class="sec" aria-labelledby="reporting-title">
+    <div class="wrap sec-grid">
+      <div class="margin"><span class="no" aria-hidden="true">vi.</span><span class="kicker">Disclosure</span></div>
+      <div>
+        <h2 id="reporting-title">Reporting a vulnerability</h2>
+        <p class="body-copy">
+          A reporting address and a <code>security.txt</code> file come before the beta opens to the public. The same contact will handle requests
+          for our security pack.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section id="template" class="sec" aria-labelledby="template-title">
+    <div class="wrap sec-grid">
+      <div class="margin"><span class="no" aria-hidden="true">vii.</span><span class="kicker">Template</span></div>
+      <div>
+        <h2 id="template-title">Read the file <em>before</em> you deploy it.</h2>
+        <p class="sub">The same template the one-click link opens.</p>
+        <div class="cta-row">
+          <a class="btn btn-ghost" href={TEMPLATE_URL}><Icon name="download" />cloudoptics-access.yaml, v{facts.templateVersion}</a>
         </div>
-        <div class="rounded-md border border-border bg-surface-1 p-4">
-          <dt class="font-semibold">Retention and sub-processors</dt>
-          <dd class="mt-1 text-secondary">
-            How long we keep data after you delete a workspace, and the companies that process data for us, will be set
-            out in our privacy notice, which is being prepared.
-          </dd>
+      </div>
+    </div>
+  </section>
+
+  <Faq items={SECURITY_FAQ} title="Security questions" no="viii." />
+
+  <section class="final" aria-labelledby="fin-h">
+    <div class="wrap">
+      <h2 id="fin-h">Seen <em>enough</em>?</h2>
+      <div>
+        <div class="cta-row">
+          <a class="btn btn-primary" href={START_URL}>Start free <Icon name="arrow-right" /></a>
+          <a class="btn btn-ghost" href="/how-it-works">How it works</a>
         </div>
-      </dl>
-      <p class="mt-4 text-sm text-muted">
-        This public site sets no cookies and loads nothing from other websites. It counts page visits itself
-        (first-party, no cookies): the page, the site you came from and any campaign tag, never your IP address or an
-        identifier. It sends nothing if your browser asks not to be tracked.
-      </p>
-    </section>
-
-    <section id="sign-in" aria-labelledby="sign-in-title" class={sectionCls}>
-      <h2 id="sign-in-title" class={h2}>Sign-in and MFA</h2>
-      <p class="mt-4 max-w-3xl text-secondary">
-        Sign-in uses WorkOS AuthKit, so Cloudoptics never stores your password. A workspace admin can require
-        multi-factor authentication for everyone in the workspace; Cloudoptics then refuses requests from sessions
-        without it. People in a workspace have admin, member or viewer roles, and changes such as connecting AWS need an
-        admin.
-      </p>
-    </section>
-
-    <section id="our-practice" aria-labelledby="our-practice-title" class={sectionCls}>
-      <h2 id="our-practice-title" class={h2}>How we build Cloudoptics</h2>
-      <ul class="mt-4 grid gap-3 md:grid-cols-2">
-        <li class="rounded-md border border-border bg-surface-1 p-4">
-          <strong>Workspace isolation in the database.</strong>
-          <span class="text-secondary">PostgreSQL row-level security keeps each workspace's data apart, on every query.</span>
-        </li>
-        <li class="rounded-md border border-border bg-surface-1 p-4">
-          <strong>Audit log.</strong>
-          <span class="text-secondary">Changes to members, connections and settings are recorded in an append-only, hash-chained log you can read under Settings.</span>
-        </li>
-        <li class="rounded-md border border-border bg-surface-1 p-4">
-          <strong>Checks on every change.</strong>
-          <span class="text-secondary">Secret scanning, static analysis, dependency and infrastructure scanning run on every pull request.</span>
-        </li>
-        <li class="rounded-md border border-border bg-surface-1 p-4">
-          <strong>Pinned dependencies.</strong>
-          <span class="text-secondary">Lockfiles are frozen, GitHub Actions are pinned to commit hashes, and automated updates keep both current.</span>
-        </li>
-      </ul>
-    </section>
-
-    <section id="reporting" aria-labelledby="reporting-title" class={sectionCls}>
-      <h2 id="reporting-title" class={h2}>Reporting a vulnerability</h2>
-      <p class="mt-4 max-w-3xl text-secondary">
-        We will publish a reporting address and a <code>security.txt</code> file before the beta opens to the public. The
-        same contact will handle requests for our security pack.
-      </p>
-    </section>
-
-    <section id="template" aria-labelledby="template-title" class={sectionCls}>
-      <h2 id="template-title" class={h2}>Download the template</h2>
-      <p class="mt-4 max-w-3xl text-secondary">
-        Read the exact file you will deploy before you deploy it. It is the same template the one-click link opens.
-      </p>
-      <p class="mt-4">
-        <a href={TEMPLATE_URL} class="inline-flex min-h-11 items-center gap-2 rounded-sm border border-border-strong bg-surface-1 px-5 font-semibold text-primary hover:border-accent">
-          cloudoptics-access.yaml, version {facts.templateVersion}
-        </a>
-      </p>
-    </section>
-  </div>
-
-  <div class={sectionCls}>
-    <Faq items={SECURITY_FAQ} title="Security questions" />
-  </div>
-
-  <section aria-labelledby="cta" class="mx-auto mt-16 max-w-5xl px-4 sm:px-6">
-    <div class="rounded-md bg-accent-soft p-8 text-center">
-      <h2 id="cta" class={h2}>Seen enough?</h2>
-      <div class="mt-6 flex flex-wrap justify-center gap-3">
-        <a href={START_URL} class="inline-flex min-h-11 items-center rounded-sm bg-accent px-5 font-semibold text-on-accent hover:bg-accent-hover">
-          Start free
-        </a>
-        <a href="/how-it-works" class="inline-flex min-h-11 items-center rounded-sm border border-border-strong bg-surface-1 px-5 font-semibold text-primary hover:border-accent">
-          Read how it works
-        </a>
+        <p class="sign">Read-only · No card · Remove it any time</p>
       </div>
     </div>
   </section>

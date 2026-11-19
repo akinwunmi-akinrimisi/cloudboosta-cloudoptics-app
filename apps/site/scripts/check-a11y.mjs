@@ -3,6 +3,8 @@
 //      no layout, so axe's colour-contrast rule cannot run here; check 2 covers colour instead.
 //   2. Every foreground/background pair in packages/design-tokens/contrast-pairs.json, in the
 //      light and the dark theme, read from tokens.css (docs/08 §2.2.1).
+//   3. Every pair in editorial-contrast-pairs.json, read from editorial.css: the theme the site
+//      itself is drawn in (Direction A).
 // A browser-based axe pass (Playwright) with real layout belongs to the E2E work (SITE-18).
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -65,6 +67,24 @@ for (const [theme, vars] of [['light', light], ['dark', dark]]) {
   }
 }
 console.log(`contrast: ${pairs.pairs.length} pairs checked in light and dark themes`)
+
+// 3. Contrast of the editorial theme the site is drawn in (editorial.css, Direction A): one
+//    paper appearance, so one set of values.
+const edCss = readFileSync(join(tokensDir, 'editorial.css'), 'utf8')
+const edPairs = JSON.parse(readFileSync(join(tokensDir, 'editorial-contrast-pairs.json'), 'utf8'))
+const edVars = Object.fromEntries([...(edCss.match(/:root\s*\{([^}]*)\}/)?.[1] ?? '').matchAll(/(--[\w-]+):\s*(#[0-9a-fA-F]{6})/g)].map((m) => [m[1], m[2]]))
+if (Object.keys(edVars).length < 10) problems.push('could not read the editorial tokens from editorial.css')
+for (const p of edPairs.pairs) {
+  const fg = edVars[p.fg]
+  const bg = edVars[p.bg]
+  if (!fg || !bg) {
+    problems.push(`editorial contrast: unknown colour in pair ${p.fg} on ${p.bg}`)
+    continue
+  }
+  const r = ratio(fg, bg)
+  if (r < p.min) problems.push(`editorial contrast: ${p.fg} ${fg} on ${p.bg} ${bg} is ${r.toFixed(2)}:1, needs ${p.min}:1 (${p.use})`)
+}
+console.log(`editorial contrast: ${edPairs.pairs.length} pairs checked`)
 
 if (problems.length) {
   console.error(`\n${problems.length} accessibility problem(s):`)
