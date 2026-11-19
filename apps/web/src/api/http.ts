@@ -1,3 +1,4 @@
+import { clearAttribution, readAttribution } from '../lib/attribution'
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
@@ -106,8 +107,11 @@ export class HttpApi implements Api {
     return this.request('PATCH', '/v1/me', { preferredCurrencyView: view })
   }
 
-  createTenant(body: { name: string; countryCode: string }): Promise<Tenant> {
-    return this.request('POST', '/v1/tenants', body)
+  async createTenant(body: { name: string; countryCode: string }): Promise<Tenant> {
+    // The first-touch campaign goes with the first workspace only (SITE-15).
+    const tenant = await this.request<Tenant>('POST', '/v1/tenants', { ...body, attribution: readAttribution() })
+    clearAttribution()
+    return tenant
   }
 
   getTenant(tenantId: string): Promise<Tenant> {

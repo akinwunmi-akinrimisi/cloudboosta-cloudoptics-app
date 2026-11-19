@@ -22,6 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from cloudoptics.analytics import funnel
 from cloudoptics.connectors.aws import STACK_REGION, session_name
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.service import get_connection, get_session_factory
@@ -229,6 +230,7 @@ async def _store(
                 ],
             )
         if loaded.rows:
+            await funnel.emit(session, "first_costs", tenant_id=tenant_id, detail="bills")
             await session.execute(
                 text(
                     "INSERT INTO cost_daily (tenant_id, connection_id, usage_date, "

@@ -20,6 +20,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool
 
+from cloudoptics.analytics import funnel
 from cloudoptics.connectors.aws import session_name
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.service import get_connection, get_session_factory
@@ -175,6 +176,7 @@ async def refresh_snapshot(
     async with maker() as session, session.begin():
         await scope(session, tenant_id=tenant_id)
         if snap is not None:
+            await funnel.emit(session, "first_costs", tenant_id=tenant_id, detail="provisional")
             await session.execute(
                 text(
                     "INSERT INTO cost_snapshot_ce (tenant_id, connection_id, period_start, "

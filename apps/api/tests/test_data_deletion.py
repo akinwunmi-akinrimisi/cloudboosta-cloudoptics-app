@@ -286,6 +286,11 @@ def seed_workspace(owner_sql: Sql, tenant: str) -> None:
             grant,
             tenant,
         ),
+        (
+            "INSERT INTO funnel_event (event, tenant_id, source) VALUES ('connected', %s, 'x') "
+            "ON CONFLICT DO NOTHING",
+            tenant,
+        ),
     ]
     for sql, *params in rows:
         owner_sql(sql, *params)

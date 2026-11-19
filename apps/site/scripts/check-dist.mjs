@@ -1,11 +1,15 @@
 // Checks the built site in dist/ (docs/14 §7.3, §8.3, §8.5; SITE-03). Fails on:
 //   - a broken internal link or #anchor (the app under /app and the demo under /demo are
 //     other builds)
-//   - a page over its budget: HTML + CSS ≤ 60 KB and JS ≤ 10 KB gzipped (0 KB except the landing
-//     page), any AVIF image ≤ 100 KB, landing page total ≤ 500 KB
+//   - a page over its budget: HTML + CSS ≤ 60 KB and JS ≤ 10 KB gzipped on the landing and 404
+//     pages, ≤ 1.5 KB elsewhere (the first-party beacon only, SITE-15), any AVIF image ≤ 100 KB,
+//     landing page total ≤ 500 KB
 //   - an HTML comment left in a page
 //   - missing SEO basics: one <h1>, lang, title ≤ 60, description ≤ 155, absolute canonical,
-//     JSON-LD that parses; a 404.html marked noindex
+//     Open Graph and Twitter tags with an absolute image, JSON-LD that parses (Organization on
+//     every page, FAQPage wherever the page shows an FAQ); a 404.html marked noindex; every
+//     indexable page in sitemap.xml; robots.txt keeping out /app/, /demo/ and /api/
+//   - analytics that is not first-party: a script, image or beacon URL on another host
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -15,7 +19,7 @@ import { COMMENT, htmlFiles } from './strip-html-comments.mjs'
 const dist = join(import.meta.dirname, '..', 'dist')
 const APP_PATH = (process.env.SITE_APP_PATH ?? '/app').replace(/\/$/, '')
 const KB = 1024
-const BUDGET = { critical: 60 * KB, js: 10 * KB, image: 100 * KB, landing: 500 * KB }
+const BUDGET = { critical: 60 * KB, js: 10 * KB, beacon: 1.5 * KB, image: 100 * KB, landing: 500 * KB }
 // The 404 page carries the small redirect for old app paths (public/legacy-redirect.js).
 const JS_ALLOWED = new Set(['/', '/404.html'])
 // Served by other components on the same origin (infra/digitalocean/app.yaml), not this build.
@@ -37,6 +41,8 @@ const fileFor = (path) => {
   return p === '' ? join(dist, 'index.html') : null
 }
 
+const noindexed = (doc) => Boolean(doc.querySelector('meta[name="robots"][content*="noindex"]'))
+const sitemap = existsSync(join(dist, 'sitemap.xml')) ? readFileSync(join(dist, 'sitemap.xml'), 'utf8') : ''
 const pages = new Map()
 for (const file of htmlFiles(dist)) {
   const html = readFileSync(file, 'utf8')
@@ -93,6 +99,30 @@ for (const [url, { file, html, doc }] of pages) {
       problems.push(`${url}: JSON-LD does not parse`)
     }
   }
+  const meta = (sel) => doc.querySelector(`meta[${sel}]`)?.getAttribute('content') ?? ''
+  for (const tag of ['property="og:title"', 'property="og:description"', 'property="og:url"', 'name="twitter:card"', 'name="twitter:title"']) {
+    if (!meta(tag)) problems.push(`${url}: missing <meta ${tag}>`)
+  }
+  for (const tag of ['property="og:image"', 'name="twitter:image"']) {
+    const image = meta(tag)
+    if (!image.startsWith('https://')) problems.push(`${url}: <meta ${tag}> must be an absolute https URL`)
+    else if (!fileFor(new URL(image).pathname)) problems.push(`${url}: <meta ${tag}> points at a missing file`)
+  }
+  const types = [...doc.querySelectorAll('script[type="application/ld+json"]')].map((s) => {
+    try {
+      return JSON.parse(s.textContent)['@type']
+    } catch {
+      return null
+    }
+  })
+  if (!types.includes('Organization')) problems.push(`${url}: no Organization JSON-LD`)
+  if (doc.querySelector('details[id] > summary') && !types.includes('FAQPage') && !url.startsWith('/404')) problems.push(`${url}: shows an FAQ without FAQPage JSON-LD`)
+  for (const s of doc.querySelectorAll('script[src], img[src], iframe[src]')) {
+    if (/^(https?:)?\/\//.test(s.getAttribute('src'))) problems.push(`${url}: loads ${s.getAttribute('src')} from another host`)
+  }
+  const beacon = meta('name="cloudoptics:beacon"')
+  if (beacon && /^(https?:)?\/\//.test(beacon) && !beacon.startsWith('https://')) problems.push(`${url}: beacon URL must be https or same-origin`)
+  if (!noindexed(doc) && pages.size && sitemap && !sitemap.includes(`<loc>${canonical}</loc>`)) problems.push(`${url}: not in sitemap.xml`)
   if (doc.querySelector('script:not([src]):not([type="application/ld+json"])')) problems.push(`${url}: inline script (the CSP allows 'self' only)`)
   if (doc.querySelector('[style]') || doc.querySelector('style')) problems.push(`${url}: inline style (the CSP allows 'self' only)`)
 
@@ -101,7 +131,7 @@ for (const [url, { file, html, doc }] of pages) {
   const js = [...doc.querySelectorAll('script[src]')].map((s) => fileFor(s.getAttribute('src'))).filter(Boolean)
   const critical = gz(file) + css.reduce((n, f) => n + gz(f), 0)
   const jsBytes = js.reduce((n, f) => n + gz(f), 0)
-  const jsBudget = JS_ALLOWED.has(url) ? BUDGET.js : 0
+  const jsBudget = JS_ALLOWED.has(url) ? BUDGET.js : BUDGET.beacon
   if (critical > BUDGET.critical) problems.push(`${url}: HTML + CSS ${kb(critical)} gzipped, budget ${kb(BUDGET.critical)}`)
   if (jsBytes > jsBudget) problems.push(`${url}: JavaScript ${kb(jsBytes)} gzipped, budget ${kb(jsBudget)}`)
   // Worst case for images: the largest candidate of each <picture>/<img>.
@@ -125,6 +155,12 @@ const templates = ['cloudoptics-access.yaml', 'billing-role.yaml', 'resource-rol
 for (const required of ['404.html', 'robots.txt', 'sitemap.xml', 'permissions.json', 'legacy-redirect.js', 'og/cloudoptics.png', ...templates.map((t) => `cfn/${t}`)]) {
   if (!existsSync(join(dist, required))) problems.push(`missing ${required}`)
 }
+
+const robots = existsSync(join(dist, 'robots.txt')) ? readFileSync(join(dist, 'robots.txt'), 'utf8') : ''
+for (const path of [`${APP_PATH || '/app'}/`, '/demo/', '/api/']) {
+  if (!robots.includes(`Disallow: ${path}`)) problems.push(`robots.txt does not disallow ${path}`)
+}
+if (!/^Sitemap: https:\/\//m.test(robots)) problems.push('robots.txt has no absolute Sitemap line')
 
 if (problems.length) {
   console.error(`\n${problems.length} problem(s):`)

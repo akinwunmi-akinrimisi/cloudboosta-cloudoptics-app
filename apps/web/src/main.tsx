@@ -8,7 +8,11 @@ import { retryDelay, retryQuery } from './api/retry'
 import { AuthGate } from './app/AuthGate'
 import { ApiProvider } from './app/context'
 import { createAppRouter } from './app/router'
+import { captureAttribution } from './lib/attribution'
 import './styles.css'
+
+// Before the router or sign-in rewrites the URL: the campaign the site passed on (SITE-15).
+captureAttribution()
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: retryQuery, retryDelay } },

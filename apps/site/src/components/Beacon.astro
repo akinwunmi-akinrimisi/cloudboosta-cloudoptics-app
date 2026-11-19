@@ -1,0 +1,14 @@
+---
+// First-party analytics (SITE-15): a <meta> that tells the beacon where to post, and the
+// beacon itself (src/scripts/beacon.mjs). Left out entirely when SITE_ANALYTICS=off, on pages
+// that set noAnalytics, and never sent under /demo/ or with Do Not Track / GPC.
+import { APP_PATH, BEACON_URL, DEMO_URL } from '../config'
+---
+
+{BEACON_URL && <meta name="cloudoptics:beacon" content={BEACON_URL} data-app={APP_PATH} data-demo={DEMO_URL} />}
+
+<script>
+  import { start } from '../scripts/beacon.mjs'
+
+  start(window)
+</script>
