@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-import { appPath, openSignedIn, seedWorkspace, signInApi, uniqueEmail } from './support'
+import { appPath, openSignedIn, seedSupportGrant, seedWorkspace, signInApi, uniqueEmail } from './support'
 
 // Mobile layouts (docs/08 breakpoints 375-414 and 768; FE-12): no sideways page scroll on
 // the main pages (a wide table scrolls inside its own box), and the navigation works on a
@@ -61,6 +61,23 @@ for (const width of [375, 390, 768]) {
     await context.close()
   })
 }
+
+test('the staff console has no sideways scroll at 320, 375, 390 and 768 px', async ({ browser, request }) => {
+  const { staff } = await seedSupportGrant(request)
+  // 320 px too: an internal tool, but the smallest phones should still fit it.
+  for (const width of [320, 375, 390, 768]) {
+    await test.step(`${width} px`, async () => {
+      const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: width < 768, hasTouch: width < 768 })
+      const page = await context.newPage()
+      await openSignedIn(page, staff.token, undefined, '/staff')
+      await expect(page.getByRole('heading', { level: 1, name: 'Support access' })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'End access' }).first()).toBeVisible()
+      const o = await overflow(page)
+      expect(o.scrollWidth, `/staff at ${width} px is ${o.scrollWidth} px wide: ${o.wide.join(', ')}`).toBeLessThanOrEqual(o.width)
+      await context.close()
+    })
+  }
+})
 
 test('on a phone the menu opens, navigates and closes', async ({ browser, request }) => {
   const ws = await seedWorkspace(request, { bills: false, scan: false })

@@ -155,6 +155,28 @@ export async function addTeammate(
   return { api, email, userId: userId as string }
 }
 
+/** Cloudoptics staff (STAFF_EMAIL) with a multi-factor session: the staff console needs both. */
+export async function signInStaff(request: APIRequestContext): Promise<Api> {
+  return signInApi(request, STAFF_EMAIL, { mfa: true, name: 'FX Staff' })
+}
+
+/**
+ * The staff console (/staff) as staff see it on a working day: an active read-only grant to a
+ * workspace, so the grant list has a row with its buttons and the header links back to the app.
+ * The justification carries a long unbroken URL, as real ones do.
+ */
+export async function seedSupportGrant(request: APIRequestContext): Promise<{ staff: Api; ws: Workspace }> {
+  const ws = await seedWorkspace(request, { prefix: 'supported', bills: false, scan: false })
+  const staff = await signInStaff(request)
+  await staff.send('POST', '/v1/admin/support-access', {
+    tenantId: ws.tenantId,
+    justification: `Customer reports missing bills, see https://support.example.com/tickets/${ws.tenantId}/conversation`,
+    ticketRef: `ZD-${randomInt(100_000, 999_999)}`,
+    durationMinutes: 30,
+  })
+  return { staff, ws }
+}
+
 /** Opens the app signed in with `token`, in workspace `tenantId` (the app's own storage keys). */
 export async function openSignedIn(page: Page, token: string, tenantId?: string, path = '/overview') {
   await page.addInitScript(
@@ -165,6 +187,30 @@ export async function openSignedIn(page: Page, token: string, tenantId?: string,
     [token, tenantId ?? ''] as const,
   )
   await page.goto(appPath(path))
+}
+
+/**
+ * The key that moves focus to the next link in this browser, or null if no key does.
+ *
+ * Chrome Tabs to links. Safari, by default, Tabs only between form fields and buttons: links
+ * (the skip link among them) need Option+Tab, or Tab once "Press Tab to highlight each item on
+ * a webpage" is on (Settings, Advanced). Playwright's WebKit builds differ by platform (on
+ * Windows neither Tab nor Alt+Tab reaches a link), so ask the browser: Tab, then Alt+Tab, on a
+ * scratch page with a button and a link. Callers check links some other honest way when null.
+ */
+export async function linkTabKey(page: Page): Promise<string | null> {
+  const probe = await page.context().newPage()
+  try {
+    await probe.setContent('<button id="start">Start</button><a id="link" href="#x">Link</a>')
+    for (const key of ['Tab', 'Alt+Tab']) {
+      await probe.focus('#start')
+      await probe.keyboard.press(key)
+      if (await probe.evaluate(() => document.activeElement?.id === 'link')) return key
+    }
+    return null
+  } finally {
+    await probe.close()
+  }
 }
 
 export function usd(amount: number): string {

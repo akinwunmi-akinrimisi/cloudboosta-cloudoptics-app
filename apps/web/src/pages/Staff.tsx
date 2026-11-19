@@ -154,7 +154,9 @@ function GrantList() {
       <ul className="divide-y divide-border">
         {grants.data?.map((g) => (
           <li key={g.id} className="flex flex-wrap items-start justify-between gap-3 px-5 py-3">
-            <div className="min-w-0 space-y-0.5">
+            {/* A justification often carries a ticket URL with no break in it: wrap it anywhere
+                rather than widen the page on a phone. */}
+            <div className="min-w-0 space-y-0.5 [overflow-wrap:anywhere]">
               <p className="text-sm">
                 <span className="font-medium">{g.tenantName}</span> · {STATUS[g.status]} · {g.staffName ?? g.staffEmail}
               </p>
@@ -168,7 +170,7 @@ function GrantList() {
               </p>
             </div>
             {g.status === 'active' && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {mine.has(g.id) && (
                   <Button variant="secondary" onClick={() => open(g.tenantId)}>
                     View workspace

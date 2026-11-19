@@ -2,7 +2,7 @@ import type { Locator, Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
 import type { Workspace } from './support'
-import { Api, appPath, openSignedIn, seedWorkspace } from './support'
+import { Api, appPath, linkTabKey, openSignedIn, seedWorkspace } from './support'
 
 // What axe cannot check (docs/08 accessibility table, PRD FR-UI-06, WCAG 2.2 AA): keyboard
 // order and focus, Escape on everything that opens, reduced motion, chart alternatives and
@@ -32,11 +32,44 @@ async function open(page: Page, path: string, heading: string | RegExp) {
   await page.waitForLoadState('networkidle')
 }
 
+/** Focus ring and :focus-visible on what has focus now; null when nothing does. */
+async function ring(page: Page) {
+  return page.evaluate(() => {
+    const el = document.activeElement as HTMLElement
+    if (el === document.body) return null
+    const s = getComputedStyle(el)
+    return {
+      name: `${el.tagName.toLowerCase()} "${(el.getAttribute('aria-label') ?? el.textContent ?? '').trim().slice(0, 30)}"`,
+      outline: s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) >= 2,
+      shadow: s.boxShadow !== 'none',
+      visible: el.matches(':focus-visible'),
+      hidden: el.getBoundingClientRect().width === 0,
+    }
+  })
+}
+
+/** Note in the report that this browser cannot Tab to links (see linkTabKey in support.ts). */
+function noLinkTab(what: string) {
+  test.info().annotations.push({
+    type: 'webkit-tab',
+    description: `This browser build does not Tab to links (Safari's default); ${what}`,
+  })
+}
+
 test('skip to content is the first Tab stop and lands on the main content', async ({ page }) => {
   await open(page, '/overview', 'Overview')
-  await page.keyboard.press('Tab')
   const skip = page.getByRole('link', { name: 'Skip to main content' })
-  await expect(skip).toBeFocused()
+  const key = await linkTabKey(page)
+  if (key) {
+    await page.keyboard.press(key)
+    await expect(skip).toBeFocused()
+  } else {
+    // Where links are not Tab stops, the skip link cannot be one either; it must still show
+    // and work once it has focus (Safari with Option+Tab or "Press Tab to highlight").
+    noLinkTab('the skip link is focused from the keyboard state directly and checked from there.')
+    await page.keyboard.press('Shift')
+    await skip.focus()
+  }
   await expect(skip).toBeInViewport()
   await page.keyboard.press('Enter')
   await expect(page.locator('main#main')).toBeFocused()
@@ -48,26 +81,30 @@ test('skip to content is the first Tab stop and lands on the main content', asyn
 
 test('every control shows a visible focus ring from the keyboard', async ({ page }) => {
   await open(page, '/overview', 'Overview')
+  const key = await linkTabKey(page)
   const seen: string[] = []
+  const check = (r: NonNullable<Awaited<ReturnType<typeof ring>>>) => {
+    expect(r.visible, `${r.name} matches :focus-visible`).toBe(true)
+    expect(r.outline || r.shadow, `${r.name} has a focus ring`).toBe(true)
+    seen.push(r.name)
+  }
   for (let i = 0; i < 40; i++) {
-    await page.keyboard.press('Tab')
-    const ring = await page.evaluate(() => {
-      const el = document.activeElement as HTMLElement
-      if (el === document.body) return null
-      const s = getComputedStyle(el)
-      return {
-        name: `${el.tagName.toLowerCase()} "${(el.getAttribute('aria-label') ?? el.textContent ?? '').trim().slice(0, 30)}"`,
-        outline: s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) >= 2,
-        shadow: s.boxShadow !== 'none',
-        visible: el.matches(':focus-visible'),
-        hidden: el.getBoundingClientRect().width === 0,
-      }
-    })
-    if (ring === null) break // past the last control
-    if (ring.hidden) continue
-    expect(ring.visible, `${ring.name} matches :focus-visible`).toBe(true)
-    expect(ring.outline || ring.shadow, `${ring.name} has a focus ring`).toBe(true)
-    seen.push(ring.name)
+    await page.keyboard.press(key ?? 'Tab')
+    const r = await ring(page)
+    if (r === null) break // past the last control
+    if (r.hidden) continue
+    check(r)
+  }
+  if (!key) {
+    // Tab reached the buttons and fields; each link is focused after a key press (the browser
+    // then treats focus as keyboard focus) and must show the same ring.
+    noLinkTab('links are focused one by one after a key press and checked for the ring.')
+    for (const link of await page.locator('a[href]:visible').all()) {
+      await page.keyboard.press('Shift')
+      await link.focus()
+      const r = await ring(page)
+      if (r && !r.hidden) check(r)
+    }
   }
   // Skip link, the nine pages, the currency buttons, sign out and the page's own controls.
   expect(seen.length).toBeGreaterThan(14)
@@ -85,7 +122,10 @@ test('the phone menu is a modal: focus moves in, Tab stays in, Escape closes it 
   await expect(drawer).toHaveAttribute('aria-modal', 'true')
   await expect(button).toHaveAttribute('aria-expanded', 'true')
   await expect(drawer.getByRole('button', { name: 'Close menu' })).toBeFocused()
-  for (const key of ['Tab', 'Shift+Tab']) {
+  // Plain Tab, which in Safari skips the menu's links by default, and the key that reaches links
+  // where it differs: focus stays in the menu with either.
+  const linkKey = (await linkTabKey(page)) ?? 'Tab'
+  for (const key of new Set(['Tab', 'Shift+Tab', linkKey, linkKey.replace('Tab', 'Shift+Tab')])) {
     for (let i = 0; i < 14; i++) {
       await page.keyboard.press(key)
       const inside = await drawer.evaluate((d) => d.contains(document.activeElement))

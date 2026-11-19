@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useRef, useState } from 'react'
 import { describe, expect, it } from 'vitest'
@@ -63,6 +63,21 @@ describe('Drawer', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog')).toBeNull()
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Open menu' })))
+  })
+
+  it('moves focus itself on every Tab, so a browser that skips links (Safari) stays inside', async () => {
+    const user = userEvent.setup()
+    render(<DrawerHarness />)
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    const close = screen.getByRole('button', { name: 'Close menu' })
+    // fireEvent returns false when the handler took over (preventDefault): the browser's own
+    // next stop, which in Safari would be outside the menu, is never used.
+    expect(fireEvent.keyDown(close, { key: 'Tab' })).toBe(false)
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'One' }))
+    // From the panel itself (focus nowhere in particular), Tab starts at the first control.
+    screen.getByRole('dialog', { name: 'Menu' }).focus()
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Two' }))
   })
 
   it('closes from its close button and locks the page scroll while open', async () => {

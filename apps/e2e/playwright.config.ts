@@ -10,6 +10,19 @@ const WEB_URL = process.env.E2E_WEB_URL ?? 'http://127.0.0.1:4173'
 const APP_BASE = process.env.E2E_APP_BASE ?? '/app/'
 const WEB_PORT = new URL(WEB_URL).port || '4173'
 const CI = Boolean(process.env.CI)
+const API_PORT = new URL(API_URL).port || '80'
+// The servers to start. Set E2E_API_URL / E2E_WEB_URL (and CLOUDOPTICS_E2E_DATABASE, a name
+// ending in _e2e) to run a second stack beside one already on :8000 and :4173.
+const WEB_ORIGINS = [WEB_URL, WEB_URL.replace('127.0.0.1', 'localhost')]
+
+// WebKit (Safari's engine) runs the specs most exposed to engine differences: sign-up and
+// connecting AWS, axe (desktop and 390 px), keyboard and focus on a desktop Safari, and the
+// phone layouts on an emulated iPhone (the mobile spec's contexts take its user agent, touch
+// and pixel ratio). The other journeys are API-heavy set-up around ordinary forms and run on
+// Chromium only, to keep the job short; the performance budget needs the Chrome DevTools
+// protocol, so it is Chromium only too.
+const WEBKIT_SPECS = /(onboarding|a11y|keyboard)\.spec\.ts/
+const PHONE_SPECS = /mobile\.spec\.ts/
 
 export default defineConfig({
   testDir: './tests',
@@ -41,6 +54,18 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
     },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+      testMatch: WEBKIT_SPECS,
+      dependencies: ['setup'],
+    },
+    {
+      name: 'mobile-webkit',
+      use: { ...devices['iPhone 13'] },
+      testMatch: PHONE_SPECS,
+      dependencies: ['setup'],
+    },
   ],
   webServer: [
     {
@@ -48,7 +73,13 @@ export default defineConfig({
       command: 'uv run python apps/e2e/server/serve.py',
       cwd: '../..',
       url: `${API_URL}/readyz`,
-      env: { CLOUDOPTICS_E2E: '1' },
+      env: {
+        CLOUDOPTICS_E2E: '1',
+        CLOUDOPTICS_E2E_PORT: API_PORT,
+        CLOUDOPTICS_API_PUBLIC_URL: API_URL,
+        CLOUDOPTICS_APP_URL: `${WEB_URL}${APP_BASE.replace(/\/$/, '')}`,
+        CLOUDOPTICS_CORS_ORIGINS: JSON.stringify(WEB_ORIGINS),
+      },
       reuseExistingServer: !CI,
       timeout: 180_000,
       stdout: 'pipe',

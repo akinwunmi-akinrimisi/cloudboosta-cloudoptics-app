@@ -93,19 +93,18 @@ export function Drawer({
     }
   }, [open])
   if (!open) return null
+  // The panel moves focus itself on every Tab rather than only at its ends: the browser's own
+  // order can skip what is inside. Safari, by default, Tabs only between form fields and
+  // buttons (links need Option+Tab), so from the close button its next stop was outside the
+  // menu, past the inert page.
   const trap = (e: ReactKeyboardEvent) => {
     if (e.key !== 'Tab' || !panel.current) return
     const items = focusables(panel.current)
-    const first = items[0]
-    const last = items[items.length - 1]
-    if (!first || !last) return
-    if (e.shiftKey && (document.activeElement === first || !panel.current.contains(document.activeElement))) {
-      e.preventDefault()
-      last.focus()
-    } else if (!e.shiftKey && document.activeElement === last) {
-      e.preventDefault()
-      first.focus()
-    }
+    if (!items.length) return
+    e.preventDefault()
+    const at = items.indexOf(document.activeElement as HTMLElement)
+    const next = at === -1 ? (e.shiftKey ? items.length - 1 : 0) : (at + (e.shiftKey ? -1 : 1) + items.length) % items.length
+    items[next]?.focus()
   }
   return (
     <div className="fixed inset-0 z-40 md:hidden print:hidden">
