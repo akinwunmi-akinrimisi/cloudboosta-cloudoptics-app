@@ -575,6 +575,9 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
   const [name, setName] = useState('')
   const [country, setCountry] = useState('NG')
   const tid = tenantId ?? currentTenant
+  // Already in a workspace: this is "New workspace" from the menu (the route guard sees to it).
+  // Fixed on arrival, so creating the first workspace does not flip the heading.
+  const [another] = useState(() => !!me?.memberships.length)
 
   const createWorkspace = (e: FormEvent) => {
     e.preventDefault()
@@ -615,8 +618,11 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
 
       {step === 0 && (
         <Card>
-          <h1 className="text-2xl font-semibold">Create your workspace</h1>
-          <p className="mt-1 text-sm text-secondary">Your country sets the local currency and time zone.</p>
+          <h1 className="text-2xl font-semibold">{another ? 'Create another workspace' : 'Create your workspace'}</h1>
+          <p className="mt-1 text-sm text-secondary">
+            {another && 'One workspace per company, with its own members and AWS accounts. '}
+            Your country sets the local currency and time zone.
+          </p>
           <form className="mt-6 flex flex-col gap-4" onSubmit={createWorkspace}>
             <Field
               label="Company or team name"
@@ -647,6 +653,11 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
             <Button type="submit" disabled={busy}>
               {busy ? 'Creating…' : 'Create workspace'}
             </Button>
+            {another && (
+              <Link to="/overview" className="self-start text-sm text-accent underline">
+                Back to {me?.memberships.find((m) => m.tenantId === currentTenant)?.tenantName ?? 'your workspace'}
+              </Link>
+            )}
           </form>
           {api.mode !== 'demo' && (
             <p className="mt-4 text-sm text-secondary">

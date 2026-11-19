@@ -81,7 +81,7 @@ Run on Chromium + WebKit (desktop) and a mobile viewport (Pixel/Android emulatio
 | Secrets | Gitleaks + GitHub push protection | Pre-commit + every PR |
 | IaC & containers | Trivy (Terraform, K8s manifests, images), Kyverno policy tests | Every PR + nightly image rescans |
 | DAST | OWASP ZAP baseline against staging (authenticated) | Nightly; full scan before each increment |
-| Tenant-isolation suite | Automated cross-tenant API + DB tests | Every PR |
+| Tenant-isolation suite | Automated cross-tenant API + DB tests: `test_rls_lint.py`, `test_cross_tenant.py`, `test_route_membership.py`, `test_isolation_and_audit.py` (docs/09 §2.3) | Every PR |
 | Security code audit | **Cloudflare `security-audit` skill**, full audit mode, multiple runs; findings triaged into the backlog | Before alpha (S3), before beta (S6), before v1, then quarterly |
 | Penetration test | External firm (web app, API, tenancy, AWS access path) | Before v1 paid launch (S11) |
 | Threat model review | Update Phase 10 threat model | Each increment + new integrations |

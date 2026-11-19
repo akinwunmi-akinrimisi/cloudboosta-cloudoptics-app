@@ -82,6 +82,7 @@ uv run cur-fixture generate --out ./.data/cur --period 2026-09
 - Python: ruff, mypy strict, pytest (≥ 80% coverage, ≥ 90% for analysis, recommendations, ingestion mapping, fx and RBAC once they exist; docs/11f).
 - TypeScript: strict mode, oxlint, Vitest; initial JS ≤ 300 KB gzipped.
 - GitHub Actions are pinned to commit SHAs; Dependabot keeps them and the lockfiles current.
+- Tenant isolation is checked in CI: the RLS lint, the every-table cross-tenant test and the route membership test (docs/09 §2.3). A new table with `tenant_id` needs RLS ENABLE + FORCE and a `tenant_isolation` policy; a new workspace route needs `ViewerAccess`, `MemberAccess` or `AdminAccess`. An intended exception goes in the test's allowlist with its reason.
 - Optional local hooks: `pre-commit install` (Gitleaks, ruff).
 
 ## Repository settings to apply (admin)

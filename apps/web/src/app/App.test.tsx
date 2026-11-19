@@ -207,6 +207,32 @@ describe('Cloudoptics web app', () => {
     expect(screen.queryByRole('link', { name: 'Explore the sample workspace' })).toBeNull()
   })
 
+  it('creates another workspace from the menu; /onboarding is otherwise only for the first', async () => {
+    const user = userEvent.setup()
+    const { api, router } = renderApp('/sign-in')
+    await api.signIn('tola@example.com')
+    await api.createTenant({ name: 'First Co', countryCode: 'NG' })
+    await user.type(await screen.findByLabelText('Work email'), 'tola@example.com')
+    await user.click(screen.getByRole('button', { name: 'Continue' }))
+    expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
+
+    // Typing the URL does not drop a member back into the first-run setup.
+    await router.navigate({ to: '/onboarding' })
+    expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
+
+    const [newWorkspace] = screen.getAllByRole('link', { name: 'New workspace' })
+    await user.click(newWorkspace as HTMLElement)
+    expect(await screen.findByRole('heading', { name: 'Create another workspace' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Back to First Co' })).toBeTruthy()
+    await user.type(screen.getByLabelText('Company or team name'), 'Second Co')
+    await user.click(screen.getByRole('button', { name: 'Create workspace' }))
+    expect(await screen.findByRole('heading', { name: 'Connect your AWS account' })).toBeTruthy()
+
+    await router.navigate({ to: '/overview' })
+    const switcher = await screen.findByRole('combobox', { name: 'Workspace' })
+    expect([...(switcher as HTMLSelectElement).options].map((o) => o.text)).toEqual(['First Co', 'Second Co'])
+  })
+
   it('switches the currency view from the top bar', async () => {
     const user = userEvent.setup()
     const { api } = renderApp('/sign-in')

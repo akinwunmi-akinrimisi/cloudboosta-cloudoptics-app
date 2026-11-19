@@ -89,12 +89,18 @@ const staff = createRoute({
 const onboarding = createRoute({
   getParentRoute: () => root,
   path: '/onboarding',
-  validateSearch: (search: Record<string, unknown>): { step?: number; connection?: string } => ({
+  validateSearch: (search: Record<string, unknown>): { step?: number; connection?: string; new?: true } => ({
     ...(search.step === undefined ? {} : { step: Number(search.step) === 1 ? 1 : 0 }),
     ...(typeof search.connection === 'string' ? { connection: search.connection } : {}),
+    ...(search.new === true || search.new === 'true' || search.new === 1 ? { new: true as const } : {}),
   }),
-  beforeLoad: async ({ context }) => {
-    await loadMe(context)
+  beforeLoad: async ({ context, search }) => {
+    const me = await loadMe(context)
+    const creating = !search.step && !search.connection
+    // With a workspace already, the create step opens only from "New workspace" (?new=true);
+    // without one, there is nothing to connect yet.
+    if (me.memberships.length && creating && !search.new) throw redirect({ to: '/overview' })
+    if (!me.memberships.length && !creating) throw redirect({ to: '/onboarding' })
   },
   loader: preload(Onboarding),
   component: function OnboardingRoute() {
