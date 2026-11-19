@@ -163,7 +163,12 @@ async def test_every_tenant_table_is_isolated_for_the_app_role(
 
 # --- app_user (migration 0041) ----------------------------------------------------------
 
-APP_USER_EMAILS = sql.SQL("SELECT email::text FROM app_user ORDER BY 1")
+# Staff who entered exchange rates are shown with the public rate history, to everyone
+# (0041); other tests in the session may have added some, so they are left out here.
+APP_USER_EMAILS = sql.SQL(
+    "SELECT email::text FROM app_user u WHERE NOT EXISTS "
+    "(SELECT 1 FROM fx_rate r WHERE r.entered_by = u.id) ORDER BY 1"
+)
 
 
 def _emails(conn: psycopg.Connection, tenant: str | None, user: str | None) -> set[str]:
