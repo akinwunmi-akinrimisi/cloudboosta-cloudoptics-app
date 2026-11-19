@@ -16,6 +16,7 @@ import { Costs } from '../pages/Costs'
 import { RecommendationDetail, Recommendations } from '../pages/Recommendations'
 import { Reports } from '../pages/Reports'
 import { Settings } from '../pages/Settings'
+import { Staff } from '../pages/Staff'
 import { isSection, type SettingsSection } from '../pages/SettingsNav'
 import { Anomalies } from '../pages/Anomalies'
 import { Budgets } from '../pages/Budgets'
@@ -54,8 +55,20 @@ const index = createRoute({
   path: '/',
   beforeLoad: async ({ context }) => {
     const me = await loadMe(context)
-    throw redirect(me.memberships.length ? { to: '/overview' } : { to: '/onboarding' })
+    if (me.memberships.length) throw redirect({ to: '/overview' })
+    throw redirect(me.staff ? { to: '/staff' } : { to: '/onboarding' })
   },
+})
+
+// Internal break-glass tool (ADM-6): Cloudoptics staff only, not in any navigation.
+const staff = createRoute({
+  getParentRoute: () => root,
+  path: '/staff',
+  beforeLoad: async ({ context }) => {
+    const me = await loadMe(context)
+    if (!me.staff) throw redirect({ to: '/' })
+  },
+  component: Staff,
 })
 
 const onboarding = createRoute({
@@ -79,7 +92,7 @@ const app = createRoute({
   id: 'app',
   beforeLoad: async ({ context }) => {
     const me = await loadMe(context)
-    if (!me.memberships.length) throw redirect({ to: '/onboarding' })
+    if (!me.memberships.length) throw redirect(me.staff ? { to: '/staff' } : { to: '/onboarding' })
   },
   component: AppShell,
 })
@@ -143,6 +156,7 @@ const settings = createRoute({
 const routeTree = root.addChildren([
   signIn,
   index,
+  staff,
   onboarding,
   app.addChildren([
     overview,

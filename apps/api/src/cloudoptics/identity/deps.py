@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,8 @@ from cloudoptics.platform import ratelimit
 from cloudoptics.platform.api import ApiProblem
 from cloudoptics.platform.db import scope, session_dependency
 from cloudoptics.platform.ids import uuid7
+from cloudoptics.platform.settings import get_settings
+from cloudoptics.support import service as support
 
 Role = Literal["admin", "member", "viewer"]
 ROLE_RANK: dict[str, int] = {"viewer": 1, "member": 2, "admin": 3}
@@ -51,6 +53,12 @@ class CurrentUser:
     auth_subject: str = ""
     # From the token; None means ask the identity provider (see has_mfa).
     mfa: bool | None = False
+
+
+def is_platform_admin(user: CurrentUser) -> bool:
+    """Cloudoptics staff (``CLOUDOPTICS_PLATFORM_ADMIN_EMAILS``), with the email confirmed:
+    anyone can sign up with an address they do not own."""
+    return user.email_verified and user.email.lower() in get_settings().platform_admins
 
 
 async def has_mfa(user: CurrentUser) -> bool:
@@ -166,6 +174,38 @@ class TenantAccess:
     tenant_id: uuid.UUID
     user: CurrentUser
     role: Role
+    # Set when a Cloudoptics staff member is here under a break-glass grant (read-only).
+    support_grant_id: uuid.UUID | None = None
+
+
+SUPPORT_READ_ONLY_TITLE = "Cloudoptics support access is read-only"
+MEMBERSHIP_SQL = (
+    "SELECT m.role, t.mfa_required FROM membership m "
+    "JOIN tenant t ON t.id = m.tenant_id "
+    "WHERE m.tenant_id = :t AND m.user_id = :u"
+)
+
+
+async def _support_access(
+    request: Request, tenant_id: uuid.UUID, user: CurrentUser, session: AsyncSession, minimum: Role
+) -> TenantAccess:
+    """No membership: a staff member with an active break-glass grant for this workspace
+    may read it (viewer routes, safe methods); everyone else gets the same 404 as before."""
+    grant = (
+        await support.active_grant(session, tenant_id, user.id) if is_platform_admin(user) else None
+    )
+    if grant is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+    if not await has_mfa(user):
+        raise mfa_required_problem()
+    allowed = minimum == "viewer" and request.method in support.SAFE_METHODS
+    await support.record_request(
+        grant.id, tenant_id, request.method, request.url.path, allowed=allowed
+    )
+    if not allowed:
+        raise ApiProblem(status.HTTP_403_FORBIDDEN, "support_read_only", SUPPORT_READ_ONLY_TITLE)
+    await support.make_read_only(session)
+    return TenantAccess(tenant_id=tenant_id, user=user, role="viewer", support_grant_id=grant.id)
 
 
 def require_role(minimum: Role):  # type: ignore[no-untyped-def]
@@ -175,22 +215,23 @@ def require_role(minimum: Role):  # type: ignore[no-untyped-def]
     probed. If the tenant requires MFA and the session has none, 401 ``mfa_required``
     (routes outside a tenant, such as /v1/me, stay open so the app can explain). Too-low
     roles return 403.
+
+    Cloudoptics staff with an active break-glass grant (``cloudoptics.support``) and an MFA
+    session pass viewer routes for GET/HEAD only, as a viewer, in a read-only transaction;
+    anything else is refused with 403 ``support_read_only``. Every such request is recorded.
     """
 
-    async def dependency(tenant_id: uuid.UUID, user: User, session: Session) -> TenantAccess:
+    async def dependency(
+        tenant_id: uuid.UUID, request: Request, user: User, session: Session
+    ) -> TenantAccess:
         await scope(session, user_id=user.id, tenant_id=tenant_id)
         row = (
-            await session.execute(
-                text(
-                    "SELECT m.role, t.mfa_required FROM membership m "
-                    "JOIN tenant t ON t.id = m.tenant_id "
-                    "WHERE m.tenant_id = :t AND m.user_id = :u"
-                ),
-                {"t": tenant_id, "u": user.id},
-            )
+            await session.execute(text(MEMBERSHIP_SQL), {"t": tenant_id, "u": user.id})
         ).one_or_none()
         if row is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found")
+            access = await _support_access(request, tenant_id, user, session, minimum)
+            await ratelimit.per_tenant(tenant_id)
+            return access
         role = row.role
         if row.mfa_required and not await has_mfa(user):
             raise mfa_required_problem()

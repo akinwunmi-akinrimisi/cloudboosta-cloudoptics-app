@@ -506,17 +506,33 @@ const ACTIONS: Record<string, string> = {
   'tenant.deletion_scheduled': 'Scheduled the workspace for deletion',
   'tenant.deletion_cancelled': 'Cancelled the workspace deletion',
   'tenant.data_deleted': 'Deleted the workspace’s data',
+  'support_access.granted': 'Opened read-only support access to this workspace',
+  'support_access.ended': 'Ended support access',
 }
 
 function who(entry: AuditEntry): string {
   if (entry.actor.type === 'system') return 'Cloudoptics (automatic)'
-  if (entry.actor.type === 'staff') return 'Cloudoptics staff'
+  if (entry.actor.type === 'staff') {
+    const name = entry.actor.name ?? entry.actor.email
+    return name ? `Cloudoptics support (${name})` : 'Cloudoptics support'
+  }
   return entry.actor.name ?? entry.actor.email ?? 'A former member'
 }
 
 function change(entry: AuditEntry): string {
   const after = entry.after ?? {}
   const before = entry.before ?? {}
+  if (entry.action === 'support_access.granted' && typeof after.justification === 'string') {
+    const ticket = typeof after.ticketRef === 'string' ? ` (ticket ${after.ticketRef})` : ''
+    const until =
+      typeof after.expiresAt === 'string'
+        ? ` · ${String(after.durationMinutes)} minutes, until ${new Date(after.expiresAt).toLocaleString('en-GB')}`
+        : ''
+    return `Reason: ${after.justification}${ticket}${until}`
+  }
+  if (entry.action === 'support_access.ended' && typeof after.requests === 'number') {
+    return `${after.requests.toLocaleString('en')} read-only requests made`
+  }
   if (typeof after.rowsDeleted === 'number') {
     const accounts = Array.isArray(after.accounts) && after.accounts.length ? `AWS account ${after.accounts.join(', ')}: ` : ''
     return `${accounts}${after.rowsDeleted.toLocaleString('en')} records deleted, each table checked to be empty`

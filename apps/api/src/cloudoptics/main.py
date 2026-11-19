@@ -30,6 +30,7 @@ from cloudoptics.platform.settings import get_settings
 from cloudoptics.privacy import routes as privacy_routes
 from cloudoptics.recommendations import routes as recommendation_routes
 from cloudoptics.reporting import routes as reporting_routes
+from cloudoptics.support import routes as support_routes
 from cloudoptics.trends import routes as trend_routes
 
 PROBLEM_JSON = "application/problem+json"
@@ -124,6 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(reporting_routes.reports_router)
     app.include_router(privacy_routes.router)
     app.include_router(export_routes.router)
+    app.include_router(support_routes.router)
     if settings.auth_mode == "dev":
         app.include_router(dev_routes.router)
     return app

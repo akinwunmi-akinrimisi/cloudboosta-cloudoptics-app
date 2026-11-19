@@ -54,6 +54,8 @@ import type {
   ReloadStatus,
   ResourceScan,
   Role,
+  SupportGrant,
+  SupportGrantRequest,
   Tenant,
   TenantDeletion,
 } from './types'
@@ -382,6 +384,18 @@ export class HttpApi implements Api {
 
   cancelTenantDeletion(tenantId: string): Promise<void> {
     return this.request('DELETE', `/v1/tenants/${tenantId}/deletion`)
+  }
+
+  listSupportGrants(): Promise<SupportGrant[]> {
+    return this.request('GET', '/v1/admin/support-access')
+  }
+
+  requestSupportGrant(body: SupportGrantRequest): Promise<SupportGrant> {
+    return this.request('POST', '/v1/admin/support-access', body)
+  }
+
+  endSupportGrant(grantId: string): Promise<SupportGrant> {
+    return this.request('POST', `/v1/admin/support-access/${grantId}/end`)
   }
 
   scanResources(tenantId: string, connectionId: string): Promise<ResourceScan> {

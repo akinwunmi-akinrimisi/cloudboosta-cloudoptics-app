@@ -12,9 +12,8 @@ from sqlalchemy import text
 
 from cloudoptics.audit.log import Actor
 from cloudoptics.fx import service
-from cloudoptics.identity.deps import Session, User, ViewerAccess
+from cloudoptics.identity.deps import Session, User, ViewerAccess, is_platform_admin
 from cloudoptics.platform.api import ApiModel, client_ip
-from cloudoptics.platform.settings import get_settings
 
 router = APIRouter(prefix="/v1", tags=["fx"])
 
@@ -70,9 +69,8 @@ class RateCreate(ApiModel):
 
 
 async def staff_user(user: User, request: Request) -> Actor:
-    """Cloudoptics staff only (``CLOUDOPTICS_PLATFORM_ADMIN_EMAILS``), with the email confirmed:
-    anyone can sign up with an address they do not own."""
-    if not user.email_verified or user.email.lower() not in get_settings().platform_admins:
+    """Cloudoptics staff only (``identity.deps.is_platform_admin``)."""
+    if not is_platform_admin(user):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Cloudoptics staff only")
     return Actor(
         type="staff",

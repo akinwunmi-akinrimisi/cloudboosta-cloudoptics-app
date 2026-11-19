@@ -217,6 +217,7 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
 
 def seed_workspace(owner_sql: Sql, tenant: str) -> None:
     """One row in every workspace-wide table (membership and tenant exist already)."""
+    grant = uuid.uuid4()
     rows = [
         (
             "INSERT INTO invite (id, tenant_id, email, role, expires_at) "
@@ -268,6 +269,20 @@ def seed_workspace(owner_sql: Sql, tenant: str) -> None:
         (
             "INSERT INTO aws_api_usage (tenant_id, day, api, units) "
             "VALUES (%s, '2026-10-02', 'GetMetricData', 5)",
+            tenant,
+        ),
+        (
+            "INSERT INTO support_access_grant (id, tenant_id, tenant_name, staff_user_id, "
+            "justification, expires_at) SELECT %s, %s, 'W', m.user_id, 'Ticket 42 triage', "
+            "now() + interval '1 hour' FROM membership m WHERE m.tenant_id = %s LIMIT 1",
+            grant,
+            tenant,
+            tenant,
+        ),
+        (
+            "INSERT INTO support_access_request (grant_id, tenant_id, method, path, allowed) "
+            "VALUES (%s, %s, 'GET', '/v1/tenants', true)",
+            grant,
             tenant,
         ),
     ]

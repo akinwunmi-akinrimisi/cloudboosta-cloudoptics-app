@@ -12,13 +12,22 @@ from pydantic import EmailStr, Field, field_validator
 from sqlalchemy import text
 
 from cloudoptics.audit import log as audit
-from cloudoptics.identity.deps import AdminAccess, Role, Session, User, ViewerAccess, has_mfa
+from cloudoptics.identity.deps import (
+    AdminAccess,
+    Role,
+    Session,
+    User,
+    ViewerAccess,
+    has_mfa,
+    is_platform_admin,
+)
 from cloudoptics.identity.invites import accept_invites
 from cloudoptics.platform.api import ApiModel, ApiProblem, user_actor
 from cloudoptics.platform.db import scope
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.ratelimit import per_ip
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.support import service as support
 
 router = APIRouter(prefix="/v1", tags=["identity"])
 
@@ -39,10 +48,19 @@ COUNTRY_DEFAULTS: dict[str, tuple[str, str]] = {
 SUPPORTED_CURRENCIES = {c for c, _ in COUNTRY_DEFAULTS.values()} | {"USD", "EUR"}
 
 
+class SupportSession(ApiModel):
+    """A staff member's active break-glass grant (read-only, until ``expiresAt``)."""
+
+    grant_id: uuid.UUID
+    expires_at: datetime
+
+
 class Membership(ApiModel):
     tenant_id: uuid.UUID
     tenant_name: str
     role: Role
+    # Set for a workspace a Cloudoptics staff member reads under break-glass (role viewer).
+    support: SupportSession | None = None
 
 
 class Me(ApiModel):
@@ -51,6 +69,8 @@ class Me(ApiModel):
     display_name: str | None
     preferred_currency_view: CurrencyView
     memberships: list[Membership]
+    # Cloudoptics staff (platform admins): the web app shows the support access tool.
+    staff: bool = False
 
 
 class MePatch(ApiModel):
@@ -177,12 +197,25 @@ async def _me(user: User, session: Session) -> Me:
         ),
         {"u": user.id},
     )
+    memberships = [Membership.model_validate(r._mapping) for r in rows]
+    staff = is_platform_admin(user)
+    if staff:
+        for g in await session.execute(support.OWN_ACTIVE_GRANTS, {"u": user.id}):
+            memberships.append(
+                Membership(
+                    tenant_id=g.tenant_id,
+                    tenant_name=g.tenant_name,
+                    role="viewer",
+                    support=SupportSession(grant_id=g.id, expires_at=g.expires_at),
+                )
+            )
     return Me(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
         preferred_currency_view=pref,
-        memberships=[Membership.model_validate(r._mapping) for r in rows],
+        memberships=memberships,
+        staff=staff,
     )
 
 
