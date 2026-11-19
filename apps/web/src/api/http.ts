@@ -53,7 +53,7 @@ import type {
   Role,
   Tenant,
 } from './types'
-import { ApiError, MFA_REQUIRED_MESSAGE } from './types'
+import { ApiError, MFA_REQUIRED_MESSAGE, rateLimitedMessage } from './types'
 
 const TOKEN_KEY = 'co.token'
 
@@ -371,6 +371,8 @@ export class HttpApi implements Api {
     if (token) headers.authorization = `Bearer ${token}`
     let res: Response
     try {
+      // The default cache mode lets the browser revalidate GETs with the API's ETags: a 304
+      // reaches this code as a 200 with the cached body, so callers always get data.
       res = await fetch(`${this.baseUrl}${path}`, {
         method,
         headers,
@@ -390,9 +392,22 @@ export class HttpApi implements Api {
       if (res.status === 401 && problem.code === 'mfa_required') {
         throw new ApiError(401, MFA_REQUIRED_MESSAGE, [], problem.code)
       }
+      if (res.status === 429) {
+        const retryAfter = parseRetryAfter(res.headers.get('retry-after'))
+        throw new ApiError(429, rateLimitedMessage(retryAfter), [], problem.code ?? 'rate_limited', retryAfter)
+      }
       if (res.status === 401 && !this.provider) this.signOut()
       throw new ApiError(res.status, problem.title ?? `Request failed (${res.status})`, problem.errors, problem.code)
     }
     return (res.status === 204 ? undefined : await res.json()) as T
   }
+}
+
+/** ``Retry-After`` in seconds: a number of seconds or an HTTP date. */
+export function parseRetryAfter(value: string | null, now = Date.now()): number | undefined {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds)) return Math.max(0, Math.ceil(seconds))
+  const at = Date.parse(value)
+  return Number.isNaN(at) ? undefined : Math.max(0, Math.ceil((at - now) / 1000))
 }

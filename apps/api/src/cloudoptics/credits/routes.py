@@ -12,6 +12,7 @@ from cloudoptics.audit import log as audit
 from cloudoptics.credits import service
 from cloudoptics.identity.deps import AdminAccess, Session, ViewerAccess
 from cloudoptics.platform.api import ApiModel, user_actor
+from cloudoptics.platform.conditional import ConditionalGet
 from cloudoptics.platform.ids import uuid7
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/costs/credits", tags=["costs"])
@@ -80,7 +81,7 @@ def _out(r: service.Runway) -> Credits:
 
 
 @router.get("", response_model=Credits)
-async def get_credits(access: ViewerAccess, session: Session) -> Credits:
+async def get_credits(access: ViewerAccess, session: Session, cond: ConditionalGet) -> Credits:
     return _out(await service.runway(session, datetime.now(UTC).date()))
 
 

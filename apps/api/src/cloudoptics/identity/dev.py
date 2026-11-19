@@ -6,14 +6,19 @@ Settings refuse dev auth in staging and production.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import EmailStr, Field
 
 from cloudoptics.identity.auth import DevVerifier
 from cloudoptics.platform.api import ApiModel
+from cloudoptics.platform.ratelimit import per_ip
 from cloudoptics.platform.settings import get_settings
 
-router = APIRouter(prefix="/v1/dev", tags=["dev"])
+router = APIRouter(
+    prefix="/v1/dev",
+    tags=["dev"],
+    dependencies=[Depends(per_ip("dev", lambda: get_settings().rate_limit_public_per_minute))],
+)
 
 
 class DevTokenRequest(ApiModel):

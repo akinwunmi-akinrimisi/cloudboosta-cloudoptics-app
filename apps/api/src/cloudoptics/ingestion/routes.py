@@ -17,6 +17,7 @@ from cloudoptics.identity.deps import AdminAccess, Session, ViewerAccess
 from cloudoptics.ingestion import queries, reload
 from cloudoptics.ingestion.service import INGESTABLE, ingest_connection
 from cloudoptics.platform.api import ApiModel, user_actor
+from cloudoptics.platform.conditional import ConditionalGet
 from cloudoptics.platform.settings import get_settings
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}", tags=["costs"])
@@ -145,42 +146,55 @@ class CostMonths(ApiModel):
 
 @router.get("/costs/months", response_model=CostMonths)
 async def cost_months(
-    access: ViewerAccess, session: Session, today: date | None = None
+    access: ViewerAccess, session: Session, cond: ConditionalGet, today: date | None = None
 ) -> CostMonths:
     """The months with cost data, newest first: total spend (amortised, after credits, with
     tax) and whether the figures are final."""
-    items = await queries.months(session, today or datetime.now(UTC).date())
-    return CostMonths(
-        currency="USD",
-        months=[
-            CostMonth(
-                month=f"{i.month:%Y-%m}",
-                source=i.source,
-                total=i.total,
-                data_through=i.data_through,
-                state=i.state,
-                report=i.report,
-            )
-            for i in items
-        ],
-    )
+
+    async def load() -> CostMonths:
+        items = await queries.months(session, today or datetime.now(UTC).date())
+        return CostMonths(
+            currency="USD",
+            months=[
+                CostMonth(
+                    month=f"{i.month:%Y-%m}",
+                    source=i.source,
+                    total=i.total,
+                    data_through=i.data_through,
+                    state=i.state,
+                    report=i.report,
+                )
+                for i in items
+            ],
+        )
+
+    return await cond.cached(load)
 
 
 @router.get("/costs/summary", response_model=CostSummary)
 async def cost_summary(
-    access: ViewerAccess, session: Session, today: date | None = None, month: MonthParam = None
+    access: ViewerAccess,
+    session: Session,
+    cond: ConditionalGet,
+    today: date | None = None,
+    month: MonthParam = None,
 ) -> CostSummary:
     """``today`` (UTC) defaults to now; it exists so tests and demos can pin the month.
     ``month``: an ended month's whole spend instead (no forecast)."""
     day = today or datetime.now(UTC).date()
-    result = await queries.summary(session, day, chosen_month(month, day))
-    return CostSummary.model_validate(result)
+    chosen = chosen_month(month, day)
+
+    async def load() -> CostSummary:
+        return CostSummary.model_validate(await queries.summary(session, day, chosen))
+
+    return await cond.cached(load)
 
 
 @router.get("/costs/daily", response_model=DailyCosts)
 async def cost_daily(
     access: ViewerAccess,
     session: Session,
+    cond: ConditionalGet,
     today: date | None = None,
     days: int = Query(30, ge=7, le=92),
     month: MonthParam = None,
@@ -188,14 +202,19 @@ async def cost_daily(
     """Daily amortised cost after credits, for the trend chart. ``month``: every day of an
     ended month instead of the last ``days`` days."""
     day = today or datetime.now(UTC).date()
-    result = await queries.daily(session, day, days, chosen_month(month, day))
-    return DailyCosts.model_validate(result)
+    chosen = chosen_month(month, day)
+
+    async def load() -> DailyCosts:
+        return DailyCosts.model_validate(await queries.daily(session, day, days, chosen))
+
+    return await cond.cached(load)
 
 
 @router.get("/costs/breakdown", response_model=Breakdown)
 async def cost_breakdown(
     access: ViewerAccess,
     session: Session,
+    cond: ConditionalGet,
     dimension: Literal["service", "account", "region"] = "service",
     today: date | None = None,
     limit: int = Query(queries.TOP_ITEMS, ge=1, le=50),
@@ -204,8 +223,12 @@ async def cost_breakdown(
     """This month's (or ``month``'s) spend excluding tax, by service, account or region
     (top ``limit`` plus the rest)."""
     day = today or datetime.now(UTC).date()
-    result = await queries.breakdown(session, chosen_month(month, day) or day, dimension, limit)
-    return Breakdown.model_validate(result)
+    first = chosen_month(month, day) or day
+
+    async def load() -> Breakdown:
+        return Breakdown.model_validate(await queries.breakdown(session, first, dimension, limit))
+
+    return await cond.cached(load)
 
 
 @router.post(

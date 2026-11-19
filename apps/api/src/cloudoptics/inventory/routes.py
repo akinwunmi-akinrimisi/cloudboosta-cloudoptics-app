@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from cloudoptics.identity.deps import Session, ViewerAccess
 from cloudoptics.inventory import scanner
 from cloudoptics.platform.api import ApiModel
+from cloudoptics.platform.conditional import ConditionalGet
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/resources", tags=["inventory"])
 
@@ -53,7 +54,9 @@ class InventorySummary(ApiModel):
 
 
 @router.get("/summary", response_model=InventorySummary)
-async def inventory_summary(access: ViewerAccess, session: Session) -> InventorySummary:
+async def inventory_summary(
+    access: ViewerAccess, session: Session, cond: ConditionalGet
+) -> InventorySummary:
     counts, last = await scanner.summary(session)
     return InventorySummary(
         last_scan_at=last,

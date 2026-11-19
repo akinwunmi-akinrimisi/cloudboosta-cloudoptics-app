@@ -62,6 +62,9 @@ def app(database: dict[str, str]):  # type: ignore[no-untyped-def]
     os.environ["CLOUDOPTICS_DATABASE_URL"] = database["owner"]
     os.environ["CLOUDOPTICS_APP_DATABASE_URL"] = database["app"]
     os.environ["CLOUDOPTICS_AUTH_MODE"] = "dev"
+    # The suite signs in hundreds of times a minute from one address; test_rate_limits.py
+    # turns the limits on (rate_limits fixture).
+    os.environ["CLOUDOPTICS_RATE_LIMIT_ENABLED"] = "false"
     from cloudoptics.identity.auth import get_verifier
     from cloudoptics.platform.db import get_engine, get_sessionmaker
     from cloudoptics.platform.settings import get_settings

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, date, datetime
 from typing import Literal
 
@@ -13,6 +14,7 @@ from cloudoptics.identity.deps import Session, ViewerAccess
 from cloudoptics.ingestion import queries
 from cloudoptics.ingestion.routes import Forecast, MonthParam, chosen_month
 from cloudoptics.platform.api import ApiModel
+from cloudoptics.platform.conditional import ConditionalGet
 from cloudoptics.trends import changes, forecast
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/costs", tags=["costs"])
@@ -76,11 +78,15 @@ def _month(day: date) -> str:
 
 @router.get("/forecast", response_model=Outlook)
 async def get_forecast(
-    access: ViewerAccess, session: Session, today: date | None = None
+    access: ViewerAccess, session: Session, cond: ConditionalGet, today: date | None = None
 ) -> Outlook:
     """This month's forecast, the next three months with a range, today's rate and last
     month's usage and exchange-rate effects. ``today`` (UTC) pins the date for tests."""
-    o = await forecast.outlook(session, access.tenant_id, today or datetime.now(UTC).date())
+    return await cond.cached(lambda: _outlook(access.tenant_id, session, today))
+
+
+async def _outlook(tenant_id: uuid.UUID, session: Session, today: date | None) -> Outlook:
+    o = await forecast.outlook(session, tenant_id, today or datetime.now(UTC).date())
     d = o.decomposition
     return Outlook(
         status=o.status,
@@ -179,6 +185,7 @@ def _contributor(c: changes.Contributor) -> Contributor:
 async def get_changes(
     access: ViewerAccess,
     session: Session,
+    cond: ConditionalGet,
     today: date | None = None,
     limit: int = Query(changes.TOP, ge=1, le=10),
     month: MonthParam = None,
@@ -188,6 +195,10 @@ async def get_changes(
     default the month to date against the same days last month."""
     day = today or datetime.now(UTC).date()
     past = queries.past_month(chosen_month(month, day), day)
+    return await cond.cached(lambda: _changes(session, day, limit, past))
+
+
+async def _changes(session: Session, day: date, limit: int, past: date | None) -> Changes:
     w = await changes.what_changed(session, day, limit, month=past)
     if w is None:
         return Changes(

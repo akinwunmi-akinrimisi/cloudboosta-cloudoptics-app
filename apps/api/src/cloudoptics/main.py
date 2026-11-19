@@ -3,7 +3,7 @@
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -23,6 +23,7 @@ from cloudoptics.ingestion import routes as ingestion_routes
 from cloudoptics.inventory import routes as inventory_routes
 from cloudoptics.notifications import routes as notification_routes
 from cloudoptics.platform.api import ApiProblem
+from cloudoptics.platform.conditional import NotModified
 from cloudoptics.platform.db import get_engine
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.recommendations import routes as recommendation_routes
@@ -59,8 +60,13 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
-        allow_headers=["authorization", "content-type"],
+        allow_headers=["authorization", "content-type", "if-none-match"],
+        expose_headers=["etag", "retry-after", "ratelimit", "ratelimit-policy"],
     )
+
+    @app.exception_handler(NotModified)
+    async def not_modified(request: Request, exc: NotModified) -> Response:
+        return Response(status_code=304, headers=exc.headers)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_problem(request: Request, exc: StarletteHTTPException) -> JSONResponse:
