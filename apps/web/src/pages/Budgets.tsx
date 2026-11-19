@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react'
 
 import { useApi } from '../app/context'
 import type { Budget, BudgetInput, BudgetStatus, BudgetThresholdInput } from '../api/types'
+import { ExportButton } from '../components/exports'
 import { Alert, Button, Card, Field, cx } from '../components/ui'
 import { useWorkspace } from './Workspace'
 
@@ -50,11 +51,14 @@ export function Budgets() {
             month-end forecast crosses a threshold. Each threshold alerts once a month.
           </p>
         </div>
-        {canEdit && !creating && (
-          <Button onClick={() => setCreating(true)}>
-            <Plus size={16} /> New budget
-          </Button>
-        )}
+        <div className="flex flex-wrap items-start gap-2">
+          {(budgets.data?.length ?? 0) > 0 && <ExportButton tenantId={tenantId} request={{ kind: 'budgets' }} />}
+          {canEdit && !creating && (
+            <Button onClick={() => setCreating(true)}>
+              <Plus size={16} /> New budget
+            </Button>
+          )}
+        </div>
       </div>
       {creating && (
         <Card>

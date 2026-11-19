@@ -592,6 +592,32 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByRole('cell', { name: /af-south-1/ })).toBeTruthy()
   })
 
+  it('exports the cost table and the recommendation list, and lists the exports on Reports', async () => {
+    const saved: string[] = []
+    URL.createObjectURL = vi.fn(() => 'blob:csv')
+    URL.revokeObjectURL = vi.fn()
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push(this.download)
+    })
+    const { user } = await connectedWorkspace('amara@example.com')
+    await user.click(screen.getByRole('link', { name: 'Cost Explorer' }))
+    expect(await screen.findByRole('cell', { name: /Amazon Relational Database Service/ })).toBeTruthy()
+    await user.click(await screen.findByRole('button', { name: 'Export CSV' }))
+    await waitFor(() => expect(saved).toHaveLength(1))
+    expect(saved[0]).toMatch(/^cloudoptics-costs-\d{8}-\d{8}\.csv$/)
+
+    await user.click(screen.getByRole('link', { name: 'Recommendations' }))
+    await user.click(await screen.findByRole('button', { name: 'Export CSV' }))
+    await waitFor(() => expect(saved).toHaveLength(2))
+    expect(saved[1]).toMatch(/^cloudoptics-recommendations-\d{8}\.csv$/)
+
+    await user.click(screen.getByRole('link', { name: 'Reports' }))
+    const list = await screen.findByRole('region', { name: 'Your exports' })
+    await waitFor(() => expect(list.querySelectorAll('tbody tr')).toHaveLength(2))
+    expect(screen.getAllByText('Ready')).toHaveLength(2)
+    click.mockRestore()
+  })
+
   it('reviews a previous month on the Cost Explorer', async () => {
     const { api, tenant, user } = await connectedWorkspace('wanjiru@example.com')
     await user.click(screen.getByRole('link', { name: 'Cost Explorer' }))

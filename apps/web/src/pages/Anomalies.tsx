@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { useApi } from '../app/context'
 import { ApiError, type AlertSettings, type AlertSettingsView, type Anomaly, type AnomalyStatus } from '../api/types'
 import { AnomalyChart } from '../components/charts'
+import { ExportButton } from '../components/exports'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { useMoney, useWorkspace } from './Workspace'
 
@@ -43,12 +44,20 @@ export function Anomalies() {
   const count = (s: AnomalyStatus | 'all') => (s === 'all' ? all.length : all.filter((a) => a.status === s).length)
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Anomalies</h1>
-        <p className="text-sm text-secondary">
-          Days when an account&apos;s spend on a service is well above the same weekday over the four weeks before.
-          Checked each time new bills arrive; new anomalies are emailed to admins and members.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Anomalies</h1>
+          <p className="text-sm text-secondary">
+            Days when an account&apos;s spend on a service is well above the same weekday over the four weeks before.
+            Checked each time new bills arrive; new anomalies are emailed to admins and members.
+          </p>
+        </div>
+        {all.length > 0 && (
+          <ExportButton
+            tenantId={tenantId}
+            request={{ kind: 'anomalies', days: 90, status: filter === 'all' ? null : filter }}
+          />
+        )}
       </div>
       <div role="tablist" aria-label="Status" className="flex flex-wrap gap-2">
         {FILTERS.map((s) => (

@@ -5,6 +5,7 @@ import { useState, type FormEvent } from 'react'
 import { useApi } from '../app/context'
 import type { CostDimension, CostMonth, CreditsRunway } from '../api/types'
 import { DailySpendChart } from '../components/charts'
+import { ExportButton } from '../components/exports'
 import { Alert, Button, Card, Field, cx } from '../components/ui'
 import { ForecastPanel, WhatChanged } from './Forecast'
 import { DIMENSIONS, useMoney, useWorkspace } from './Workspace'
@@ -40,6 +41,16 @@ function Toggle<T extends string | number>({
       ))}
     </div>
   )
+}
+
+/** The last day of a month ("2026-02" -> "2026-02-28"). */
+export function monthEnd(month: string): string {
+  return new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10)
+}
+
+/** The day `n` days before today (UTC), as YYYY-MM-DD. */
+function daysAgo(n: number): string {
+  return new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10)
 }
 
 /** "2026-10" as "October 2026". */
@@ -122,14 +133,29 @@ export function Costs() {
               {points.length > 0 ? `${money(total)} over ${points.length} days` : 'No daily data yet'}
             </p>
           </div>
-          {!provisional && !past && (
-            <Toggle
-              label="Range"
-              options={RANGES.map((r) => ({ id: r, label: `${r} days` }))}
-              value={days}
-              onChange={setDays}
-            />
-          )}
+          <div className="flex flex-wrap items-start gap-2">
+            {!provisional && !past && (
+              <Toggle
+                label="Range"
+                options={RANGES.map((r) => ({ id: r, label: `${r} days` }))}
+                value={days}
+                onChange={setDays}
+              />
+            )}
+            {tenantId !== null && points.length > 0 && !provisional && (
+              <ExportButton
+                tenantId={tenantId}
+                label="Export daily CSV"
+                request={{
+                  kind: 'costs',
+                  start: past ? `${past.month}-01` : daysAgo(days - 1),
+                  end: past ? monthEnd(past.month) : daysAgo(0),
+                  granularity: 'day',
+                  groupBy: ['service'],
+                }}
+              />
+            )}
+          </div>
         </div>
         {daily.isLoading && <p className="text-sm text-secondary">Loading…</p>}
         {points.length > 0 && <DailySpendChart points={points} currency="USD" />}
@@ -144,7 +170,21 @@ export function Costs() {
               {breakdown.data && breakdown.data.total > 0 ? `${money(breakdown.data.total)} excluding tax` : ''}
             </p>
           </div>
-          <Toggle label="Group by" options={DIMENSIONS} value={dimension} onChange={setDimension} />
+          <div className="flex flex-wrap items-start gap-2">
+            <Toggle label="Group by" options={DIMENSIONS} value={dimension} onChange={setDimension} />
+            {tenantId !== null && breakdown.data?.source === 'cur' && items.length > 0 && (
+              <ExportButton
+                tenantId={tenantId}
+                request={{
+                  kind: 'costs',
+                  start: `${breakdown.data.month}-01`,
+                  end: monthEnd(breakdown.data.month),
+                  granularity: 'month',
+                  groupBy: [dimension],
+                }}
+              />
+            )}
+          </div>
         </div>
         {breakdown.isLoading && <p className="text-sm text-secondary">Loading…</p>}
         {breakdown.data && items.length === 0 && (

@@ -23,6 +23,7 @@ def get_job_app() -> procrastinate.App:
     from cloudoptics.budgets.jobs import blueprint as budget_jobs
     from cloudoptics.commitments.jobs import blueprint as commitment_jobs
     from cloudoptics.connectors.jobs import blueprint as connector_jobs
+    from cloudoptics.exports.jobs import blueprint as export_jobs
     from cloudoptics.fx.feed import blueprint as fx_jobs
     from cloudoptics.ingestion.jobs import blueprint as ingestion_jobs
     from cloudoptics.inventory.jobs import blueprint as inventory_jobs
@@ -50,6 +51,7 @@ def get_job_app() -> procrastinate.App:
     app.add_tasks_from(recommendation_jobs, namespace="recommendations")
     app.add_tasks_from(commitment_jobs, namespace="commitments")
     app.add_tasks_from(privacy_jobs, namespace="privacy")
+    app.add_tasks_from(export_jobs, namespace="exports")
     return app
 
 

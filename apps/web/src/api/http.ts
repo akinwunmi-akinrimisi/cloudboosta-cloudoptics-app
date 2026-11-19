@@ -12,6 +12,8 @@ import type {
   CreditBalanceInput,
   CreditsRunway,
   DigestPreview,
+  ExportJob,
+  ExportRequest,
   MonthlyReport,
   ReportList,
   NotificationChoices,
@@ -193,6 +195,23 @@ export class HttpApi implements Api {
 
   sendReport(tenantId: string, month: string): Promise<{ sentTo: number; report: MonthlyReport }> {
     return this.request('POST', `/v1/tenants/${tenantId}/reports/${month}/send`)
+  }
+
+  createExport(tenantId: string, request: ExportRequest): Promise<ExportJob> {
+    return this.request('POST', `/v1/tenants/${tenantId}/exports`, request)
+  }
+
+  getExport(tenantId: string, id: string): Promise<ExportJob> {
+    return this.request('GET', `/v1/tenants/${tenantId}/exports/${id}`)
+  }
+
+  listExports(tenantId: string): Promise<{ exports: ExportJob[] }> {
+    return this.request('GET', `/v1/tenants/${tenantId}/exports`)
+  }
+
+  async downloadExport(tenantId: string, id: string): Promise<Blob> {
+    const res = await this.send('GET', `/v1/tenants/${tenantId}/exports/${id}/download`, undefined, true, 'text/csv')
+    return res.blob()
   }
 
   getReportSettings(tenantId: string): Promise<{ emails: string[] }> {
@@ -387,7 +406,13 @@ export class HttpApi implements Api {
   }
 
   private async request<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
-    const headers: Record<string, string> = { accept: 'application/json' }
+    const res = await this.send(method, path, body, auth)
+    return (res.status === 204 ? undefined : await res.json()) as T
+  }
+
+  /** Sends a request with the session token; throws `ApiError` unless it succeeds. */
+  private async send(method: string, path: string, body?: unknown, auth = true, accept = 'application/json'): Promise<Response> {
+    const headers: Record<string, string> = { accept }
     if (body !== undefined) headers['content-type'] = 'application/json'
     const token = auth ? (this.provider ? await this.provider.getToken() : read('session', TOKEN_KEY)) : null
     if (token) headers.authorization = `Bearer ${token}`
@@ -421,7 +446,7 @@ export class HttpApi implements Api {
       if (res.status === 401 && !this.provider) this.signOut()
       throw new ApiError(res.status, problem.title ?? `Request failed (${res.status})`, problem.errors, problem.code)
     }
-    return (res.status === 204 ? undefined : await res.json()) as T
+    return res
   }
 }
 

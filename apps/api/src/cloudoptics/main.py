@@ -15,6 +15,7 @@ from cloudoptics.commitments import routes as commitment_routes
 from cloudoptics.connectors import access as connector_access
 from cloudoptics.connectors import routes as connector_routes
 from cloudoptics.credits import routes as credit_routes
+from cloudoptics.exports import routes as export_routes
 from cloudoptics.fx import routes as fx_routes
 from cloudoptics.identity import dev as dev_routes
 from cloudoptics.identity import invites as invite_routes
@@ -122,6 +123,7 @@ def create_app() -> FastAPI:
     app.include_router(reporting_routes.router)
     app.include_router(reporting_routes.reports_router)
     app.include_router(privacy_routes.router)
+    app.include_router(export_routes.router)
     if settings.auth_mode == "dev":
         app.include_router(dev_routes.router)
     return app

@@ -11,6 +11,8 @@ import type {
   CreditBalanceInput,
   CreditsRunway,
   DigestPreview,
+  ExportJob,
+  ExportRequest,
   MonthlyReport,
   ReportList,
   NotificationChoices,
@@ -67,6 +69,7 @@ import type {
 } from './types'
 import { ApiError } from './types'
 import { demoAdvisory, demoCommitments, demoR8 } from './demoCommitments'
+import { demoCsv } from './demoExports'
 
 // In-browser stand-in for the API, used by the public GitHub Pages build. Nothing leaves
 // the browser and no AWS call is made; state lives in this viewer's localStorage only.
@@ -798,6 +801,9 @@ export class DemoApi implements Api {
 
   /** How long a demo reload of the bills runs (it shows as running until then). */
   private readonly reloadMs: number
+
+  /** This session's exports (not kept across reloads): the file, and when a "large" one is ready. */
+  private readonly exports = new Map<string, { tenantId: string; job: ExportJob; csv: string; startedAt: number; readyAt: number }>()
 
   constructor(latencyMs = 250) {
     this.latencyMs = latencyMs
@@ -2381,6 +2387,71 @@ export class DemoApi implements Api {
     const prefs = await this.getNotificationPreferences(tenantId)
     const extra = this.state.reportEmails?.[tenantId] ?? []
     return { sentTo: (prefs.mine.monthlyReport ? 1 : 0) + extra.length, report: await this.demoReport(tenantId, month) }
+  }
+
+  async createExport(tenantId: string, request: ExportRequest): Promise<ExportJob> {
+    await this.tick()
+    this.tenant(tenantId)
+    const recent = [...this.exports.values()].filter((e) => e.tenantId === tenantId && Date.now() - e.startedAt < 3_600_000)
+    if (recent.length >= 10) throw new ApiError(429, 'You can make 10 exports an hour. Try again later.', [], 'rate_limited')
+    const { csv, rows } = await demoCsv(this, tenantId, request)
+    const now = Date.now()
+    const { kind, ...params } = request
+    const compact = (d: string) => d.replaceAll('-', '')
+    const range = request.kind === 'costs' ? `${compact(request.start)}-${compact(request.end)}` : compact(new Date(now).toISOString().slice(0, 10))
+    // Daily costs stand in for a large export: they "run on the worker" for a moment, with progress.
+    const slow = kind === 'costs' && request.granularity === 'day'
+    const job: ExportJob = {
+      id: randomId(),
+      kind,
+      params,
+      status: 'succeeded',
+      progress: 100,
+      rowCount: rows,
+      fileName: `cloudoptics-${kind}-${range}.csv`,
+      sizeBytes: new Blob([csv]).size,
+      error: null,
+      createdAt: new Date(now).toISOString(),
+      startedAt: new Date(now).toISOString(),
+      finishedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + 7 * 86_400_000).toISOString(),
+      downloadUrl: null,
+    }
+    const entry = { tenantId, job, csv, startedAt: now, readyAt: slow ? now + this.latencyMs * 8 : now }
+    this.exports.set(job.id, entry)
+    return this.exportView(entry)
+  }
+
+  private exportView(entry: { tenantId: string; job: ExportJob; startedAt: number; readyAt: number }): ExportJob {
+    const { job, tenantId, startedAt, readyAt } = entry
+    if (Date.now() >= readyAt) return { ...job, downloadUrl: `/v1/tenants/${tenantId}/exports/${job.id}/download` }
+    const share = (Date.now() - startedAt) / (readyAt - startedAt)
+    return { ...job, status: 'running', progress: 5 + Math.floor(90 * share), rowCount: null, finishedAt: null, sizeBytes: null }
+  }
+
+  private exportEntry(tenantId: string, id: string) {
+    const entry = this.exports.get(id)
+    if (!entry || entry.tenantId !== tenantId) throw new ApiError(404, 'Export not found')
+    return entry
+  }
+
+  async getExport(tenantId: string, id: string): Promise<ExportJob> {
+    await this.tick()
+    return this.exportView(this.exportEntry(tenantId, id))
+  }
+
+  async listExports(tenantId: string): Promise<{ exports: ExportJob[] }> {
+    await this.tick()
+    this.tenant(tenantId)
+    const mine = [...this.exports.values()].filter((e) => e.tenantId === tenantId).reverse()
+    return { exports: mine.map((e) => this.exportView(e)) }
+  }
+
+  async downloadExport(tenantId: string, id: string): Promise<Blob> {
+    await this.tick()
+    const entry = this.exportEntry(tenantId, id)
+    if (this.exportView(entry).status !== 'succeeded') throw new ApiError(409, 'This export is not ready')
+    return new Blob([entry.csv], { type: 'text/csv;charset=utf-8' })
   }
 
   async getReportSettings(tenantId: string): Promise<{ emails: string[] }> {

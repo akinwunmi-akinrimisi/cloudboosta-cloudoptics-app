@@ -20,6 +20,7 @@ async def main() -> None:
                 "analysis",
                 "notifications",
                 "privacy",
+                "exports",
             ]
         )
 
