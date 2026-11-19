@@ -73,7 +73,7 @@ async def test_the_worker_runs_jobs_concurrently_with_deadlines(monkeypatch) -> 
     assert seen["concurrency"] == 5
     assert seen["worker_middleware"] == [jobs.deadline_middleware]
     assert "notifications" in seen["queues"]
-    assert Settings().worker_concurrency == 3
+    assert Settings().worker_concurrency == 2
     with pytest.raises(ValidationError):
         Settings(worker_concurrency=0)
 
