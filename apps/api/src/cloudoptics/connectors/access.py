@@ -91,9 +91,13 @@ NOT_ADMIN = (
     "Ask an admin to open a new link from Cloudoptics."
 )
 
-INTENT_COLUMNS = (
-    "id, connection_id, error, created_at, created_by, expires_at, revoked_at, "
-    "expires_at <= now() AS expired"
+LIST_INTENTS = (
+    "SELECT id, connection_id, error, created_at, created_by, expires_at, revoked_at, "
+    "expires_at <= now() AS expired FROM connection_intent ORDER BY created_at DESC"
+)
+GET_INTENT = (
+    "SELECT id, connection_id, error, created_at, created_by, expires_at, revoked_at, "
+    "expires_at <= now() AS expired FROM connection_intent WHERE id = :i"
 )
 
 
@@ -176,9 +180,7 @@ async def create_intent(access: AdminAccess, session: Session) -> IntentSetup:
 
 @intents_router.get("", response_model=list[IntentSummary])
 async def list_intents(access: AdminAccess, session: Session) -> list[IntentSummary]:
-    rows = await session.execute(
-        text(f"SELECT {INTENT_COLUMNS} FROM connection_intent ORDER BY created_at DESC")  # noqa: S608 - fixed columns
-    )
+    rows = await session.execute(text(LIST_INTENTS))
     return [_summary(r) for r in rows]
 
 
@@ -186,7 +188,7 @@ async def list_intents(access: AdminAccess, session: Session) -> list[IntentSumm
 async def get_intent(intent_id: uuid.UUID, access: AdminAccess, session: Session) -> Intent:
     row = (
         await session.execute(
-            text(f"SELECT {INTENT_COLUMNS} FROM connection_intent WHERE id = :i"),  # noqa: S608 - fixed columns
+            text(GET_INTENT),
             {"i": intent_id},
         )
     ).one_or_none()
