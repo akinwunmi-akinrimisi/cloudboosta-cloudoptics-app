@@ -151,12 +151,16 @@ describe('Demo exports', () => {
 
   it('runs daily costs as a large export and limits exports to 10 an hour', async () => {
     const { api, tenantId } = await workspace()
-    const slow = new DemoApi(5)
+    // 40 ms latency: the large export is ready 8 x 40 = 320 ms after it starts, wide enough that a
+    // busy CI machine still asks for the download while it is running.
+    const slow = new DemoApi(40)
     await slow.signIn('demo@example.com')
     const queued = await slow.createExport(tenantId, { ...REQUEST, granularity: 'day' })
     expect(queued.status).toBe('running')
     await expect(slow.downloadExport(tenantId, queued.id)).rejects.toThrow('not ready')
-    await waitFor(async () => expect((await slow.getExport(tenantId, queued.id)).status).toBe('succeeded'))
+    await waitFor(async () => expect((await slow.getExport(tenantId, queued.id)).status).toBe('succeeded'), {
+      timeout: 3000,
+    })
 
     for (let i = 0; i < 10; i++) await api.createExport(tenantId, { kind: 'budgets' })
     await expect(api.createExport(tenantId, { kind: 'budgets' })).rejects.toThrow('10 exports an hour')
