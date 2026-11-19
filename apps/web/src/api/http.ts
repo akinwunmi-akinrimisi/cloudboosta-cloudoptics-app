@@ -53,7 +53,7 @@ import type {
   Role,
   Tenant,
 } from './types'
-import { ApiError } from './types'
+import { ApiError, MFA_REQUIRED_MESSAGE } from './types'
 
 const TOKEN_KEY = 'co.token'
 
@@ -379,13 +379,19 @@ export class HttpApi implements Api {
     } catch {
       throw new ApiError(0, 'Cannot reach the Cloudoptics API. Check your connection and try again.')
     }
-    if (res.status === 401 && !this.provider) this.signOut()
     if (!res.ok) {
       const problem = (await res.json().catch(() => ({}))) as {
         title?: string
+        code?: string
         errors?: { field: string; message: string }[]
       }
-      throw new ApiError(res.status, problem.title ?? `Request failed (${res.status})`, problem.errors)
+      // mfa_required: the session is valid but too weak for this workspace; keep it so the
+      // app can explain what to do instead of bouncing to the sign-in page.
+      if (res.status === 401 && problem.code === 'mfa_required') {
+        throw new ApiError(401, MFA_REQUIRED_MESSAGE, [], problem.code)
+      }
+      if (res.status === 401 && !this.provider) this.signOut()
+      throw new ApiError(res.status, problem.title ?? `Request failed (${res.status})`, problem.errors, problem.code)
     }
     return (res.status === 204 ? undefined : await res.json()) as T
   }

@@ -871,10 +871,10 @@ Content-Type: application/problem+json
 | HTTP | `code` examples | When |
 |---|---|---|
 | 400 | `validation_failed`, `invalid_filter` | Bad input (field errors in `errors[]`) |
-| 401 | `unauthenticated`, `mfa_required` | No or expired session; MFA step-up needed |
+| 401 | `unauthenticated`, `mfa_required` | No or expired session; MFA step-up needed (`mfa_required`: the workspace requires MFA and the session has none; `/v1/me` stays available) |
 | 403 | `insufficient_role`, `tenant_access_denied` | RBAC / tenant membership |
 | 404 | `not_found` | Also returned for other tenants' resources (no existence leak) |
-| 409 | `conflict`, `account_already_connected`, `idempotency_conflict` | State conflicts |
+| 409 | `conflict`, `account_already_connected`, `idempotency_conflict`, `mfa_not_enabled` | State conflicts (`mfa_not_enabled`: an admin without MFA tried to require it for the workspace) |
 | 422 | `unprocessable`, `connection_invalid` | Semantically invalid |
 | 429 | `rate_limited` | With `Retry-After` |
 | 503 | `data_not_ready`, `maintenance` | E.g., first CUR not delivered yet; retry hints |

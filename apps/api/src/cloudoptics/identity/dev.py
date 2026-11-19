@@ -19,6 +19,8 @@ router = APIRouter(prefix="/v1/dev", tags=["dev"])
 class DevTokenRequest(ApiModel):
     email: EmailStr
     name: str | None = Field(default=None, max_length=120)
+    # Mark the session as signed in with a second factor (amr includes "otp").
+    mfa: bool = False
 
 
 class DevToken(ApiModel):
@@ -29,4 +31,4 @@ class DevToken(ApiModel):
 @router.post("/token", response_model=DevToken, response_model_by_alias=True)
 async def dev_token(body: DevTokenRequest) -> DevToken:
     verifier = DevVerifier(get_settings().dev_auth_secret)
-    return DevToken(access_token=verifier.mint(str(body.email), body.name))
+    return DevToken(access_token=verifier.mint(str(body.email), body.name, mfa=body.mfa))

@@ -12,9 +12,9 @@ from pydantic import EmailStr, Field, field_validator
 from sqlalchemy import text
 
 from cloudoptics.audit import log as audit
-from cloudoptics.identity.deps import AdminAccess, Role, Session, User, ViewerAccess
+from cloudoptics.identity.deps import AdminAccess, Role, Session, User, ViewerAccess, has_mfa
 from cloudoptics.identity.invites import accept_invites
-from cloudoptics.platform.api import ApiModel, user_actor
+from cloudoptics.platform.api import ApiModel, ApiProblem, user_actor
 from cloudoptics.platform.db import scope
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
@@ -240,6 +240,14 @@ async def patch_tenant(
     body: TenantPatch, request: Request, access: AdminAccess, session: Session
 ) -> Tenant:
     changes = body.model_dump(exclude_none=True)
+    # An admin without MFA who turned the policy on would lock themselves out at once.
+    if body.mfa_required and not await has_mfa(access.user):
+        raise ApiProblem(
+            status.HTTP_409_CONFLICT,
+            "mfa_not_enabled",
+            "Turn on multi-factor authentication for your own account and sign in again "
+            "before requiring it for this workspace.",
+        )
     before = (await session.execute(SELECT_TENANT, {"t": access.tenant_id})).one()
     if changes:
         await session.execute(

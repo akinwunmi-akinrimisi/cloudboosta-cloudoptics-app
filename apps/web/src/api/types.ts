@@ -1029,10 +1029,26 @@ export interface Api {
 export class ApiError extends Error {
   readonly status: number
   readonly fieldErrors: { field: string; message: string }[]
+  /** Machine-readable problem code (docs/09 §3.4), e.g. 'mfa_required'. */
+  readonly code: string | undefined
 
-  constructor(status: number, title: string, fieldErrors: { field: string; message: string }[] = []) {
+  constructor(
+    status: number,
+    title: string,
+    fieldErrors: { field: string; message: string }[] = [],
+    code?: string,
+  ) {
     super(title)
     this.status = status
     this.fieldErrors = fieldErrors
+    this.code = code
   }
+}
+
+/** Shown when a workspace requires MFA and this session signed in without it. */
+export const MFA_REQUIRED_MESSAGE =
+  'This workspace requires multi-factor authentication. Turn on MFA (an authenticator app) in your account, then sign out and sign in again.'
+
+export function isMfaRequired(error: unknown): boolean {
+  return error instanceof ApiError && error.code === 'mfa_required'
 }
