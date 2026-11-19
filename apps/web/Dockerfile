@@ -9,7 +9,9 @@ USER node
 WORKDIR /src
 COPY --chown=node:node package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --chown=node:node apps/web/package.json apps/web/package.json
+COPY --chown=node:node packages/design-tokens/package.json packages/design-tokens/package.json
 RUN pnpm install --frozen-lockfile --filter @cloudoptics/web
 COPY --chown=node:node infra/cloudformation infra/cloudformation
+COPY --chown=node:node packages/design-tokens packages/design-tokens
 COPY --chown=node:node apps/web apps/web
 RUN pnpm --filter @cloudoptics/web build

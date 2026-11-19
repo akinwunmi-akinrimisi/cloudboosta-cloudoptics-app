@@ -1,0 +1,305 @@
+---
+// Landing page (docs/14 §5.1). Works fully without JavaScript; the currency toggle is the only
+// script. Claims come from the claims file and the generated permission data.
+import CurrencyToggle from '../components/CurrencyToggle.astro'
+import Faq from '../components/Faq.astro'
+import Icon from '../components/Icon.astro'
+import Shot from '../components/Shot.astro'
+import { DEMO_URL, START_URL, billingRole, claims, permissions, resourceRole } from '../config'
+import { LANDING_FAQ } from '../data/faq'
+import Base from '../layouts/Base.astro'
+import { sample } from '../data/sample'
+
+const title = 'Cloudoptics: your AWS bill in dollars and naira'
+const description =
+  'See your AWS bill in USD and your local currency, and know what is safe to cut. Read-only access, set up in about 15 minutes. Free during the beta.'
+
+const software = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Cloudoptics',
+  applicationCategory: 'BusinessApplication',
+  operatingSystem: 'Web',
+  description,
+  publisher: { '@type': 'Organization', name: 'Cloudboosta' },
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: claims.pricing.headline },
+}
+
+const pains = [
+  { t: 'The bill is in dollars, the budget is in naira.', d: 'Every exchange-rate move changes what the same servers cost you, and the AWS console only speaks USD.' },
+  { t: 'Credits run out on a date nobody is watching.', d: 'Start-up credits hide the real bill until the month they end.' },
+  { t: 'Nobody on the team has time to be a FinOps analyst.', d: 'Engineers are shipping. Finance cannot read Cost Explorer. The waste stays.' },
+]
+
+const recTypes = [
+  'Unattached volumes and old snapshots',
+  'Idle IP addresses, load balancers and NAT gateways',
+  'gp2 to gp3 storage',
+  'Idle servers and databases',
+  'Rightsizing, and older or x86 server types',
+  'Office-hours schedules for non-production',
+  'Extended Support charges for old database and Kubernetes versions',
+  'Savings Plan advice (advisory only)',
+]
+
+const teams = [
+  { who: 'For the CTO', what: 'One number for what can safely go, and a monthly report you can forward.' },
+  { who: 'For DevOps', what: 'Fixes with rollback steps and an "Open in AWS console" link, assigned to an owner.' },
+  { who: 'For finance', what: 'Costs, budgets and the monthly report in your currency, with the rate shown.' },
+]
+
+const included = [
+  'Costs in USD and your local currency, with month-end and 3-month forecasts',
+  'Every recommendation type, with risk scores, evidence and rollback steps',
+  'Verified savings, measured from your bills',
+  'Budgets, anomaly alerts, credits runway and the monthly report',
+  'Your whole AWS Organization from one stack',
+]
+const cannot = permissions.cannot.slice(0, 4)
+const money = (currency: string, amount: number) =>
+  new Intl.NumberFormat('en-GB', { style: 'currency', currency, currencyDisplay: 'narrowSymbol', maximumFractionDigits: 0 }).format(amount)
+const usd = (amount: number) => money('USD', amount)
+const ngn = (amountUsd: number) => money('NGN', amountUsd * claims.sampleRates.NGN)
+---
+
+<Base title={title} description={description} jsonLd={[software]} faq={LANDING_FAQ}>
+  <section class="mx-auto grid max-w-6xl items-center gap-10 px-4 pt-12 pb-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:pt-20">
+    <div>
+      <p class="text-sm font-semibold text-link">For African teams on AWS</p>
+      <h1 class="mt-3 text-4xl font-bold tracking-tight text-balance sm:text-5xl">
+        Your AWS bill in dollars and naira. And what's safe to cut.
+      </h1>
+      <p class="mt-5 max-w-xl text-lg text-secondary">
+        Cloudoptics reads your AWS bill and resources, shows every figure in USD and your local currency, and ranks each
+        saving by how safe it is. Read-only, set up in about {claims.setupMinutes} minutes.
+      </p>
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a href={START_URL} class="inline-flex min-h-11 items-center rounded-sm bg-accent px-5 font-semibold text-on-accent hover:bg-accent-hover">
+          Start free
+        </a>
+        <a
+          href={DEMO_URL}
+          class="inline-flex min-h-11 items-center rounded-sm border border-border-strong bg-surface-1 px-5 font-semibold text-primary hover:border-accent"
+        >
+          Try the demo
+        </a>
+      </div>
+      <ul class="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm text-secondary" aria-label="In short">
+        <li class="inline-flex items-center gap-1.5"><Icon name="check" class="h-4 w-4 text-good-ink" />Read-only access</li>
+        <li class="inline-flex items-center gap-1.5"><Icon name="check" class="h-4 w-4 text-good-ink" />No card needed</li>
+        <li class="inline-flex items-center gap-1.5"><Icon name="check" class="h-4 w-4 text-good-ink" />Remove it any time</li>
+      </ul>
+    </div>
+    <div class="space-y-4">
+      <CurrencyToggle caption={`${sample.tenant} this month`} figures={sample.hero} />
+      <Shot
+        name="overview"
+        eager
+        alt={`The Cloudoptics Overview for the sample company ${sample.tenant}: month-to-date spend and forecast in US dollars and naira, top spend by service and the recommendations ranked by saving.`}
+        caption="The Overview, from the demo workspace."
+      />
+    </div>
+  </section>
+
+  <section aria-labelledby="problem" class="border-y border-border bg-surface-1">
+    <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+      <h2 id="problem" class="text-2xl font-semibold tracking-tight sm:text-3xl">Three problems we hear from every team</h2>
+      <ul class="mt-8 grid gap-4 md:grid-cols-3">
+        {
+          pains.map((p) => (
+            <li class="rounded-md border border-border bg-bg p-5">
+              <h3 class="font-semibold">{p.t}</h3>
+              <p class="mt-2 text-secondary">{p.d}</p>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </section>
+
+  <section aria-labelledby="how" class="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+    <h2 id="how" class="text-2xl font-semibold tracking-tight sm:text-3xl">How it works</h2>
+    <ol class="mt-8 grid gap-4 md:grid-cols-3">
+      <li class="rounded-md border border-border bg-surface-1 p-5">
+        <p class="text-sm font-semibold text-link">Step 1</p>
+        <h3 class="mt-1 font-semibold">Connect read-only</h3>
+        <p class="mt-2 text-secondary">One stack in AWS, about {claims.awsMinutes} minutes.</p>
+        <p class="mt-4 rounded-sm bg-surface-2 px-3 py-2 text-sm"><code>{claims.stackName}</code> · CREATE_COMPLETE</p>
+      </li>
+      <li class="rounded-md border border-border bg-surface-1 p-5">
+        <p class="text-sm font-semibold text-link">Step 2</p>
+        <h3 class="mt-1 font-semibold">See costs in both currencies</h3>
+        <p class="mt-2 text-secondary">First figures within a day of AWS delivering your bill.</p>
+        <p class="mt-4 inline-flex items-center gap-2 rounded-sm bg-good-soft px-3 py-2 text-sm text-good-ink">
+          <Icon name="check" />{claims.permissionChecks[0]}
+        </p>
+      </li>
+      <li class="rounded-md border border-border bg-surface-1 p-5">
+        <p class="text-sm font-semibold text-link">Step 3</p>
+        <h3 class="mt-1 font-semibold">Act safely, then see it in the bill</h3>
+        <p class="mt-2 text-secondary">Each fix has its risk, evidence and rollback. We check the next bills for the saving.</p>
+        <p class="mt-4 rounded-sm bg-surface-2 px-3 py-2 text-sm">{sample.rec.title}</p>
+      </li>
+    </ol>
+    <p class="mt-6">
+      <a href="/how-it-works" class="inline-flex items-center gap-1 font-semibold text-link underline">
+        See every step <Icon name="arrow-right" />
+      </a>
+    </p>
+  </section>
+
+  <section aria-labelledby="safe" class="border-y border-border bg-surface-1">
+    <div class="mx-auto grid max-w-6xl gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2">
+      <div>
+        <h2 id="safe" class="text-2xl font-semibold tracking-tight sm:text-3xl">Savings you can make on a Friday afternoon.</h2>
+        <p class="mt-4 text-secondary">
+          Every recommendation comes with a risk score, the evidence behind it, the steps to undo it and an "Open in AWS
+          console" link. Assign it to an owner, comment, or act on several at once. Cloudoptics never makes the change
+          for you.
+        </p>
+        <h3 class="mt-6 font-semibold">What Cloudoptics looks for</h3>
+        <ul class="mt-3 grid gap-x-6 gap-y-1.5 text-secondary sm:grid-cols-2">
+          {recTypes.map((r) => <li class="flex gap-2"><Icon name="check" class="mt-1 h-4 w-4 text-good-ink" />{r}</li>)}
+        </ul>
+      </div>
+      <div class="self-center">
+        <Shot
+          name="recommendation"
+          alt={`A sample recommendation: ${sample.rec.title}. ${sample.rec.risk}, high confidence, saves ${usd(sample.rec.usd)} or ${ngn(sample.rec.usd)} a month. The fix: open the volume in the AWS console, create a snapshot, then delete the volume.`}
+          caption={`${sample.rec.risk}, saves ${usd(sample.rec.usd)} / ${ngn(sample.rec.usd)} a month, snapshot first.`}
+        />
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="currency" class="mx-auto grid max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2">
+    <div>
+      <h2 id="currency" class="text-2xl font-semibold tracking-tight sm:text-3xl">Know next quarter's bill before the rate moves.</h2>
+      <p class="mt-4 text-secondary">
+        Every figure is shown in dollars and in {claims.localCurrencies.map((c) => c.code).join(', ')}, depending on your
+        country. The month-end and 3-month forecasts come with a currency scenario: move the rate and see what the bill
+        becomes. If you run on AWS credits, the credits runway shows the month they will run out.
+      </p>
+    </div>
+    <Shot
+      name="costs"
+      alt={`The Costs page for ${sample.tenant}: daily spend this month and spend by service, each figure in US dollars and naira.`}
+      caption="Costs in USD and naira."
+    />
+  </section>
+
+  <section aria-labelledby="verified" class="border-y border-border bg-surface-1">
+    <div class="mx-auto grid max-w-6xl items-center gap-10 px-4 py-16 sm:px-6 lg:grid-cols-2">
+      <Shot
+        name="recommendations"
+        alt={`The Recommendations list for ${sample.tenant}: each saving with its risk, monthly amount in dollars and naira, and status.`}
+        caption="Recommendations and their status."
+      />
+      <div>
+        <h2 id="verified" class="text-2xl font-semibold tracking-tight sm:text-3xl">We only count savings that show up in your bill.</h2>
+        <p class="mt-4 text-secondary">
+          When you mark a recommendation done, Cloudoptics checks AWS for the change, then measures the saving from your
+          next bills. An estimate stays an estimate until the bill confirms it.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="readonly" class="on-navy bg-brand-navy text-white">
+    <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+      <h2 id="readonly" class="text-2xl font-semibold tracking-tight sm:text-3xl">It can read. It can't change anything.</h2>
+      <div class="mt-8 grid gap-8 md:grid-cols-2">
+        <div>
+          <h3 class="font-semibold">What the stack gives Cloudoptics</h3>
+          <ul class="mt-3 space-y-2 text-navy-muted">
+            <li class="flex gap-2">
+              <Icon name="check" class="mt-1 h-4 w-4 text-white" />
+              <span>
+                Two read roles, <code class="text-white">{billingRole.roleName}</code> and
+                <code class="text-white">{resourceRole.roleName}</code>, each limited to a named list of
+                {billingRole.actionCount + resourceRole.actionCount} read actions.
+              </span>
+            </li>
+            <li class="flex gap-2"><Icon name="check" class="mt-1 h-4 w-4 text-white" />No access to your files, databases, secrets or logs.</li>
+            <li class="flex gap-2"><Icon name="check" class="mt-1 h-4 w-4 text-white" />Delete one stack and the access is gone.</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-semibold">What Cloudoptics cannot do</h3>
+          <ul class="mt-3 space-y-2 text-navy-muted">
+            {cannot.map((c) => <li class="flex gap-2"><Icon name="x" class="mt-1 h-4 w-4 text-white" />{c}</li>)}
+          </ul>
+        </div>
+      </div>
+      <p class="mt-8 flex flex-wrap gap-x-6 gap-y-2">
+        <a href="/security#permissions" class="inline-flex items-center gap-1 font-semibold text-blue-on-navy underline">
+          Read every permission <Icon name="arrow-right" />
+        </a>
+        <a href="/how-it-works#what-the-stack-creates" class="inline-flex items-center gap-1 font-semibold text-blue-on-navy underline">
+          What the stack creates <Icon name="arrow-right" />
+        </a>
+      </p>
+    </div>
+  </section>
+
+  <section aria-labelledby="team" class="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+    <h2 id="team" class="text-2xl font-semibold tracking-tight sm:text-3xl">One tool for the whole team</h2>
+    <ul class="mt-8 grid gap-4 md:grid-cols-3">
+      {
+        teams.map((t) => (
+          <li class="rounded-md border border-border bg-surface-1 p-5">
+            <h3 class="font-semibold">{t.who}</h3>
+            <p class="mt-2 text-secondary">{t.what}</p>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <section id="pricing" aria-labelledby="pricing-title" class="border-y border-border bg-surface-1">
+    <div class="mx-auto grid max-w-6xl gap-10 px-4 py-16 sm:px-6 lg:grid-cols-[1fr_1.2fr]">
+      <div>
+        <h2 id="pricing-title" class="text-2xl font-semibold tracking-tight sm:text-3xl">Pricing</h2>
+        <p class="mt-4 text-secondary">{claims.pricing.after}</p>
+      </div>
+      <div class="rounded-md border-2 border-accent bg-bg p-6">
+        <p class="inline-block rounded-sm bg-brand-yellow px-2 py-0.5 text-sm font-semibold text-brand-navy">Beta</p>
+        <h3 class="mt-3 text-2xl font-semibold">{claims.pricing.headline}</h3>
+        <p class="mt-1 text-secondary">No card needed.</p>
+        <h4 class="mt-5 font-semibold">Everything Cloudoptics does today</h4>
+        <ul class="mt-2 space-y-1.5 text-secondary">
+          {included.map((i) => <li class="flex gap-2"><Icon name="check" class="mt-1 h-4 w-4 text-good-ink" />{i}</li>)}
+        </ul>
+        <a href={START_URL} class="mt-6 inline-flex min-h-11 items-center rounded-sm bg-accent px-5 font-semibold text-on-accent hover:bg-accent-hover">
+          Start free
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="behind" class="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+    <h2 id="behind" class="text-2xl font-semibold tracking-tight sm:text-3xl">Built by Cloudboosta</h2>
+    <p class="mt-4 max-w-2xl text-secondary">
+      Cloudboosta trains cloud engineers. Cloudoptics is its product for African companies that pay for AWS in dollars
+      and plan their budgets in their own currency.
+    </p>
+  </section>
+
+  <Faq items={LANDING_FAQ} />
+
+  <section aria-labelledby="final" class="mx-auto mt-16 max-w-6xl px-4 sm:px-6">
+    <div class="rounded-md bg-accent-soft p-8 text-center">
+      <h2 id="final" class="text-2xl font-semibold tracking-tight sm:text-3xl">
+        Connect your first account in about {claims.setupMinutes} minutes.
+      </h2>
+      <div class="mt-6 flex flex-wrap justify-center gap-3">
+        <a href={START_URL} class="inline-flex min-h-11 items-center rounded-sm bg-accent px-5 font-semibold text-on-accent hover:bg-accent-hover">
+          Start free
+        </a>
+        <a href="/how-it-works" class="inline-flex min-h-11 items-center rounded-sm border border-border-strong bg-surface-1 px-5 font-semibold text-primary hover:border-accent">
+          Read how it works
+        </a>
+      </div>
+    </div>
+  </section>
+</Base>

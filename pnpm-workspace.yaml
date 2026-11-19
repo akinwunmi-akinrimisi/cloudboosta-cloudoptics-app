@@ -1,2 +1,4 @@
 packages:
   - apps/web
+  - apps/site
+  - packages/*

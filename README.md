@@ -42,6 +42,8 @@ Locally, sign-in uses development tokens; staging uses WorkOS AuthKit (ADR-006).
 | `docs/` | Product and engineering plan (phases 1–12), ADRs in `docs/adr/`, Sprint 0 spikes in `docs/spikes/` |
 | `apps/api/` | Python backend: FastAPI API and the modular-monolith modules (`identity`, `connectors`, `ingestion`, `inventory`, `metrics`, `fx`, `analysis`, `recommendations`, `budgets`, `anomalies`, `notifications`, `reporting`, `audit`, `platform`) |
 | `apps/web/` | React + TypeScript single-page app (Vite) |
+| `apps/site/` | Public site (Astro, static): landing, how it works, security with the generated permission reference ([ADR-016](docs/adr/016-public-site-astro-static-and-path-split-hosting.md), docs/14) |
+| `packages/design-tokens/` | Colour, font and radius tokens shared by `apps/web` and `apps/site` |
 | `tools/cur-fixture/` | Synthetic AWS CUR 2.0 generator for ingestion and engine tests |
 | `infra/cloudformation/` | Customer-facing read-only access: `cloudoptics-access.yaml` is the single onboarding stack (setup step in `setup/`). `billing-role.yaml`, `resource-role.yaml` and `resource-stackset.yaml` are the older stacks, kept for connections that have not moved yet |
 | `infra/aws/`, `infra/digitalocean/` | Staging setup: Cloudoptics' own AWS account (template bucket, broker role) and the App Platform app |
@@ -66,6 +68,10 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm size
 pnpm --filter @cloudoptics/web dev                  # http://localhost:5173
 VITE_API_MODE=demo pnpm --filter @cloudoptics/web dev   # same app on demo data, no API
 
+# Public site (apps/site): build, then serve dist/ with real 404s
+pnpm --filter @cloudoptics/site build && pnpm --filter @cloudoptics/site preview   # http://localhost:4321
+pnpm --filter @cloudoptics/site dev                 # live reload (no CSP in dev)
+
 # Synthetic CUR 2.0 data (add --restate for a version-2 restatement)
 uv run cur-fixture generate --out ./.data/cur --period 2026-09
 ```
@@ -80,6 +86,6 @@ uv run cur-fixture generate --out ./.data/cur --period 2026-09
 
 ## Repository settings to apply (admin)
 
-Branch protection on `main`: require the "Backend (lint, types, tests)", "Frontend (lint, types, tests, build, size)" and "Security (secrets, SAST, IaC/deps, SBOM)" checks, one approving review, linear history, and no force pushes. Turn on secret scanning with push protection and Dependabot alerts.
+Branch protection on `main`: require the "Backend (lint, types, tests)", "Frontend (lint, types, tests, build, size)", "Site (permissions, build, links, budgets, accessibility)" and "Security (secrets, SAST, IaC/deps, SBOM)" checks, one approving review, linear history, and no force pushes. Turn on secret scanning with push protection and Dependabot alerts.
 
 GitHub Pages: Settings → Pages → Source: **GitHub Actions** (the Pages workflow tries to enable this itself; on a private repository Pages needs a paid plan).

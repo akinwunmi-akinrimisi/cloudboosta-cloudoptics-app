@@ -1,0 +1,220 @@
+---
+// "How it works" (docs/14 §5.2): the onboarding, described for the person who will do it, and the
+// page a DevOps lead forwards to a security reviewer. Step names and times come from the claims
+// file; names, region and permissions from the template.
+import Faq from '../components/Faq.astro'
+import Icon from '../components/Icon.astro'
+import PermissionTable from '../components/PermissionTable.astro'
+import StackResources from '../components/StackResources.astro'
+import { START_URL, TEMPLATE_URL, billingRole, claims, facts, permissions, resourceRole } from '../config'
+import { HOW_FAQ } from '../data/faq'
+import Base from '../layouts/Base.astro'
+
+const [stepWorkspace, stepConnect, stepCheck] = claims.wizardSteps
+const title = 'How Cloudoptics works: connect AWS in about 15 minutes'
+const description = `What happens when you connect AWS to Cloudoptics, step by step: one CloudFormation stack in ${facts.region}, read-only roles, and how to remove it.`
+
+const sections = [
+  { id: 'before-you-start', label: 'Before you start' },
+  { id: 'step-1', label: `Step 1: ${stepWorkspace}` },
+  { id: 'step-2', label: `Step 2: ${stepConnect}` },
+  { id: 'what-the-stack-creates', label: 'What the stack creates' },
+  { id: 'step-3', label: `Step 3: ${stepCheck}` },
+  { id: 'afterwards', label: 'What you see afterwards' },
+  { id: 'permissions', label: 'Permissions, in plain language' },
+  { id: 'aws-costs', label: 'What it costs you in AWS' },
+  { id: 'removing-access', label: 'Removing access' },
+  { id: 'updating-access', label: 'Updating access' },
+  { id: 'faq', label: 'Security questions' },
+]
+const h2 = 'text-2xl font-semibold tracking-tight'
+const sectionCls = 'mt-14 scroll-mt-24'
+---
+
+<Base title={title} description={description} faq={HOW_FAQ}>
+  <div class="mx-auto max-w-4xl px-4 pt-12 sm:px-6 lg:pt-16">
+    <p class="text-sm font-semibold text-link">How it works</p>
+    <h1 class="mt-2 text-4xl font-bold tracking-tight text-balance">What happens when you connect AWS, step by step</h1>
+    <p class="mt-4 text-lg text-secondary">
+      About {claims.setupMinutes} minutes, most of it waiting for AWS. You will do three things: {stepWorkspace.toLowerCase()},
+      {stepConnect.toLowerCase()} and {stepCheck.toLowerCase()}.
+    </p>
+
+    <nav aria-labelledby="on-this-page" class="mt-8 rounded-md border border-border bg-surface-1 p-5">
+      <h2 id="on-this-page" class="text-sm font-semibold">On this page</h2>
+      <ol class="mt-3 grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+        {sections.map((s) => <li><a class="inline-flex min-h-6 items-center text-link underline" href={`#${s.id}`}>{s.label}</a></li>)}
+      </ol>
+    </nav>
+
+    <section id="before-you-start" aria-labelledby="before-you-start-title" class={sectionCls}>
+      <h2 id="before-you-start-title" class={h2}>Before you start</h2>
+      <ul class="mt-4 space-y-3">
+        <li class="flex gap-3">
+          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
+          <span>Sign in to the AWS account that receives the bill. If you use AWS Organizations, that is the management account.</span>
+        </li>
+        <li class="flex gap-3">
+          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
+          <span>You need permission in that account to create CloudFormation stacks and IAM roles.</span>
+        </li>
+        <li class="flex gap-3">
+          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
+          <span>
+            The stack runs in <strong>US East (N. Virginia), {facts.region}</strong>, because AWS delivers bill exports
+            there. The template refuses any other region.
+          </span>
+        </li>
+        <li class="flex gap-3">
+          <Icon name="check" class="mt-1 h-5 w-5 text-good-ink" />
+          <span>To cover member accounts as well, AWS Organizations must have all features turned on, not only consolidated billing.</span>
+        </li>
+      </ul>
+      <p class="mt-4 rounded-md bg-accent-soft p-4 text-sm">
+        Not the person with that access? Invite a colleague who has it to your Cloudoptics workspace as an admin, and send
+        them this page. They can connect AWS from the workspace.
+      </p>
+    </section>
+
+    <section id="step-1" aria-labelledby="step-1-title" class={sectionCls}>
+      <h2 id="step-1-title" class={h2}>Step 1: Create your workspace</h2>
+      <p class="mt-4 text-secondary">
+        Enter your company or team name and your country. Your country sets the local currency and time zone. Time:
+        {claims.workspaceTime}.
+      </p>
+    </section>
+
+    <section id="step-2" aria-labelledby="step-2-title" class={sectionCls}>
+      <h2 id="step-2-title" class={h2}>Step 2: Open AWS and create the stack</h2>
+      <ol class="mt-4 list-decimal space-y-2 pl-6 text-secondary">
+        <li>In the same browser, sign in to the AWS account from the checklist above.</li>
+        <li>
+          Press <strong class="text-primary">Open AWS and connect</strong>. AWS opens the <code>{claims.stackName}</code>
+          stack with every value filled in. The values under "Connection (pre-filled by Cloudoptics)" link the stack to
+          your workspace.
+        </li>
+        <li>
+          At the bottom of the page, tick the box that starts "I acknowledge" and choose
+          <strong class="text-primary">Create stack</strong>. AWS asks because the stack creates IAM roles.
+        </li>
+        <li>Come back to Cloudoptics. The page moves on by itself when AWS is done, in about {claims.awsMinutes} minutes.</li>
+      </ol>
+      <p class="mt-4 text-sm text-muted">
+        If the one-click link is not available, Cloudoptics offers the template as a download with the values to paste in
+        by hand.
+      </p>
+    </section>
+
+    <section id="what-the-stack-creates" aria-labelledby="what-the-stack-creates-title" class={sectionCls}>
+      <h2 id="what-the-stack-creates-title" class={h2}>What the stack creates</h2>
+      <p class="mt-4 mb-4 text-secondary">Everything below is in your account, and deleting the stack removes it, except the bucket (see Removing access).</p>
+      <StackResources />
+    </section>
+
+    <section id="step-3" aria-labelledby="step-3-title" class={sectionCls}>
+      <h2 id="step-3-title" class={h2}>Step 3: Cloudoptics checks access</h2>
+      <p class="mt-4 text-secondary">
+        When the stack reports in, Cloudoptics tests each permission and shows a tick, or what to fix, on every line:
+      </p>
+      <ul class="mt-4 divide-y divide-border rounded-md border border-border bg-surface-1">
+        {
+          claims.permissionChecks.map((c) => (
+            <li class="flex items-center gap-3 px-4 py-3">
+              <Icon name="check" class="h-5 w-5 text-good-ink" />
+              {c}
+            </li>
+          ))
+        }
+      </ul>
+      <p class="mt-4 text-secondary">
+        When something fails the message says which part and why, for example that this is a member account rather than
+        the management account, or that the first bill export has not arrived yet.
+      </p>
+    </section>
+
+    <section id="afterwards" aria-labelledby="afterwards-title" class={sectionCls}>
+      <h2 id="afterwards-title" class={h2}>What you see afterwards</h2>
+      <dl class="mt-4 grid gap-4 sm:grid-cols-3">
+        <div class="rounded-md border border-border bg-surface-1 p-4">
+          <dt class="font-semibold">Within minutes</dt>
+          <dd class="mt-1 text-secondary">Your accounts, and recommendations once the first resource scan has run.</dd>
+        </div>
+        <div class="rounded-md border border-border bg-surface-1 p-4">
+          <dt class="font-semibold">Within a day</dt>
+          <dd class="mt-1 text-secondary">Costs in USD and your currency, when AWS delivers the first bill export.</dd>
+        </div>
+        <div class="rounded-md border border-border bg-surface-1 p-4">
+          <dt class="font-semibold">In the following weeks</dt>
+          <dd class="mt-1 text-secondary">Verified savings, as the changes you make show up in your bills.</dd>
+        </div>
+      </dl>
+      <p class="mt-4 text-secondary">In an Organization, member accounts appear as the rollout reaches them.</p>
+    </section>
+
+    <section id="permissions" aria-labelledby="permissions-title" class={sectionCls}>
+      <h2 id="permissions-title" class={h2}>Permissions, in plain language</h2>
+      <p class="mt-4 text-secondary">
+        Cloudoptics uses two roles. Both allow read actions only. The setup step's own role is listed on the security page.
+      </p>
+      <PermissionTable role={billingRole} />
+      <PermissionTable role={resourceRole} />
+      <h3 class="mt-8 text-lg font-semibold">What Cloudoptics cannot do</h3>
+      <ul class="mt-3 space-y-2">
+        {permissions.cannot.map((c) => <li class="flex gap-2"><Icon name="x" class="mt-1 h-4 w-4 text-critical-ink" />{c}</li>)}
+      </ul>
+      <p class="mt-6 flex flex-wrap gap-x-6 gap-y-2">
+        <a href="/security#permissions" class="font-semibold text-link underline">Every action, one by one</a>
+        <a href={TEMPLATE_URL} class="font-semibold text-link underline">Download the template</a>
+      </p>
+    </section>
+
+    <section id="aws-costs" aria-labelledby="aws-costs-title" class={sectionCls}>
+      <h2 id="aws-costs-title" class={h2}>What it costs you in AWS</h2>
+      <p class="mt-4 text-secondary">
+        AWS charges you for storing the bill export in your own S3 bucket and for a small number of paid API calls, such
+        as Cost Explorer at USD {claims.costExplorerRequestUsd.toFixed(2)} a request. We will publish a typical monthly
+        figure once we have measured it with beta accounts.
+      </p>
+    </section>
+
+    <section id="removing-access" aria-labelledby="removing-access-title" class={sectionCls}>
+      <h2 id="removing-access-title" class={h2}>Removing access</h2>
+      <p class="mt-4 text-secondary">
+        Delete the <code>{claims.stackName}</code> stack in CloudFormation ({facts.region}). That removes both roles, the
+        bill export and, in an Organization, the member-account roles. If removing a member account's role fails, the
+        stack still deletes and your workspace's audit log records which accounts still have it.
+      </p>
+      <p class="mt-3 text-secondary">
+        The bucket <code>{facts.bucketName}</code> and its files are kept on purpose, so you keep your bills. Delete the
+        bucket yourself if you want them gone. Files in it expire after {facts.exportExpiryDays} days in any case.
+      </p>
+    </section>
+
+    <section id="updating-access" aria-labelledby="updating-access-title" class={sectionCls}>
+      <h2 id="updating-access-title" class={h2}>Updating access</h2>
+      <p class="mt-4 text-secondary">
+        When we publish a new template version, the Connections page shows "Update CloudOptics access". It is a one-click,
+        in-place update of the same stack, and your data is kept. The security page always shows the current version
+        ({facts.templateVersion}) and every permission in it.
+      </p>
+    </section>
+  </div>
+
+  <div class={sectionCls}>
+    <Faq items={HOW_FAQ} title="Security questions" />
+  </div>
+
+  <section aria-labelledby="cta" class="mx-auto mt-16 max-w-4xl px-4 sm:px-6">
+    <div class="rounded-md bg-accent-soft p-8 text-center">
+      <h2 id="cta" class={h2}>Ready when you are</h2>
+      <div class="mt-6 flex flex-wrap justify-center gap-3">
+        <a href={START_URL} class="inline-flex min-h-11 items-center rounded-sm bg-accent px-5 font-semibold text-on-accent hover:bg-accent-hover">
+          Start free
+        </a>
+        <a href="/security" class="inline-flex min-h-11 items-center rounded-sm border border-border-strong bg-surface-1 px-5 font-semibold text-primary hover:border-accent">
+          Read the security page
+        </a>
+      </div>
+    </div>
+  </section>
+</Base>

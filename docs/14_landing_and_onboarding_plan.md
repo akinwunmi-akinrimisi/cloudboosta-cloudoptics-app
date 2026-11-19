@@ -255,7 +255,7 @@ Sections: how access works (assume-role, ExternalId, ≤ 1 h sessions, no stored
 | C. Separate static site in the monorepo | `apps/site`, built with **Astro** (static output, no JS by default, Tailwind v4, optional React islands) | Good: real HTML, per-page metadata, real 404s, sitemap | Near zero JS; CSS shared with the app's tokens | Full: different build, no app code or auth on public pages | Medium | **Recommended** |
 | D. Hosted website builder | Webflow, Framer, or a page on cloudboosta.com | Good | Varies, usually heavy | Full | Low to build, ongoing licence; tokens and permission data cannot be generated from our repo | No, unless the founder wants marketing to edit without engineers (§11 Q2) |
 
-**Recommendation: C.** Doc 11a already says "marketing site is separate". Astro is chosen over a hand-written prerender script because it gives routing, layouts, Markdown content collections (for `/legal` and later `/guides`), image optimisation and a sitemap integration without a server, and it can import our Tailwind tokens and, if ever needed, a React component from the app. The cost is one more framework in the repo; the alternative (a 200-line custom React-to-HTML script) is cheaper to start and costlier to maintain. The Tech Lead records this as **ADR-015** (task SITE-01).
+**Recommendation: C.** Doc 11a already says "marketing site is separate". Astro is chosen over a hand-written prerender script because it gives routing, layouts, Markdown content collections (for `/legal` and later `/guides`), image optimisation and a sitemap integration without a server, and it can import our Tailwind tokens and, if ever needed, a React component from the app. The cost is one more framework in the repo; the alternative (a 200-line custom React-to-HTML script) is cheaper to start and costlier to maintain. The Tech Lead records this as **ADR-016** (task SITE-01).
 
 ### 7.2 Hosting and URLs
 
@@ -375,7 +375,7 @@ Estimates are person-days (pd). Roles as in doc 11d §4.1: TL Tech Lead, FE seni
 
 | ID | Task | Role (pd) | Sprint | Depends on | Acceptance criteria |
 |---|---|---|---|---|---|
-| SITE-01 | ADR-015: public site architecture and URL plan (§7) | TL 1 | S6 | — | ADR merged with the decision, options and the H1/H2 rule |
+| SITE-01 | ADR-016: public site architecture and URL plan (§7) | TL 1 | S6 | — | ADR merged with the decision, options and the H1/H2 rule |
 | SITE-02 | Shared design tokens package; `apps/web` imports it with no visual change | FE 1.5 | S6 | 01 | App screenshots unchanged in tests; site and app read one file |
 | SITE-03 | Scaffold `apps/site` (Astro static, Tailwind v4, base layout with SEO head, header, footer, 404, robots, sitemap); workspace and CI job (build, typecheck, lint, link check, size, HTML comment stripping) | FS 3 | S6 | 01, 02 | `pnpm --filter @cloudoptics/site build` produces static HTML per route; CI green; 404 page served with status 404 locally |
 | SITE-04 | Message house and copy deck v1 for every page, FAQ, claims file | PM 3, Founder 1 | S6 | — | Founder sign-off; every claim in the claims file; no unverified numbers |

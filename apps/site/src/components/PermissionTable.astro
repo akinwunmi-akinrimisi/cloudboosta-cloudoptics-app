@@ -1,0 +1,86 @@
+---
+// One role's permissions, generated from the template and permissions.yaml (SITE-08).
+// detail="full" adds the exact actions and the resources they apply to (/security#permissions).
+import { permissions } from '../config'
+
+type Role = (typeof permissions.roles)[number]
+interface Props {
+  role: Role
+  detail?: 'summary' | 'full'
+  headingLevel?: 'h3' | 'h4'
+}
+const { role, detail = 'summary', headingLevel = 'h3' } = Astro.props
+const Heading = headingLevel
+const anchor = `role-${role.logicalId.toLowerCase()}`
+const scope = (resources: string[]) =>
+  resources.includes('*') ? 'Any resource (the action has no narrower scope, or reads account-wide lists)' : null
+---
+
+<section aria-labelledby={anchor} class="mt-8">
+  <Heading id={anchor} class="text-lg font-semibold">
+    {role.title}{role.roleName && <>: <code>{role.roleName}</code></>}
+  </Heading>
+  <p class="mt-1 text-secondary">{role.summary}</p>
+  <p class="mt-1 text-sm text-muted">Used by: {role.usedBy}.</p>
+  <div role="region" tabindex="0" aria-label={`${role.title} permissions (scrolls sideways)`} class="mt-4 overflow-x-auto rounded-md border border-border bg-surface-1">
+    <table class="w-full min-w-[40rem] text-left text-sm">
+      <caption class="sr-only">Permissions of the {role.title.toLowerCase()}</caption>
+      <thead class="bg-surface-2 text-secondary">
+        <tr>
+          {detail === 'full' && <th scope="col" class="px-4 py-3 font-semibold">AWS actions</th>}
+          <th scope="col" class="px-4 py-3 font-semibold">In plain language</th>
+          <th scope="col" class="px-4 py-3 font-semibold">Used for</th>
+          {detail === 'full' && <th scope="col" class="px-4 py-3 font-semibold">Applies to</th>}
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-border align-top">
+        {
+          role.groups.map((g) => (
+            <tr>
+              {detail === 'full' && (
+                <td class="px-4 py-3">
+                  <ul class="space-y-0.5">
+                    {g.actions.map((a) => (
+                      <li>
+                        <code>{a}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </td>
+              )}
+              <td class="px-4 py-3">{g.plain}</td>
+              <td class="px-4 py-3 text-secondary">{g.usedFor}</td>
+              {detail === 'full' && (
+                <td class="px-4 py-3 text-secondary">
+                  {scope(g.resources) ?? (
+                    <ul class="space-y-0.5">
+                      {g.resources.map((r) => (
+                        <li>
+                          <code>{r}</code>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </td>
+              )}
+            </tr>
+          ))
+        }
+        {
+          detail === 'full' &&
+            role.managedPolicies.map((m) => (
+              <tr>
+                <td class="px-4 py-3">
+                  <code>{m.policy}</code> (AWS managed policy)
+                </td>
+                <td class="px-4 py-3">{m.plain}</td>
+                <td class="px-4 py-3 text-secondary">The setup function's logs.</td>
+                <td class="px-4 py-3 text-secondary">CloudWatch Logs in your account</td>
+              </tr>
+            ))
+        }
+      </tbody>
+    </table>
+  </div>
+  {detail === 'full' && <p class="mt-2 text-sm text-muted">{role.actionCount} actions in this role.</p>}
+</section>

@@ -1,0 +1,12 @@
+{
+  "name": "@cloudoptics/design-tokens",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Colour, font and radius tokens shared by apps/web and apps/site (docs/08 §2.2.1, docs/14 §8.1).",
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./tokens.css",
+    "./contrast-pairs.json": "./contrast-pairs.json"
+  },
+  "files": ["tokens.css", "contrast-pairs.json"]
+}

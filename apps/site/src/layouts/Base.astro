@@ -1,0 +1,102 @@
+---
+// Every page's document: SEO head (docs/14 §8.5), CSP (§7.3), landmarks and skip link (§8.2).
+import '../styles/global.css'
+import Footer from '../components/Footer.astro'
+import Header from '../components/Header.astro'
+import type { FaqItem } from '../data/faq'
+
+interface Props {
+  title: string
+  description: string
+  /** JSON-LD objects for this page, in addition to the Organization block. */
+  jsonLd?: object[]
+  /** Emits a FAQPage block from the same items the page shows. */
+  faq?: FaqItem[]
+  noindex?: boolean
+}
+
+const { title, description, jsonLd = [], faq, noindex = false } = Astro.props
+if (title.length > 60) throw new Error(`Title over 60 characters: ${title}`)
+if (description.length > 155) throw new Error(`Description over 155 characters on ${Astro.url.pathname}`)
+
+const site = Astro.site!
+const path = Astro.url.pathname.replace(/\/$/, '') || '/'
+const canonical = new URL(path, site).href
+const ogImage = new URL('/og/cloudoptics.png', site).href
+
+const organization = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'Cloudboosta',
+  brand: { '@type': 'Brand', name: 'Cloudoptics' },
+}
+const faqPage = faq && {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faq.map((f) => ({
+    '@type': 'Question',
+    name: f.q,
+    acceptedAnswer: { '@type': 'Answer', text: f.a.join(' ') },
+  })),
+}
+const blocks = [organization, ...jsonLd, ...(faqPage ? [faqPage] : [])]
+// JSON-LD is data, not script: CSP does not apply, but "<" is escaped so text cannot end the tag.
+const ld = (o: object) => JSON.stringify(o).replace(/</g, '\\u003c')
+
+// Only first-party resources may load on this origin: it shares the app's origin (layout H1),
+// so no third-party script ever runs here (ADR-016). Dev mode injects inline scripts, so the
+// policy is set on production builds only.
+const csp = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ')
+---
+
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    {import.meta.env.PROD && <meta http-equiv="Content-Security-Policy" content={csp} />}
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    {noindex && <meta name="robots" content="noindex" />}
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="color-scheme" content="light dark" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Cloudoptics by Cloudboosta" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Cloudoptics: your AWS bill in dollars and your local currency, and what is safe to cut." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+    {blocks.map((b) => <script type="application/ld+json" set:html={ld(b)} />)}
+  </head>
+  <body class="min-h-screen antialiased">
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-sm focus:bg-surface-1 focus:px-4 focus:py-2 focus:text-primary focus:shadow"
+      >Skip to content</a
+    >
+    <Header />
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+    <Footer />
+  </body>
+</html>
