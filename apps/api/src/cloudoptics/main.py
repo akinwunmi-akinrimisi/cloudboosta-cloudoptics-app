@@ -48,6 +48,7 @@ def _problem(request: Request, status: int, title: str, **extra: object) -> JSON
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    settings.require_aws_connection_settings()
     app = FastAPI(
         title="Cloudoptics API",
         version=__version__,
