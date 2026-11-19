@@ -2,7 +2,7 @@
 # /src/apps/site/dist out of this image as the static site served at / (infra/digitalocean/
 # app.yaml, SITE-13), including /cfn/* (the CloudFormation templates) and the 404 page that
 # forwards old app paths to /app/...
-FROM node:22.22.0-slim
+FROM node:22.23.5-slim
 ARG SITE_URL=https://cloudoptics.cloudboosta.com
 ENV SITE_URL=$SITE_URL
 RUN corepack enable && mkdir /src && chown node:node /src

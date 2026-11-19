@@ -1,7 +1,7 @@
 # Builds the static web app (build context: repository root). App Platform copies
 # /src/apps/web/dist out of this image as a static site (infra/digitalocean/app.yaml): the
 # app at /app (VITE_BASE=/app/) and the demo at /demo (VITE_API_MODE=demo VITE_BASE=/demo/).
-FROM node:22.22.0-slim
+FROM node:22.23.5-slim
 ARG VITE_API_URL=/api
 ARG VITE_API_MODE=http
 ARG VITE_BASE=/
