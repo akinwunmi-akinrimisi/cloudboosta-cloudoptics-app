@@ -11,7 +11,8 @@
 // travel in the URL to the app's sign-in. The app sends them once with the new workspace.
 
 export const CAMPAIGN_KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'ref']
-const CARRY_KEYS = [...CAMPAIGN_KEYS, 'lp']
+// `landing` is the entry page's path; the app's sign-in reads these names (apps/web lib/attribution).
+const CARRY_KEYS = [...CAMPAIGN_KEYS, 'landing']
 const DEMO_PATH = /^\/demo(\/|$)/
 const camel = { utm_source: 'utmSource', utm_medium: 'utmMedium', utm_campaign: 'utmCampaign', utm_content: 'utmContent', utm_term: 'utmTerm', ref: 'ref' }
 
@@ -52,13 +53,13 @@ export function ctaFor(link, app, demo) {
 export function carried(search, refHost, ownHost, path) {
   const now = new URLSearchParams(search)
   const out = new URLSearchParams()
-  for (const k of CARRY_KEYS) if (now.get(k)) out.set(k, now.get(k).slice(0, k === 'lp' ? 200 : 100))
-  if (refHost !== ownHost && !out.has('lp')) {
+  for (const k of CARRY_KEYS) if (now.get(k)) out.set(k, now.get(k).slice(0, k === 'landing' ? 200 : 100))
+  if (refHost !== ownHost && !out.has('landing')) {
     if (!CAMPAIGN_KEYS.some((k) => out.has(k))) {
       if (!refHost) return out
       out.set('ref', refHost)
     }
-    out.set('lp', path)
+    out.set('landing', path)
   }
   return out
 }

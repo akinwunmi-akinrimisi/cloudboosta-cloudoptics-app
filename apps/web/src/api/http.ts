@@ -1,4 +1,4 @@
-import { clearAttribution, readAttribution } from '../lib/attribution'
+import { readAttribution } from '../lib/attribution'
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
@@ -63,6 +63,8 @@ import type {
 import { ApiError, MFA_REQUIRED_MESSAGE, rateLimitedMessage } from './types'
 
 const TOKEN_KEY = 'co.token'
+// lib/attribution's session key: forgotten once a workspace has been created with it.
+const ATTRIBUTION_STORE = 'co.attribution'
 
 // Talks to the Cloudoptics API. Signs in through WorkOS AuthKit when the API says so
 // (/v1/auth/config, ADR-006); otherwise uses the development token endpoint.
@@ -108,9 +110,14 @@ export class HttpApi implements Api {
   }
 
   async createTenant(body: { name: string; countryCode: string }): Promise<Tenant> {
-    // The first-touch campaign goes with the first workspace only (SITE-15).
-    const tenant = await this.request<Tenant>('POST', '/v1/tenants', { ...body, attribution: readAttribution() })
-    clearAttribution()
+    // The campaign the visitor came with goes with their first workspace only (SITE-15). The
+    // API ignores it when the browser sends Do Not Track or Global Privacy Control.
+    const a = readAttribution()
+    const attribution = Object.keys(a).length
+      ? { source: a.utm_source, medium: a.utm_medium, campaign: a.utm_campaign, content: a.utm_content, term: a.utm_term, ref: a.ref, landingPath: a.landing }
+      : undefined
+    const tenant = await this.request<Tenant>('POST', '/v1/tenants', { ...body, attribution })
+    write('session', ATTRIBUTION_STORE, null)
     return tenant
   }
 

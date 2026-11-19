@@ -95,8 +95,8 @@ test('the campaign and landing page travel on this site’s links to sign-up', (
   const { w } = page({ url: 'https://cloudoptics.example/security?utm_source=newsletter&utm_medium=email&gclid=abc' })
   start(w)
   const href = (id) => w.document.getElementById(id).getAttribute('href')
-  assert.equal(href('start'), 'https://cloudoptics.example/app/sign-in?intent=signup&utm_source=newsletter&utm_medium=email&lp=%2Fsecurity')
-  assert.equal(href('how'), 'https://cloudoptics.example/how-it-works?utm_source=newsletter&utm_medium=email&lp=%2Fsecurity')
+  assert.equal(href('start'), 'https://cloudoptics.example/app/sign-in?intent=signup&utm_source=newsletter&utm_medium=email&landing=%2Fsecurity')
+  assert.equal(href('how'), 'https://cloudoptics.example/how-it-works?utm_source=newsletter&utm_medium=email&landing=%2Fsecurity')
   // Not onto other sites, downloads, the demo or same-page anchors; unknown params never travel.
   assert.equal(href('away'), 'https://aws.amazon.com/')
   assert.equal(href('template'), '/cfn/cloudoptics-access.yaml')
@@ -106,10 +106,10 @@ test('the campaign and landing page travel on this site’s links to sign-up', (
 })
 
 test('carried params: first touch wins, an outside referrer becomes ref, direct visits carry nothing', () => {
-  assert.equal(carried('', 'www.google.com', 'site.example', '/').toString(), 'ref=www.google.com&lp=%2F')
+  assert.equal(carried('', 'www.google.com', 'site.example', '/').toString(), 'ref=www.google.com&landing=%2F')
   assert.equal(carried('', '', 'site.example', '/').toString(), '')
   assert.equal(carried('', 'site.example', 'site.example', '/security').toString(), '')
   // On a later page the first touch is already in the URL and is kept as it is.
-  assert.equal(carried('?utm_source=x&lp=%2F', 'site.example', 'site.example', '/security').toString(), 'utm_source=x&lp=%2F')
+  assert.equal(carried('?utm_source=x&landing=%2F', 'site.example', 'site.example', '/security').toString(), 'utm_source=x&landing=%2F')
   assert.equal(carried(`?utm_source=${'a'.repeat(300)}`, '', 'site.example', '/').get('utm_source').length, 100)
 })

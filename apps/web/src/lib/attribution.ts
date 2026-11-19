@@ -1,67 +1,53 @@
-// First-touch attribution through sign-up (SITE-15, docs/14 §8.4). The public site passes
-// the campaign (utm_*, ref) and its landing path (lp) in the URL to the app's sign-in. The app
-// keeps them in sessionStorage for this tab only, so they survive the WorkOS sign-in round
-// trip, and sends them once with the new workspace (HttpApi.createTenant). Nothing is kept
-// when the browser asks not to be tracked, and nothing identifies the visitor.
+// Where a visitor came from (docs/14 §4.3, §7.5): "Start free" on the site links to
+// /sign-in?intent=signup with utm_*, ref and the landing path. The app keeps them for the tab
+// (session storage, no cookies) and sends them through the WorkOS round trip as AuthKit state,
+// so they are still known after sign-up, when workspace creation reports them (SITE-15).
 import { read, write } from './storage'
 
-export interface Attribution {
-  source?: string
-  medium?: string
-  campaign?: string
-  content?: string
-  term?: string
-  ref?: string
-  landingPath?: string
-}
-
 const KEY = 'co.attribution'
-const PARAMS: [string, keyof Attribution, number][] = [
-  ['utm_source', 'source', 100],
-  ['utm_medium', 'medium', 100],
-  ['utm_campaign', 'campaign', 100],
-  ['utm_content', 'content', 100],
-  ['utm_term', 'term', 100],
-  ['ref', 'ref', 100],
-  ['lp', 'landingPath', 200],
-]
+export const ATTRIBUTION_KEYS = [
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'ref',
+  'landing',
+] as const
+export type Attribution = Partial<Record<(typeof ATTRIBUTION_KEYS)[number], string>>
 
-function notTracked(): boolean {
-  const nav = navigator as Navigator & { globalPrivacyControl?: boolean }
-  return nav.doNotTrack === '1' || nav.globalPrivacyControl === true
+export interface SignInSearch extends Attribution {
+  intent?: 'signup'
 }
 
-/** Keeps the campaign in this URL, unless one is already kept (first touch wins). */
-export function captureAttribution(search: string = window.location.search): void {
-  if (notTracked() || read('session', KEY) !== null) return
-  const params = new URLSearchParams(search)
-  const found: Attribution = {}
-  for (const [param, field, max] of PARAMS) {
-    const value = params.get(param)?.trim()
-    if (value) found[field] = value.slice(0, max)
+/** The sign-in route's search: intent=signup plus attribution, short strings only. */
+export function parseSignInSearch(search: Record<string, unknown>): SignInSearch {
+  const out: SignInSearch = pickAttribution(search)
+  if (search.intent === 'signup') out.intent = 'signup'
+  return out
+}
+
+export function pickAttribution(source: Record<string, unknown> | null | undefined): Attribution {
+  const out: Attribution = {}
+  if (!source || typeof source !== 'object') return out
+  for (const key of ATTRIBUTION_KEYS) {
+    const value = source[key]
+    if (typeof value === 'string' && value.trim() && value.length <= 200) out[key] = value.trim()
   }
-  if (found.source || found.ref || found.campaign || found.medium) write('session', KEY, JSON.stringify(found))
+  return out
 }
 
-/** The kept campaign, if any. */
-export function readAttribution(): Attribution | undefined {
+/** Keeps the latest non-empty attribution for this tab. */
+export function rememberAttribution(attribution: Attribution): void {
+  if (Object.keys(attribution).length) write('session', KEY, JSON.stringify(attribution))
+}
+
+export function readAttribution(): Attribution {
   const raw = read('session', KEY)
-  if (!raw) return undefined
+  if (!raw) return {}
   try {
-    const value: unknown = JSON.parse(raw)
-    if (!value || typeof value !== 'object') return undefined
-    const out: Attribution = {}
-    for (const [, field] of PARAMS) {
-      const v = (value as Record<string, unknown>)[field]
-      if (typeof v === 'string') out[field] = v
-    }
-    return out
+    return pickAttribution(JSON.parse(raw) as Record<string, unknown>)
   } catch {
-    return undefined
+    return {}
   }
-}
-
-/** Forgets the campaign once a workspace has been created with it. */
-export function clearAttribution(): void {
-  write('session', KEY, null)
 }

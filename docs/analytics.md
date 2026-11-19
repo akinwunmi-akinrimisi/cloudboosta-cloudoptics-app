@@ -30,13 +30,15 @@ Campaign values that look like an email address are dropped. Rows older than 400
 deleted by the beacon route itself, now and then.
 
 **Attribution through sign-up.** On an entry page with a campaign (or an outside referrer),
-the beacon copies `utm_*`, `ref` (the referring host when there is no campaign) and `lp` (the
-landing path) onto this site's own links, so they reach the app's sign-in in the URL. The app
-(`apps/web/src/lib/attribution.ts`) keeps them in sessionStorage for that tab, so they survive
-the WorkOS round trip, unless the browser asks not to be tracked. `HttpApi.createTenant` sends
-them once as `attribution` with the first workspace and then forgets them. The API cleans them
-and stores them on the `workspace_created` funnel row. First touch wins: a later campaign in
-the same tab does not replace the first.
+the beacon copies `utm_*`, `ref` (the referring host when there is no campaign) and `landing`
+(the landing path) onto this site's own links, so they reach the app's sign-in in the URL. The app
+(`apps/web/src/lib/attribution.ts`, shared with SITE-16's sign-in page) keeps them in
+sessionStorage for that tab and carries them through the WorkOS round trip as AuthKit state.
+`HttpApi.createTenant` sends them once as `attribution` with the first workspace and then
+forgets them. The API ignores them when the request carries `DNT: 1` or `Sec-GPC: 1`, and
+otherwise cleans them and stores them on the `workspace_created` funnel row. On the site the
+first touch wins (links carry the entry page's campaign); in the app the latest campaign seen
+in the tab before sign-up wins.
 
 **Server funnel events (`cloudoptics.analytics.funnel`).** Each step is stored once, the first
 time it happens, with internal IDs only:

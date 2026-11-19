@@ -231,6 +231,10 @@ async def patch_me(body: MePatch, user: User, session: Session) -> Me:
     return await _me(user, session)
 
 
+def _not_tracked(request: Request) -> bool:
+    return request.headers.get("dnt") == "1" or request.headers.get("sec-gpc") == "1"
+
+
 @router.post(
     "/tenants",
     response_model=Tenant,
@@ -264,7 +268,8 @@ async def create_tenant(
         "workspace_created",
         tenant_id=tenant_id,
         user_id=user.id,
-        attribution=body.attribution,
+        # Not kept when the browser asks not to be tracked (Do Not Track, Global Privacy Control).
+        attribution=None if _not_tracked(request) else body.attribution,
     )
     await audit.record(
         session,

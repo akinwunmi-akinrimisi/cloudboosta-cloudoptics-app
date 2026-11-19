@@ -155,13 +155,15 @@ async def test_the_app_role_cannot_read_or_delete_recent_visits(
     client: AsyncClient, database, owner_sql
 ) -> None:
     campaign = marker()
-    assert (await send(client, {"kind": "page_view", "path": "/", "utmCampaign": campaign})).status_code == 204  # fmt: skip
+    view = {"kind": "page_view", "path": "/", "utmCampaign": campaign}
+    assert (await send(client, view)).status_code == 204
     url = database["app"].replace("postgresql+psycopg://", "postgresql://")
     with psycopg.connect(url) as conn:
         assert conn.execute("SELECT count(*) FROM site_event").fetchone() == (0,)
         assert conn.execute("SELECT count(*) FROM funnel_event").fetchone() == (0,)
         conn.execute("SELECT set_config('app.analytics_read', 'on', true)")
-        assert conn.execute("DELETE FROM site_event WHERE utm_campaign = %s", (campaign,)).rowcount == 0  # fmt: skip
+        deleted = conn.execute("DELETE FROM site_event WHERE utm_campaign = %s", (campaign,))
+        assert deleted.rowcount == 0
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("UPDATE site_event SET path = '/x'")
     assert len(site_rows(owner_sql, campaign)) == 1
@@ -170,12 +172,14 @@ async def test_the_app_role_cannot_read_or_delete_recent_visits(
 @pytest.fixture
 def site_limit(app) -> Iterator[None]:  # type: ignore[no-untyped-def]
     settings = get_settings()
-    saved = (settings.rate_limit_enabled, settings.rate_limit_site_per_minute, settings.client_ip_header)  # fmt: skip
+    names = ("rate_limit_enabled", "rate_limit_site_per_minute", "client_ip_header")
+    saved = {n: getattr(settings, n) for n in names}
     settings.rate_limit_enabled = True
     settings.rate_limit_site_per_minute = 3
     settings.client_ip_header = "do-connecting-ip"
     yield
-    settings.rate_limit_enabled, settings.rate_limit_site_per_minute, settings.client_ip_header = saved  # fmt: skip
+    for name, value in saved.items():
+        setattr(settings, name, value)
 
 
 async def test_the_beacon_is_limited_per_client_address(
@@ -205,7 +209,8 @@ def test_cleaning() -> None:
     a = Attribution.model_validate(
         {"source": " LinkedIn ", "campaign": "x" * 300, "term": "a@b.co", "landingPath": "nope"}
     )
-    assert (a.source, len(a.campaign or ""), a.term, a.landing_path) == ("linkedin", 100, None, None)
+    assert (a.source, len(a.campaign or "")) == ("linkedin", 100)
+    assert (a.term, a.landing_path) == (None, None)
 
 
 # --- Funnel events -------------------------------------------------------------------------
@@ -226,9 +231,9 @@ async def test_sign_up_is_recorded_once_per_user(client: AsyncClient, login, own
     for _ in range(2):
         assert (await client.get("/v1/me", headers=headers)).status_code == 200
     me = (await client.get("/v1/me", headers=headers)).json()
-    assert owner_sql(
-        "SELECT event, tenant_id FROM funnel_event WHERE user_id = %s", me["id"]
-    ) == [("signup_completed", None)]
+    assert owner_sql("SELECT event, tenant_id FROM funnel_event WHERE user_id = %s", me["id"]) == [
+        ("signup_completed", None)
+    ]
 
 
 async def test_workspace_creation_stores_the_first_touch_campaign(
@@ -253,6 +258,15 @@ async def test_workspace_creation_stores_the_first_touch_campaign(
     assert funnel(owner_sql, plain["id"])["workspace_created"][1:3] == (None, None)
     bare = await create_tenant(client, headers)
     assert "workspace_created" in funnel(owner_sql, bare["id"])
+    # Do Not Track / Global Privacy Control: the step is counted, the campaign is not kept.
+    for header in ("dnt", "sec-gpc"):
+        r = await client.post(
+            "/v1/tenants",
+            json={"name": "Quiet", "countryCode": "NG", "attribution": attribution},
+            headers={**headers, header: "1"},
+        )
+        assert r.status_code == 201, r.text
+        assert funnel(owner_sql, r.json()["id"])["workspace_created"][1] is None
 
 
 async def test_each_step_is_recorded_once_from_its_own_code_path(
@@ -303,9 +317,7 @@ async def test_each_step_is_recorded_once_from_its_own_code_path(
     assert all(n == 1 for _, n in counts)
 
 
-async def test_funnel_rows_follow_workspace_isolation(
-    client: AsyncClient, login, database
-) -> None:
+async def test_funnel_rows_follow_workspace_isolation(client: AsyncClient, login, database) -> None:
     headers = await login()
     mine = (await create_tenant(client, headers))["id"]
     other = (await create_tenant(client, await login()))["id"]
@@ -342,9 +354,7 @@ async def test_only_staff_with_mfa_read_the_funnel(
         assert (await client.get(path)).status_code == 401
 
 
-async def test_the_funnel_counts_by_source(
-    client: AsyncClient, login, staff_email: str
-) -> None:
+async def test_the_funnel_counts_by_source(client: AsyncClient, login, staff_email: str) -> None:
     source = marker()
     for kind, extra in (
         ("page_view", {"landing": True}),

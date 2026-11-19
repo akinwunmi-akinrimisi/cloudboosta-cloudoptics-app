@@ -1,35 +1,40 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { captureAttribution, clearAttribution, readAttribution } from './attribution'
+import { HttpApi } from '../api/http'
+import { write } from './storage'
+import { pickAttribution, readAttribution, rememberAttribution } from './attribution'
 
 afterEach(() => {
-  clearAttribution()
+  write('session', 'co.attribution', null)
   vi.unstubAllGlobals()
-  Object.defineProperty(navigator, 'doNotTrack', { value: null, configurable: true })
 })
 
-describe('attribution', () => {
-  it('keeps the campaign and landing path from the sign-in URL', () => {
-    captureAttribution('?intent=signup&utm_source=linkedin&utm_medium=social&utm_campaign=beta&lp=%2Fsecurity&code=x')
-    expect(readAttribution()).toEqual({ source: 'linkedin', medium: 'social', campaign: 'beta', landingPath: '/security' })
+describe('attribution (SITE-15)', () => {
+  it('keeps the campaign the site passed on, and nothing else', () => {
+    const search = new URLSearchParams('?intent=signup&utm_source=linkedin&utm_campaign=beta&landing=%2Fsecurity&code=x')
+    rememberAttribution(pickAttribution(Object.fromEntries(search)))
+    expect(readAttribution()).toEqual({ utm_source: 'linkedin', utm_campaign: 'beta', landing: '/security' })
   })
 
-  it('keeps the first touch', () => {
-    captureAttribution('?ref=www.google.com&lp=%2F')
-    captureAttribution('?utm_source=newsletter')
-    expect(readAttribution()).toEqual({ ref: 'www.google.com', landingPath: '/' })
-  })
-
-  it('keeps nothing without a campaign, or when the browser asks not to be tracked', () => {
-    captureAttribution('?intent=signup&lp=%2F')
-    expect(readAttribution()).toBeUndefined()
-    Object.defineProperty(navigator, 'doNotTrack', { value: '1', configurable: true })
-    captureAttribution('?utm_source=x')
-    expect(readAttribution()).toBeUndefined()
-  })
-
-  it('caps long values', () => {
-    captureAttribution(`?utm_source=${'a'.repeat(500)}`)
-    expect(readAttribution()?.source).toHaveLength(100)
+  it('is sent once with the first workspace, then forgotten', async () => {
+    rememberAttribution({ utm_source: 'newsletter', ref: 'www.google.com', landing: '/' })
+    const bodies: unknown[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        bodies.push(JSON.parse(String(init.body)))
+        return new Response(JSON.stringify({ id: 't1' }), { status: 201, headers: { 'content-type': 'application/json' } })
+      }),
+    )
+    const api = new HttpApi('http://api.test')
+    await api.createTenant({ name: 'Kola Pay', countryCode: 'NG' })
+    await api.createTenant({ name: 'Second', countryCode: 'NG' })
+    expect(bodies[0]).toEqual({
+      name: 'Kola Pay',
+      countryCode: 'NG',
+      attribution: { source: 'newsletter', ref: 'www.google.com', landingPath: '/' },
+    })
+    expect(bodies[1]).toEqual({ name: 'Second', countryCode: 'NG' })
+    expect(readAttribution()).toEqual({})
   })
 })

@@ -8,11 +8,12 @@ import { retryDelay, retryQuery } from './api/retry'
 import { AuthGate } from './app/AuthGate'
 import { ApiProvider } from './app/context'
 import { createAppRouter } from './app/router'
-import { captureAttribution } from './lib/attribution'
+import { pickAttribution, rememberAttribution } from './lib/attribution'
 import './styles.css'
 
-// Before the router or sign-in rewrites the URL: the campaign the site passed on (SITE-15).
-captureAttribution()
+// Before the router or sign-in rewrites the URL: the campaign the site passed on (SITE-15),
+// whatever app page it landed on. The sign-in page and the WorkOS round trip keep it too.
+rememberAttribution(pickAttribution(Object.fromEntries(new URLSearchParams(window.location.search))))
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: retryQuery, retryDelay } },
