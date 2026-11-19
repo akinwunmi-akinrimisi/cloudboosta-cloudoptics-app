@@ -1,0 +1,113 @@
+# End-to-end journeys (Playwright) and a smoke load test (k6) against a local stack:
+# PostgreSQL, the real API with dev sign-in and inline jobs, the production web build, and
+# fake AWS (apps/e2e/server). Nothing here contacts AWS, staging or production.
+# docs/11f §1.4-1.5; apps/e2e/README.md. Actions are pinned to commit SHAs (threat T8).
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Throwaway database on the runner: trust auth, no password to leak.
+  CLOUDOPTICS_E2E_ADMIN_URL: postgresql://postgres@localhost:5432/postgres
+
+jobs:
+  e2e:
+    name: E2E (Playwright, axe)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: uv sync --all-packages --locked
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @cloudoptics/e2e typecheck
+      - run: pnpm --filter @cloudoptics/e2e lint
+      - name: Playwright browser (Chromium)
+        run: pnpm --filter @cloudoptics/e2e exec playwright install --with-deps chromium
+      - name: Web build pointing at the local API
+        run: pnpm --filter @cloudoptics/web build
+        env:
+          VITE_API_URL: http://127.0.0.1:8000
+      - name: Playwright
+        # Starts the test-only API (apps/e2e/server/serve.py) and `vite preview` itself.
+        run: pnpm --filter @cloudoptics/e2e test
+        env:
+          E2E_SKIP_WEB_BUILD: "1"
+      - name: Accessibility summary
+        if: always()
+        run: cat apps/e2e/reports/a11y/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: e2e-report
+          path: apps/e2e/reports/
+          retention-days: 14
+
+  load-smoke:
+    name: Load (k6 smoke)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --all-packages --locked
+      - name: Start the test-only API
+        run: |
+          nohup uv run python apps/e2e/server/serve.py > api.log 2>&1 &
+          for _ in $(seq 90); do curl -sf http://127.0.0.1:8000/readyz && exit 0; sleep 2; done
+          cat api.log; exit 1
+        env:
+          CLOUDOPTICS_E2E: "1"
+          # One runner sends every request: per-user limits would only measure the limiter.
+          CLOUDOPTICS_RATE_LIMIT_USER_PER_MINUTE: "1000000"
+      - uses: grafana/setup-k6-action@c47136d33d365efbeb9ae7266908b5dcf98cdece # v1.3.0
+        with:
+          k6-version: "2.4.0"
+      - name: k6 (PROFILE=smoke, thresholds from docs/06 §5.1)
+        run: k6 run --summary-export load-summary.json apps/e2e/load/api.js
+      - name: API log
+        if: failure()
+        run: cat api.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: load-smoke-summary
+          path: load-summary.json
+          retention-days: 14

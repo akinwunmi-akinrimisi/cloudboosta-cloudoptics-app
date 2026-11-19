@@ -1,0 +1,20 @@
+{
+  "name": "@cloudoptics/e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "End-to-end journeys (Playwright) and smoke load tests (k6) against a local stack with fake AWS (docs/11f §1.4-1.5).",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "report": "playwright show-report reports/html",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings tests load playwright.config.ts"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^24.19.2",
+    "oxlint": "^1.88.0",
+    "typescript": "~6.0.3"
+  }
+}

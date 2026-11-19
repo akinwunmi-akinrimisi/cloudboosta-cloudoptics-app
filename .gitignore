@@ -31,3 +31,8 @@ apps/web/public/cfn/
 
 # Public site: demo build and debug output of scripts/screenshots.mjs
 apps/site/.demo-build/
+
+# E2E: reports, test output and the fake export bucket (apps/e2e)
+apps/e2e/reports/
+apps/e2e/.bills/
+apps/e2e/blob-report/
