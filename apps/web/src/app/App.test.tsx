@@ -44,12 +44,16 @@ describe('Cloudoptics web app', () => {
     // No account ID to type: one link, and the stack reports which account it is in.
     expect(await screen.findByRole('heading', { name: 'Connect your AWS account' })).toBeTruthy()
     expect(screen.queryByLabelText('AWS account ID')).toBeNull()
-    // No S3-hosted template in the demo: the template download and the values to copy.
-    const download = await screen.findByRole('link', { name: /Download template/ })
+    // One click is the way in; deploying the template by hand is the alternative underneath.
+    const oneClick = await screen.findByRole('link', { name: /Open AWS and connect/ })
+    expect(screen.getByText('Press the button below. AWS opens with everything filled in.')).toBeTruthy()
+    const alternative = screen.getByText('Prefer to deploy the template yourself?')
+    await user.click(alternative)
+    const download = screen.getByRole('link', { name: /Download template/ })
     expect(download.getAttribute('href')).toMatch(/cfn\/cloudoptics-access\.yaml$/)
     expect(screen.getByLabelText('Copy ConnectionRef')).toBeTruthy()
 
-    await user.click(screen.getByRole('button', { name: 'I have created the stack' }))
+    await user.click(oneClick)
     expect(await screen.findByRole('heading', { name: 'Connected' })).toBeTruthy()
     expect(screen.getByText('Healthy')).toBeTruthy()
     expect(screen.getByText('Find the CUR 2.0 export')).toBeTruthy()
@@ -753,6 +757,8 @@ describe('Cloudoptics web app', () => {
     await user.click(screen.getByRole('button', { name: 'Move to the single stack' }))
     expect(await screen.findByRole('heading', { name: 'Move to the single CloudOptics stack' })).toBeTruthy()
     expect(screen.getByText(/Cloudoptics removes the old stacks for you/i)).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Open AWS and connect/ })).toBeTruthy()
+    await user.click(screen.getByText('Prefer to deploy the template yourself?'))
     expect(screen.getByRole('link', { name: /Download template/ }).getAttribute('href')).toMatch(
       /cloudoptics-access\.yaml$/,
     )
