@@ -1,6 +1,6 @@
 # ADR-016: Public site as a static Astro app on the app's origin, with no third-party scripts
 
-**Status:** Decided 19 Nov 2026 (founder approved docs/14; hosting change itself is SITE-13)
+**Status:** Decided 19 Nov 2026 (founder approved docs/14). The hosting change is built in SITE-13 (docs/14 §7.2 "As built").
 
 ## Context
 

@@ -262,8 +262,8 @@ Sections 1 to 3 describe the target design on DOKS (ADR-008). Staging actually r
 | Thing | Value or how to find it |
 |---|---|
 | App | `cloudoptics-staging`, ID `3294882e-35ce-45b0-bb33-e7ce55062f22`, region `lon` |
-| URL | `https://cloudoptics.cloudboosta.com` (web), `/api` (API; App Platform strips the prefix) |
-| Components | `api` (service, apps-s-1vcpu-1gb-fixed), `worker` (apps-s-1vcpu-0.5gb), `migrate` (PRE_DEPLOY job), `web` (static) |
+| URL | `https://cloudoptics.cloudboosta.com`: public site at `/` (also `/cfn/*` templates and the 404 page that forwards old app paths), app at `/app/`, demo at `/demo/`, API at `/api`. App Platform strips each prefix |
+| Components | `api` (service, apps-s-1vcpu-1gb-fixed), `worker` (apps-s-1vcpu-0.5gb), `migrate` (PRE_DEPLOY job), `site`, `web` and `demo` (static) |
 | Database | Managed PostgreSQL 16 `cloudoptics-pg`, database `cloudoptics`, owner `doadmin`, app role `cloudoptics_app` (no BYPASSRLS) |
 | Image | `ghcr.io/akinwunmi-akinrimisi/cloudoptics-api:main`, also tagged `sha-<commit>`; signed (§4.4) |
 | Spec and scripts | `infra/digitalocean/app.yaml`, `provision.py`, `restore_test.py` |
@@ -428,7 +428,7 @@ Budget: **$50/month for staging**. Set a DigitalOcean billing alert at $40 (cons
 
 ### RB-08: Deploy and rollback
 
-**Normal deploy.** Merge to `main` → **Container** builds, pushes and signs `cloudoptics-api:main` → **Deploy staging** verifies the signature, starts a deployment (`force_build`), waits for `ACTIVE`, and smoke-tests `/api/readyz` and `/`. The `migrate` PRE_DEPLOY job runs `alembic upgrade head` as `doadmin` before the new `api` and `worker` start; if it fails, the deployment fails and the old version keeps serving.
+**Normal deploy.** Merge to `main` → **Container** builds, pushes and signs `cloudoptics-api:main` → **Deploy staging** verifies the signature, starts a deployment (`force_build`), waits for `ACTIVE`, and smoke-tests `/api/readyz` and `/` (plus `scripts/check-staging-layout.sh` once the app has the `site` component). A deploy redeploys the spec already on App Platform: changes to `infra/digitalocean/app.yaml` (components, routes, env) take effect only when **Staging setup** or `provision.py app` applies it. The `migrate` PRE_DEPLOY job runs `alembic upgrade head` as `doadmin` before the new `api` and `worker` start; if it fails, the deployment fails and the old version keeps serving.
 
 **Deploy by hand:** Actions → Deploy staging → Run workflow (main), or `doctl apps create-deployment $APP --force-rebuild --wait`.
 

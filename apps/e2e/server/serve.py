@@ -37,7 +37,7 @@ DEFAULTS = {
     "CLOUDOPTICS_E2E_ADMIN_URL": "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
     "CLOUDOPTICS_E2E_DATABASE": "cloudoptics_e2e",
     "CLOUDOPTICS_CORS_ORIGINS": '["http://127.0.0.1:4173", "http://localhost:4173"]',
-    "CLOUDOPTICS_APP_URL": "http://127.0.0.1:4173",
+    "CLOUDOPTICS_APP_URL": "http://127.0.0.1:4173/app",
     "CLOUDOPTICS_API_PUBLIC_URL": "http://127.0.0.1:8000",
     # Staff who may set exchange rates: the suite's global setup signs in as this address.
     "CLOUDOPTICS_PLATFORM_ADMIN_EMAILS": "fx-staff@example.com",

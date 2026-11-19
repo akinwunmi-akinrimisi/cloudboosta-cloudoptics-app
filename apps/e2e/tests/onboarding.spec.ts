@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { accountId, ngn, sendStackCallback, stackCallback, uniqueEmail, usd } from './support'
+import { accountId, appPath, ngn, sendStackCallback, stackCallback, uniqueEmail, usd } from './support'
 
 // J1 (docs/11f §1.4): sign in -> create workspace -> connect AWS -> access checked -> first
 // bills -> recommendations. All in the browser except what AWS itself does: the stack's
@@ -14,7 +14,7 @@ test('a new admin signs in, creates a workspace, connects AWS and sees costs and
   const account = accountId()
 
   await test.step('sign in with the development form', async () => {
-    await page.goto('/sign-in')
+    await page.goto(appPath('/sign-in'))
     await page.getByLabel('Work email').fill(email)
     await page.getByLabel('Your name (optional)').fill('Funmi Founder')
     await page.getByRole('button', { name: 'Continue' }).click()

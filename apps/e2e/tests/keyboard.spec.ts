@@ -2,7 +2,7 @@ import type { Locator, Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
 import type { Workspace } from './support'
-import { Api, openSignedIn, seedWorkspace } from './support'
+import { Api, appPath, openSignedIn, seedWorkspace } from './support'
 
 // What axe cannot check (docs/08 accessibility table, PRD FR-UI-06, WCAG 2.2 AA): keyboard
 // order and focus, Escape on everything that opens, reduced motion, chart alternatives and
@@ -119,20 +119,20 @@ test('Escape closes every inline panel and focus returns to the button that open
   await escapeCloses(page, page.getByRole('button', { name: 'Reload bills…' }), page.getByRole('combobox', { name: 'Months' }))
   await escapeCloses(page, page.getByRole('button', { name: 'Disconnect…' }), page.getByRole('button', { name: 'Disconnect', exact: true }))
 
-  await page.goto('/budgets')
+  await page.goto(appPath('/budgets'))
   await expect(page.getByRole('heading', { level: 1, name: 'Budgets' })).toBeVisible()
   await escapeCloses(page, page.getByRole('button', { name: 'New budget' }), page.getByLabel('Name'))
 
-  await page.goto('/settings')
+  await page.goto(appPath('/settings'))
   await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
   await escapeCloses(page, page.getByRole('button', { name: 'Delete workspace…' }), page.getByLabel(/Type the workspace name/))
 
-  await page.goto('/recommendations')
+  await page.goto(appPath('/recommendations'))
   await page.getByRole('checkbox', { name: /^Select / }).first().check()
   await escapeCloses(page, page.getByRole('button', { name: 'Dismiss…' }), page.getByLabel(/Why are you dismissing/))
 
   const recs = await new Api(request, ws.api.token).get<{ id: string }[]>(`/v1/tenants/${ws.tenantId}/recommendations`)
-  await page.goto(`/recommendations/${recs[0].id}`)
+  await page.goto(appPath(`/recommendations/${recs[0].id}`))
   await escapeCloses(page, page.getByRole('button', { name: 'Dismiss…' }), page.getByLabel('Why are you dismissing it?'))
 })
 
@@ -165,7 +165,7 @@ test('every chart has a table with its figures', async ({ page, request }) => {
   let charts = 0
   await openSignedIn(page, ws.api.token, ws.tenantId, '/overview')
   for (const [url, heading] of pages) {
-    await page.goto(url)
+    await page.goto(appPath(url))
     await expect(page.getByRole('heading', { level: 1, name: heading }).first()).toBeVisible()
     await page.waitForLoadState('networkidle')
     // An anomaly's chart is in its detail panel.

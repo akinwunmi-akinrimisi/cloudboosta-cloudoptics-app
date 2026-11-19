@@ -6,6 +6,14 @@ import { expect } from '@playwright/test'
 /** Helpers that talk to the API directly: for setting up state a test is not about. */
 
 export const API_URL = process.env.E2E_API_URL ?? 'http://127.0.0.1:8000'
+/** Where the app is served, as on staging (VITE_BASE=/app/, docs/14 §7.2). */
+export const APP_BASE = process.env.E2E_APP_BASE ?? '/app/'
+
+/** An app route ('/overview') as a URL path under the app's base ('/app/overview'). */
+export function appPath(route: string): string {
+  return `${APP_BASE.replace(/\/$/, '')}${route}`
+}
+
 /** Cloudoptics staff in the E2E stack (CLOUDOPTICS_PLATFORM_ADMIN_EMAILS in server/serve.py). */
 export const STAFF_EMAIL = 'fx-staff@example.com'
 /** The reference NGN rate global.setup.ts sets. */
@@ -156,7 +164,7 @@ export async function openSignedIn(page: Page, token: string, tenantId?: string,
     },
     [token, tenantId ?? ''] as const,
   )
-  await page.goto(path)
+  await page.goto(appPath(path))
 }
 
 export function usd(amount: number): string {

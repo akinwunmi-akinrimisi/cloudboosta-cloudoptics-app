@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "permissions": "node scripts/build-permissions.mjs",
-    "dev": "node scripts/build-permissions.mjs && astro dev",
-    "build": "node scripts/build-permissions.mjs && astro build",
+    "dev": "node scripts/build-permissions.mjs && node scripts/copy-templates.mjs && astro dev",
+    "build": "node scripts/build-permissions.mjs && node scripts/copy-templates.mjs && astro build",
     "preview": "astro preview --port 4321",
     "typecheck": "node scripts/build-permissions.mjs && astro check",
     "lint": "oxlint --deny-warnings src scripts tests",

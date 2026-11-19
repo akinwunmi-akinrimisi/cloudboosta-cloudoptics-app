@@ -5,7 +5,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-import { openSignedIn, seedWorkspace, signInApi, uniqueEmail } from './support'
+import { appPath, openSignedIn, seedWorkspace, signInApi, uniqueEmail } from './support'
 
 // axe-core on each main page with real layout (docs/11f §1.1 "Accessibility"), on a few
 // opened states (inline confirmations, the mobile menu) and at a phone width. Any violation
@@ -74,7 +74,7 @@ test('axe on each main page', async ({ page, browser, request }) => {
   // Signed out, and a new user's first step.
   const fresh = await browser.newContext()
   const anon = await fresh.newPage()
-  await anon.goto('/sign-in')
+  await anon.goto(appPath('/sign-in'))
   await expect(anon.getByRole('heading', { name: 'Sign in' })).toBeVisible()
   results.push(await audit(anon, 'Sign in', '/sign-in'))
   const newcomer = await signInApi(request, uniqueEmail('newcomer'))
@@ -104,7 +104,7 @@ test('axe on each main page', async ({ page, browser, request }) => {
   await openSignedIn(page, ws.api.token, ws.tenantId, '/overview')
   for (const [name, url, shown, heading] of pages) {
     await test.step(name, async () => {
-      await page.goto(url)
+      await page.goto(appPath(url))
       await expect(page.getByRole('heading', { level: 1, name: heading }).first()).toBeVisible()
       await page.waitForLoadState('networkidle')
       results.push(await audit(page, name, shown))
@@ -113,26 +113,26 @@ test('axe on each main page', async ({ page, browser, request }) => {
 
   // Opened states: inline panels that take focus and close with Escape.
   await test.step('Recommendations: bulk dismiss form', async () => {
-    await page.goto('/recommendations')
+    await page.goto(appPath('/recommendations'))
     await page.getByRole('checkbox', { name: /^Select / }).first().check()
     await page.getByRole('button', { name: 'Dismiss…' }).click()
     await expect(page.getByLabel(/Why are you dismissing/)).toBeFocused()
     results.push(await audit(page, 'Recommendations: dismiss form open', '/recommendations (dismissing)'))
   })
   await test.step('Connections: reload bills panel', async () => {
-    await page.goto('/settings/connections')
+    await page.goto(appPath('/settings/connections'))
     await page.getByRole('button', { name: 'Reload bills…' }).click()
     await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeVisible()
     results.push(await audit(page, 'Connections: reload panel open', '/settings/connections (reload)'))
   })
   await test.step('Settings: delete workspace confirmation', async () => {
-    await page.goto('/settings')
+    await page.goto(appPath('/settings'))
     await page.getByRole('button', { name: 'Delete workspace…' }).click()
     await expect(page.getByLabel(/Type the workspace name/)).toBeFocused()
     results.push(await audit(page, 'Settings: delete confirmation open', '/settings (danger zone)'))
   })
   await test.step('Charts as tables', async () => {
-    await page.goto('/overview')
+    await page.goto(appPath('/overview'))
     await page.getByText('Show daily spend as a table').click()
     await expect(page.getByRole('table', { name: 'Daily spend' })).toBeVisible()
     results.push(await audit(page, 'Overview: chart table open', '/overview (table)'))
@@ -144,14 +144,14 @@ test('axe on each main page', async ({ page, browser, request }) => {
   await openSignedIn(mobile, ws.api.token, ws.tenantId, '/overview')
   for (const [name, url, shown, heading] of pages) {
     await test.step(`${name} (phone)`, async () => {
-      await mobile.goto(url)
+      await mobile.goto(appPath(url))
       await expect(mobile.getByRole('heading', { level: 1, name: heading }).first()).toBeVisible()
       await mobile.waitForLoadState('networkidle')
       results.push(await audit(mobile, `${name} (390 px)`, shown))
     })
   }
   await test.step('Menu drawer (phone)', async () => {
-    await mobile.goto('/overview')
+    await mobile.goto(appPath('/overview'))
     await mobile.getByRole('button', { name: 'Open menu' }).click()
     await expect(mobile.getByRole('dialog', { name: 'Cloudoptics' })).toBeVisible()
     results.push(await audit(mobile, 'Menu open (390 px)', '/overview (menu)'))

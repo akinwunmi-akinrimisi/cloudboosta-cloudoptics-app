@@ -1,11 +1,13 @@
 ---
 // A real 404 page (docs/14 §4.1): static hosts serve 404.html with status 404, and it is never
-// indexed. SITE-13 adds the redirect map for old app paths (/overview → /app/overview).
+// indexed. Old app paths from emails and bookmarks (/overview) are forwarded to /app/... by
+// public/legacy-redirect.js before the page renders (SITE-13).
 import { START_URL } from '../config'
 import Base from '../layouts/Base.astro'
 ---
 
 <Base title="Page not found | Cloudoptics" description="This page does not exist. Find how Cloudoptics works, its security and permissions, or start free." noindex>
+  <script is:inline slot="head" src="/legacy-redirect.js"></script>
   <section class="mx-auto max-w-3xl px-4 py-24 text-center sm:px-6">
     <p class="text-sm font-semibold text-link">404</p>
     <h1 class="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">We could not find that page</h1>

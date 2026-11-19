@@ -50,10 +50,11 @@ jobs:
       - run: pnpm --filter @cloudoptics/e2e lint
       - name: Playwright browser (Chromium)
         run: pnpm --filter @cloudoptics/e2e exec playwright install --with-deps chromium
-      - name: Web build pointing at the local API
+      - name: Web build pointing at the local API, served under /app/ as on staging
         run: pnpm --filter @cloudoptics/web build
         env:
           VITE_API_URL: http://127.0.0.1:8000
+          VITE_BASE: /app/
       - name: Playwright
         # Starts the test-only API (apps/e2e/server/serve.py) and `vite preview` itself.
         # Any axe violation fails (FE-12); the Overview LCP budget (4 s, Fast 3G, CPU 4x) is

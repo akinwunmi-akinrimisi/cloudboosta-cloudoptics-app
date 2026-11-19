@@ -86,6 +86,7 @@ const csp = [
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImage} />
     {blocks.map((b) => <script type="application/ld+json" set:html={ld(b)} />)}
+    <slot name="head" />
   </head>
   <body class="min-h-screen antialiased">
     <a

@@ -83,8 +83,20 @@ jobs:
             sleep 20
           done
           [ "$phase" = ACTIVE ]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.start.outputs.skip != 'true'
+        with:
+          sparse-checkout: scripts
       - name: Smoke test
         if: steps.start.outputs.skip != 'true'
+        env:
+          TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
         run: |
           curl -sSf "$APP_URL/api/readyz"
           curl -sSf -o /dev/null "$APP_URL/"
+          # This workflow redeploys the spec already on App Platform; the path layout of
+          # docs/14 §7.2 (SITE-13) arrives when Staging setup applies infra/digitalocean/app.yaml.
+          # Once the app has the site component, check that layout too.
+          if curl -sSf -H "Authorization: Bearer $TOKEN" "https://api.digitalocean.com/v2/apps/$APP_ID"               | jq -e '[.app.spec.static_sites[]?.name] | index("site")' > /dev/null; then
+            scripts/check-staging-layout.sh "$APP_URL"
+          fi

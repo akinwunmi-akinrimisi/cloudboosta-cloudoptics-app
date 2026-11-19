@@ -4,7 +4,7 @@
 **For:** the Cloudoptics team (engineers, designer, PM, founder)
 **Date:** 18 November 2026
 **Inputs:** doc 13 (Refraxion teardown), README, docs 03, 04, 06 (FR-UI-*, US-1.x, FR-CON-*), 07 (J1, IA), 08 (wireframes, brand palette, accessibility), 10 (Part C GTM, A7 compliance), 11a, 11d (sprint plan), 11f, ADR-012/013, `apps/web`, `infra/cloudformation/cloudoptics-access.yaml`, `infra/digitalocean/app.yaml`
-**Status:** Plan for review. §1 states facts about today's code; §§2–11 are recommendations. Nothing here is built yet.
+**Status:** Plan approved 19 Nov 2026; being built. §1 states the facts as of 18 Nov. Built so far includes SITE-13 (hosting: site at `/`, app at `/app`, demo at `/demo`, `/cfn` from the site; §7.2 notes how it was done) and SITE-14 (demo at `/demo/`).
 
 ---
 
@@ -275,6 +275,17 @@ Sections: how access works (assume-role, ExternalId, ≤ 1 h sessions, no stored
 4. `/cfn/*`: today `copy-templates.mjs` copies templates into the web build; with the app under `/app` they would move to `/app/cfn`. Copy them into the site build instead so `CLOUDOPTICS_CFN_TEMPLATE_DOWNLOAD_BASE` (`…/cfn`) keeps working, and add `cloudoptics-access.yaml` to the copied set (the security page links to it).
 5. Old app paths (`/sign-in`, `/onboarding`, `/overview`, `/costs`, `/recommendations/…`, `/settings/…`, …) appear in sent emails and bookmarks. The site's 404 page carries a small inline redirect map for those prefixes to `/app/…`, so they keep working.
 6. Demo: keep the GitHub Pages build as a mirror until `/demo/` is live, then point the README and `SignIn.tsx` "public demo" link at `/demo/`.
+
+**As built (SITE-13/14, 19 Nov 2026).**
+
+- `app.yaml` has four routes: `/api` → `api`, `/app` → `web` (`VITE_BASE=/app/`), `/demo` → `demo` (same Dockerfile, `VITE_API_MODE=demo VITE_BASE=/demo/`), `/` → `site` (`apps/site/Dockerfile`, `error_document: 404.html`). Each rule trims its prefix (`preserve_path_prefix: false`), so each build keeps its files at its own root and its HTML refers to `/app/assets/…` or `/demo/assets/…`.
+- The router's `basepath` and the AuthKit `redirectUri` come from the build's base (`apps/web/src/app/paths.ts`): `https://<host>/app/` on staging, unchanged in development. The demo routes in the URL hash and ignores the base.
+- `CLOUDOPTICS_APP_URL=https://<host>/app` and `CLOUDOPTICS_API_PUBLIC_URL=https://<host>/api` change in the same spec, so the callback URL never becomes `…/app/api`.
+- `/cfn/*`: `apps/site/scripts/copy-templates.mjs` copies `cloudoptics-access.yaml`, the three older templates and `scheduler/cloudoptics-scheduler.yaml` (the API offers that one at `/cfn/scheduler/…`). The web build still copies its own set for the demo's downloads.
+- Old app paths: `apps/site/public/legacy-redirect.js`, loaded from the 404 page's head (a file, so the `'self'` CSP holds), forwards `/sign-in`, `/onboarding`, `/overview`, `/costs`, `/recommendations…`, `/anomalies`, `/budgets`, `/commitments`, `/reports`, `/settings…` and `/staff` to `/app/…` with the query and hash.
+- Rollout: the deploy that follows a merge redeploys the spec already on App Platform, so the layout changes only when **Staging setup** (or `provision.py app`) applies the new `app.yaml`. Add the WorkOS redirect URI first. `scripts/check-staging-layout.sh <url>` checks the result; both staging workflows run it once the `site` component exists.
+- Headers (§7.3): App Platform static sites still send no CSP, HSTS or `frame-ancestors` from the spec, so the meta CSP and referrer policy stay. The app and the demo now carry the referrer meta too.
+- Demo (SITE-14): a first visit opens the "Kola Pay" sample workspace on the Overview (`DemoApi.openSample`); a yellow "Sample data" bar with "Start free" (`/app/sign-in?intent=signup`) tops every page; the build adds `noindex, nofollow`; the demo has no analytics and makes no request off its origin. The site's hero link reads "Explore the sample workspace". The GitHub Pages copy stays as a mirror (its "Start free" points at the staging address).
 
 ### 7.3 Security headers
 

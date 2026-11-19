@@ -1,5 +1,6 @@
 // Checks the built site in dist/ (docs/14 §7.3, §8.3, §8.5; SITE-03). Fails on:
-//   - a broken internal link or #anchor (links into the app under /app are outside this build)
+//   - a broken internal link or #anchor (the app under /app and the demo under /demo are
+//     other builds)
 //   - a page over its budget: HTML + CSS ≤ 60 KB and JS ≤ 10 KB gzipped (0 KB except the landing
 //     page), any AVIF image ≤ 100 KB, landing page total ≤ 500 KB
 //   - an HTML comment left in a page
@@ -15,7 +16,10 @@ const dist = join(import.meta.dirname, '..', 'dist')
 const APP_PATH = (process.env.SITE_APP_PATH ?? '/app').replace(/\/$/, '')
 const KB = 1024
 const BUDGET = { critical: 60 * KB, js: 10 * KB, image: 100 * KB, landing: 500 * KB }
-const JS_ALLOWED = new Set(['/'])
+// The 404 page carries the small redirect for old app paths (public/legacy-redirect.js).
+const JS_ALLOWED = new Set(['/', '/404.html'])
+// Served by other components on the same origin (infra/digitalocean/app.yaml), not this build.
+const OTHER_BUILDS = [APP_PATH, '/demo'].filter(Boolean)
 
 const problems = []
 const gz = (path) => gzipSync(readFileSync(path)).length
@@ -60,7 +64,7 @@ for (const [url, { file, html, doc }] of pages) {
     }
     const [path, hash] = ref.split('#')
     const bare = path.split('?')[0]
-    if (APP_PATH && (bare === APP_PATH || bare.startsWith(`${APP_PATH}/`))) continue
+    if (OTHER_BUILDS.some((p) => bare === p || bare.startsWith(`${p}/`))) continue
     const target = bare === '' ? url : bare.replace(/\/$/, '') || '/'
     if (bare !== '' && !fileFor(bare)) {
       problems.push(`${url}: broken link ${ref}`)
@@ -116,7 +120,9 @@ for (const [url, { file, html, doc }] of pages) {
 if (pages.size === 0) problems.push('no HTML pages in dist; run the build first')
 const avif = readdirSync(join(dist, '_astro')).filter((f) => f.endsWith('.avif'))
 for (const f of avif) if (size(join(dist, '_astro', f)) > BUDGET.image) problems.push(`image ${f} is ${kb(size(join(dist, '_astro', f)))}, budget ${kb(BUDGET.image)}`)
-for (const required of ['404.html', 'robots.txt', 'sitemap.xml', 'permissions.json', 'cfn/cloudoptics-access.yaml', 'og/cloudoptics.png']) {
+// /cfn/* for the whole origin comes from this build (scripts/copy-templates.mjs, SITE-13).
+const templates = ['cloudoptics-access.yaml', 'billing-role.yaml', 'resource-role.yaml', 'resource-stackset.yaml', 'scheduler/cloudoptics-scheduler.yaml']
+for (const required of ['404.html', 'robots.txt', 'sitemap.xml', 'permissions.json', 'legacy-redirect.js', 'og/cloudoptics.png', ...templates.map((t) => `cfn/${t}`)]) {
   if (!existsSync(join(dist, required))) problems.push(`missing ${required}`)
 }
 
