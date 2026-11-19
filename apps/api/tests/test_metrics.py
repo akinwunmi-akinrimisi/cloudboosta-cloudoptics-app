@@ -200,7 +200,8 @@ async def test_pulled_usage_feeds_the_idle_rules(
     tenant, connection = await scanned(client, login, owner_sql, world)
     owner_sql("UPDATE resource SET state = 'running' WHERE resource_id = 'i-eu-west-1-1'")
     world.metric_values = {"CPUUtilization": 1.0, "DatabaseConnections": 0.0}
-    now = datetime.now(UTC)
+    # Midday today: between 00:00 and 01:00 UTC the last (partial) day would have no hours yet.
+    now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
     await puller.pull_connection(tenant, connection, now=now)
     await engine.run_analysis(tenant, now=now)
 
@@ -230,7 +231,8 @@ async def test_idle_server_has_console_route_and_usage_for_charts(
     await scanner.scan_connection(tenant, connection)
     owner_sql("UPDATE resource SET state = 'running' WHERE resource_id = 'i-eu-west-1-1'")
     world.metric_values = {"CPUUtilization": 1.0, "DatabaseConnections": 0.0}
-    now = datetime.now(UTC)
+    # Midday today: between 00:00 and 01:00 UTC the last (partial) day would have no hours yet.
+    now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
     await puller.pull_connection(tenant, connection, now=now)
     await engine.run_analysis(tenant, now=now)
 
