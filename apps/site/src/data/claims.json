@@ -52,7 +52,7 @@
     "source": "Open: docs/14 §11 Q10 (channel and hours). The footer shows a contact line once this is set."
   },
   "sampleRates": {
-    "value": { "NGN": 1530.25, "KES": 129.4, "ZAR": 18.1, "GHS": 15.5 },
-    "source": "apps/web/src/api/demo.ts DEMO_RATES (illustrative rates for sample data only)"
+    "value": { "NGN": 1530.25, "KES": 129.4, "ZAR": 18.1 },
+    "source": "apps/web/src/api/demo.ts DEMO_RATES (illustrative rates for sample data only); limited to the launch markets Nigeria, Kenya and South Africa (founder, 19 Nov 2026)"
   }
 }
