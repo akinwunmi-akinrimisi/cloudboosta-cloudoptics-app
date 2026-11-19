@@ -113,3 +113,17 @@ test('carried params: first touch wins, an outside referrer becomes ref, direct 
   assert.equal(carried('?utm_source=x&landing=%2F', 'site.example', 'site.example', '/security').toString(), 'utm_source=x&landing=%2F')
   assert.equal(carried(`?utm_source=${'a'.repeat(300)}`, '', 'site.example', '/').get('utm_source').length, 100)
 })
+
+test('hosting layout H1: the demo at /demo/ on this origin is a CTA, never decorated, never tracked', () => {
+  const head = '<meta name="cloudoptics:beacon" content="/api/v1/site/visits" data-app="/app" data-demo="/demo/">'
+  const { w, sent } = page({ url: 'https://cloudoptics.example/?utm_source=x', head })
+  start(w)
+  assert.equal(sent[0].target, '/api/v1/site/visits')
+  const demo = w.document.getElementById('demo-local')
+  assert.equal(demo.getAttribute('href'), '/demo/')
+  demo.addEventListener('click', (e) => e.preventDefault())
+  demo.click()
+  assert.equal(sent.at(-1).body.cta, 'demo')
+  assert.match(w.document.getElementById('start').getAttribute('href'), /^https:\/\/cloudoptics\.example\/app\/sign-in\?intent=signup&utm_source=x&landing=%2F$/)
+  assert.equal(allowed(page({ url: 'https://cloudoptics.example/demo/overview?utm_source=x', head }).w), false)
+})
