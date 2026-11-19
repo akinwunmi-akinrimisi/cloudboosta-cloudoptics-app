@@ -18,7 +18,7 @@ dependencies = [
     "pyjwt[crypto]>=2.15.1",
     # Time-limited matching of tenant-written patterns (analysis/settings.py).
     "regex>=2024.11",
-    "sqlalchemy[asyncio]>=2.1.5",
+    "sqlalchemy[asyncio]>=2.1.8",
     "structlog>=24.4",
     "uvicorn[standard]>=0.54.0",
 ]
