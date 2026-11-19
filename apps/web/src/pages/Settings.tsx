@@ -153,6 +153,28 @@ function WorkspaceIdentity({ tenant }: { tenant: Tenant }) {
   )
 }
 
+/** Another company gets its own workspace: members, AWS accounts and data stay apart. */
+function NewWorkspaceCard() {
+  return (
+    <Card className="flex flex-col gap-3">
+      <div>
+        <h2 className="text-base font-semibold">Another company</h2>
+        <p className="mt-1 text-sm text-secondary">
+          Each company gets its own workspace, with its own members, AWS accounts and data. Switch between them in
+          the header.
+        </p>
+      </div>
+      <Link
+        to="/onboarding"
+        search={{ new: true }}
+        className="inline-flex h-9 items-center self-start rounded-sm border border-border-strong px-4 text-sm font-medium text-primary hover:bg-surface-2"
+      >
+        Create another workspace
+      </Link>
+    </Card>
+  )
+}
+
 /** Which rules run and how strict they are (PRD FR-REC-08). Saving re-runs them. */
 function RuleSettingsCard({ tenantId, canEdit }: { tenantId: string; canEdit: boolean }) {
   const api = useApi()
@@ -648,6 +670,7 @@ export function Settings({ section }: { section?: SettingsSection } = {}) {
           <>
             <SectionHeading id="workspace">{LABEL.workspace}</SectionHeading>
             <WorkspaceIdentity tenant={tenant.data} />
+            <NewWorkspaceCard />
             <DeletionHistory tenantId={tenantId} />
             <DangerZone tenant={tenant.data} />
           </>

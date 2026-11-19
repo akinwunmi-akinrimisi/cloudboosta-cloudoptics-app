@@ -11,6 +11,7 @@ import {
   Menu,
   PiggyBank,
   Plug,
+  Plus,
   Settings,
 } from 'lucide-react'
 
@@ -60,6 +61,15 @@ function MainNav({ onNavigate }: { onNavigate?: () => void }) {
           {label}
         </Link>
       ))}
+      <Link
+        to="/onboarding"
+        search={{ new: true }}
+        className="mt-2 flex min-h-10 items-center gap-3 rounded-sm border-t border-white/15 px-3 py-2 text-sm text-sidebar-muted hover:text-white"
+        onClick={onNavigate}
+      >
+        <Plus size={18} aria-hidden="true" />
+        New workspace
+      </Link>
     </nav>
   )
 }

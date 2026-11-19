@@ -104,6 +104,23 @@ test('on a phone the menu opens, navigates and closes', async ({ browser, reques
   await context.close()
 })
 
+test('a member opens New workspace from the phone menu, and it fits 320 px', async ({ browser, request }) => {
+  const ws = await seedWorkspace(request, { bills: false, scan: false })
+  const context = await browser.newContext({ viewport: { width: 320, height: 640 }, isMobile: true, hasTouch: true })
+  const page = await context.newPage()
+  await openSignedIn(page, ws.api.token, ws.tenantId, '/overview')
+  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible()
+  await page.getByRole('button', { name: 'Open menu' }).tap()
+  await page.getByRole('dialog', { name: 'Cloudoptics' }).getByRole('link', { name: 'New workspace' }).tap()
+  await expect(page.getByRole('heading', { level: 1, name: 'Create another workspace' })).toBeVisible()
+  const o = await overflow(page)
+  expect(o.scrollWidth, `New workspace at 320 px is ${o.scrollWidth} px wide: ${o.wide.join(', ')}`).toBeLessThanOrEqual(o.width)
+  // Back to the workspace without creating anything.
+  await page.getByRole('link', { name: /^Back to / }).tap()
+  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible()
+  await context.close()
+})
+
 test('onboarding fits a phone: create the workspace, then connect AWS', async ({ browser, request }) => {
   const newcomer = await signInApi(request, uniqueEmail('phone'))
   const context = await browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true })

@@ -458,7 +458,7 @@ Blog or `/guides` content, localisation (French, Arabic, Portuguese), paid-ads l
 | Q1 | What is the production domain? Keep `cloudoptics.cloudboosta.com`, or a dedicated domain? Does staging stay on that host or move? | Start of S7 | SITE-13, SEO |
 | Q2 | Is cloudboosta.com in our control, and should it link to (not duplicate) the Cloudoptics site? Should marketing be able to edit pages without engineers (which would favour option D)? | S6 planning | SITE-01 |
 | Q3 | What do we show for pricing at the beta: the doc 10 C5 tiers in local currency, "free during the beta", or the free tier only? Which local prices? | Mid S6 | SITE-11, landing §10 |
-| Q4 | Self-serve sign-up for everyone, or a design-partner application (doc 10 C7 criteria) first? | S6 planning | CTAs, SITE-04 |
+| Q4 | Self-serve sign-up for everyone, or a design-partner application (doc 10 C7 criteria) first? **Decided 19 Nov 2026: self-serve for everyone**, no application step; customers are individual companies, not resellers or agencies (ADR-017). | S6 planning | CTAs, SITE-04 |
 | Q5 | What proof can we publish: Cloudboosta community and training numbers, team names and photos, any AWS partner status? | Mid S6 | Landing §11, About |
 | Q6 | Where will production data live (London today; doc 10 mentions backups in AMS3/FRA1)? What retention do we promise after deletion? | Mid S6 | FAQ, security page, privacy notice |
 | Q7 | Will we run paid ads or tracking pixels in the next six months? (If yes, plan H2 and one consent manager now.) | S6 planning | §7.2, §8.4 |
