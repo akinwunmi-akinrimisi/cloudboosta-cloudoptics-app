@@ -5,17 +5,18 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-import { appPath, openSignedIn, seedWorkspace, signInApi, uniqueEmail } from './support'
+import { appPath, openSignedIn, seedSupportGrant, seedWorkspace, signInApi, uniqueEmail } from './support'
 
 // axe-core on each main page with real layout (docs/11f §1.1 "Accessibility"), on a few
 // opened states (inline confirmations, the mobile menu) and at a phone width. Any violation
 // fails the test (FE-12, WCAG 2.2 AA); E2E_A11Y_STRICT=0 only reports, for investigating.
-// Output: reports/a11y/summary.md and one JSON file per page, uploaded with the HTML report
-// in CI. What axe cannot check (keyboard, focus, motion, layout) is in keyboard.spec.ts and
+// Output, per browser project: reports/a11y/<project>/summary.md (desktop), phone.md and one
+// JSON file per page, uploaded with the HTML report in CI. The staff console (/staff) is
+// included at both widths. What axe cannot check (keyboard, focus, motion, layout) is in keyboard.spec.ts and
 // mobile.spec.ts.
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice']
-const OUT = path.join(import.meta.dirname, '..', 'reports', 'a11y')
+const REPORTS = path.join(import.meta.dirname, '..', 'reports', 'a11y')
 const STRICT = process.env.E2E_A11Y_STRICT !== '0'
 const PHONE = { width: 390, height: 844 }
 
@@ -43,7 +44,7 @@ async function audit(page: Page, name: string, url: string): Promise<PageResult>
 
 function summary(results: PageResult[]): string {
   const lines = [
-    '# Accessibility report (axe-core, E2E stack)',
+    `# Accessibility report (axe-core, E2E stack, ${test.info().project.name})`,
     '',
     `Rules: ${TAGS.join(', ')}. Generated ${new Date().toISOString()}.`,
     '',
@@ -63,6 +64,38 @@ function summary(results: PageResult[]): string {
     lines.push('')
   }
   return lines.join('\n')
+}
+
+// [name, path, path as reported, h1]
+function mainPages(recommendationId: string): [string, string, string, RegExp | string][] {
+  return [
+    ['Overview', '/overview', '/overview', 'Overview'],
+    ['Cost Explorer', '/costs', '/costs', 'Cost Explorer'],
+    ['Recommendations', '/recommendations', '/recommendations', 'Recommendations'],
+    ['Recommendation detail', `/recommendations/${recommendationId}`, '/recommendations/:id', /./],
+    ['Anomalies', '/anomalies', '/anomalies', 'Anomalies'],
+    ['Budgets', '/budgets', '/budgets', 'Budgets'],
+    ['Commitments', '/commitments', '/commitments', /Commitments|Savings Plans/],
+    ['Reports', '/reports', '/reports', /Report/],
+    ['Connections', '/settings/connections', '/settings/connections', 'Connections'],
+    ['Settings', '/settings', '/settings', 'Settings'],
+  ]
+}
+
+/** Writes reports/a11y/<project>/<part>.md and a JSON file per page, and fails on any violation. */
+async function report(part: string, results: PageResult[]) {
+  // One folder per browser project (reports/a11y/chromium, reports/a11y/webkit).
+  const out = path.join(REPORTS, test.info().project.name)
+  await mkdir(out, { recursive: true })
+  for (const r of results) {
+    await writeFile(path.join(out, `${r.name.toLowerCase().replace(/\W+/g, '-')}.json`), JSON.stringify(r, null, 2))
+  }
+  const text = summary(results)
+  await writeFile(path.join(out, `${part}.md`), text)
+  await test.info().attach(`a11y-${part}.md`, { body: text, contentType: 'text/markdown' })
+  const total = results.reduce((n, r) => n + r.violations.length, 0)
+  console.log(`axe (${part}): ${total} violation(s) across ${results.length} pages; see reports/a11y/${test.info().project.name}/${part}.md`)
+  if (STRICT) expect(total, text).toBe(0)
 }
 
 test('axe on each main page', async ({ page, browser, request }) => {
@@ -88,19 +121,17 @@ test('axe on each main page', async ({ page, browser, request }) => {
   results.push(await audit(anon, 'Onboarding: connect AWS', '/onboarding (step 2)'))
   await fresh.close()
 
-  // [name, path, path as reported, h1]
-  const pages: [string, string, string, RegExp | string][] = [
-    ['Overview', '/overview', '/overview', 'Overview'],
-    ['Cost Explorer', '/costs', '/costs', 'Cost Explorer'],
-    ['Recommendations', '/recommendations', '/recommendations', 'Recommendations'],
-    ['Recommendation detail', `/recommendations/${recs[0].id}`, '/recommendations/:id', /./],
-    ['Anomalies', '/anomalies', '/anomalies', 'Anomalies'],
-    ['Budgets', '/budgets', '/budgets', 'Budgets'],
-    ['Commitments', '/commitments', '/commitments', /Commitments|Savings Plans/],
-    ['Reports', '/reports', '/reports', /Report/],
-    ['Connections', '/settings/connections', '/settings/connections', 'Connections'],
-    ['Settings', '/settings', '/settings', 'Settings'],
-  ]
+  // The internal staff console (break-glass access), with a grant listed.
+  const { staff } = await seedSupportGrant(request)
+  const staffContext = await browser.newContext()
+  const console_ = await staffContext.newPage()
+  await openSignedIn(console_, staff.token, undefined, '/staff')
+  await expect(console_.getByRole('heading', { level: 1, name: 'Support access' })).toBeVisible()
+  await expect(console_.getByRole('button', { name: 'End access' }).first()).toBeVisible()
+  results.push(await audit(console_, 'Staff console', '/staff'))
+  await staffContext.close()
+
+  const pages = mainPages(recs[0].id)
   await openSignedIn(page, ws.api.token, ws.tenantId, '/overview')
   for (const [name, url, shown, heading] of pages) {
     await test.step(name, async () => {
@@ -138,7 +169,17 @@ test('axe on each main page', async ({ page, browser, request }) => {
     results.push(await audit(page, 'Overview: chart table open', '/overview (table)'))
   })
 
-  // A phone (390 x 844): the pages, and the navigation drawer open.
+  await report('summary', results)
+})
+
+// The same pages on a phone, and the navigation drawer open: a test of its own so the two run
+// in parallel (axe is slower on WebKit).
+test('axe on each main page at 390 px', async ({ browser, request }) => {
+  test.setTimeout(300_000)
+  const ws = await seedWorkspace(request)
+  const recs = await ws.api.get<{ id: string }[]>(`/v1/tenants/${ws.tenantId}/recommendations`)
+  const pages = mainPages(recs[0].id)
+  const results: PageResult[] = []
   const phone = await browser.newContext({ viewport: PHONE, isMobile: true, hasTouch: true })
   const mobile = await phone.newPage()
   await openSignedIn(mobile, ws.api.token, ws.tenantId, '/overview')
@@ -157,15 +198,16 @@ test('axe on each main page', async ({ page, browser, request }) => {
     results.push(await audit(mobile, 'Menu open (390 px)', '/overview (menu)'))
   })
   await phone.close()
+  const { staff } = await seedSupportGrant(request)
+  await test.step('Staff console (phone)', async () => {
+    const context = await browser.newContext({ viewport: PHONE, isMobile: true, hasTouch: true })
+    const p = await context.newPage()
+    await openSignedIn(p, staff.token, undefined, '/staff')
+    await expect(p.getByRole('heading', { level: 1, name: 'Support access' })).toBeVisible()
+    await expect(p.getByRole('button', { name: 'End access' }).first()).toBeVisible()
+    results.push(await audit(p, 'Staff console (390 px)', '/staff'))
+    await context.close()
+  })
 
-  await mkdir(OUT, { recursive: true })
-  for (const r of results) {
-    await writeFile(path.join(OUT, `${r.name.toLowerCase().replace(/\W+/g, '-')}.json`), JSON.stringify(r, null, 2))
-  }
-  const report = summary(results)
-  await writeFile(path.join(OUT, 'summary.md'), report)
-  await test.info().attach('a11y-summary.md', { body: report, contentType: 'text/markdown' })
-  const total = results.reduce((n, r) => n + r.violations.length, 0)
-  console.log(`axe: ${total} violation(s) across ${results.length} pages; see reports/a11y/summary.md`)
-  if (STRICT) expect(total, report).toBe(0)
+  await report('phone', results)
 })
