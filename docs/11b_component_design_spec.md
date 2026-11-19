@@ -460,6 +460,7 @@ Procrastinate tables (`procrastinate_jobs`, `procrastinate_periodic_defers`, eve
 ### 7.4 Audit logging
 - `audit` module API: `audit.record(actor, action, target, before, after, ctx)`, called by mutating services inside the same transaction.
 - Append-only table with hash chaining (`row_hash = sha256(prev_hash || canonical_json(row))`); a daily verification job; monthly export to write-once storage.
+- One chain per tenant and one platform chain (`tenant_id` null). Each row's `prev_hash` is the newest earlier row's `row_hash` in the same chain, whatever the writer's RLS scope: the app role cannot see platform rows, so writers read the platform head through `audit_platform_head()` (SECURITY DEFINER, returns the hash only), and only the staff console can read and verify the platform chain. Verification fails when the session cannot see the chain's head. Platform rows from before migration 0037 are unlinked; they keep their hashes and are checked one by one.
 - Staff break-glass:
   - An internal admin tool requires a reason and ticket ID, and grants time-boxed access (≤ 2h).
   - Every access is recorded with `actor_type = staff` and is visible to the tenant.

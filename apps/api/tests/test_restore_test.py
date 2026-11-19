@@ -168,6 +168,13 @@ DO $$ DECLARE r record; BEGIN
     EXECUTE format('ALTER TABLE public.%I OWNER TO %I', r.tablename,
                    current_setting('restore_test.owner'));
   END LOOP;
+  -- The migrations' own functions too (doadmin runs them), not those of extensions.
+  FOR r IN SELECT p.oid::regprocedure AS fn FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname = 'public' AND NOT EXISTS (
+             SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e') LOOP
+    EXECUTE format('ALTER FUNCTION %s OWNER TO %I', r.fn, current_setting('restore_test.owner'));
+  END LOOP;
 END $$
 """
 
