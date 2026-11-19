@@ -25,7 +25,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from cloudoptics.platform.api import ApiProblem, client_ip
-from cloudoptics.platform.db import get_engine
+from cloudoptics.platform.db import get_side_engine
 from cloudoptics.platform.settings import get_settings
 
 log = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ async def hit(bucket: str, limit: int, scope: str) -> None:
     if not get_settings().rate_limit_enabled or limit <= 0:
         return
     try:
-        async with get_engine().connect() as conn:
+        async with get_side_engine().connect() as conn:
             row = (await conn.execute(HIT, {"bucket": bucket, "w": WINDOW_SECONDS})).one()
             if random.random() < _CLEANUP_SHARE:  # noqa: S311 - load spreading, not security
                 await conn.execute(CLEANUP, {"keep": _KEEP})
