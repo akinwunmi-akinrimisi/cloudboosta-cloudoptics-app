@@ -16,7 +16,7 @@ interface Props {
 const { figures, caption } = Astro.props
 const rates = claims.sampleRates as Record<string, number>
 const codes = Object.keys(rates)
-const names: Record<string, string> = { NGN: 'Naira', KES: 'Kenyan shillings', ZAR: 'Rand', GHS: 'Cedis' }
+const names: Record<string, string> = { NGN: 'Naira', KES: 'Kenyan shillings', ZAR: 'Rand' }
 const money = (amount: number, currency: string, digits = 0) =>
   new Intl.NumberFormat('en-GB', { style: 'currency', currency, currencyDisplay: 'narrowSymbol', minimumFractionDigits: digits, maximumFractionDigits: digits }).format(amount)
 const local = (usd: number) => Object.fromEntries(codes.map((c) => [`data-${c.toLowerCase()}`, money(usd * rates[c]!, c)]))
