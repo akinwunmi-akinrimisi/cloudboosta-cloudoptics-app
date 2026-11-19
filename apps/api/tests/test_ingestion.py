@@ -211,6 +211,29 @@ async def test_unreadable_bucket_is_recorded_as_a_failed_run(
     assert runs == [("failed", "load_failed", "AccessDenied")]
 
 
+async def test_an_export_past_a_limit_is_recorded_on_the_run(
+    client: AsyncClient, login, owner_sql, bucket, monkeypatch
+) -> None:
+    from cloudoptics.platform.settings import get_settings
+
+    tenant, connection, headers = await connected(client, login, owner_sql)
+    write_export(generate(SEPT), bucket / "cloudoptics")
+    monkeypatch.setattr(get_settings(), "cur_max_period_rows", 10)
+    assert (await ingest(client, tenant, connection, headers))["status"] == "failed"
+    [(status, code, detail)] = owner_sql(
+        "SELECT status, error_code, error_detail FROM sync_run WHERE connection_id = %s "
+        "AND job_type = 'cur.ingest'",
+        connection,
+    )
+    assert (status, code) == ("failed", "load_failed")
+    assert detail.startswith("2026-09@2026-09-v1: too_large: ")
+    assert "rows; the limit is 10" in detail
+    # Nothing was stored, so the version is tried again once the limit allows it.
+    assert owner_sql("SELECT count(*) FROM ingest_batch WHERE connection_id = %s", connection) == [
+        (0,)
+    ]
+
+
 async def test_disconnected_or_exportless_connections_are_skipped(
     client: AsyncClient, login, owner_sql, bucket
 ) -> None:

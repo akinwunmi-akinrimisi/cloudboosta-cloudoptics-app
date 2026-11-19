@@ -452,16 +452,7 @@ async def scan_resources(
             status.HTTP_409_CONFLICT,
             "Check the billing connection first: resources are scanned for working connections.",
         )
-    account_ids = [
-        r.aws_account_id.strip()
-        for r in await session.execute(
-            text(
-                "SELECT aws_account_id FROM cloud_account WHERE connection_id = :c AND "
-                "coalesce(org_status, 'ACTIVE') = 'ACTIVE' ORDER BY aws_account_id"
-            ),
-            {"c": connection_id},
-        )
-    ]
+    account_ids = await accounts.scan_account_ids(session, connection_id)
     external_id = get_encryptor().decrypt(bytes(row.external_id_enc), access.tenant_id)
     factory = get_session_factory()
     checked: list[AccountAccess] = []

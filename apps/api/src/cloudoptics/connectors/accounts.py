@@ -24,9 +24,32 @@ from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.service import get_connection, get_session_factory
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
+from cloudoptics.platform.settings import get_settings
 
 USABLE = ("healthy", "degraded")
 NOT_LISTED = "NOT_LISTED"
+
+# The accounts of a connection that scans assume a role in: every active account the
+# Organization lists, and at most :bill_only of those known only from the bills (no
+# org_status; the connection's own account first). The bills are the customer's files, so
+# they cannot make the shared broker assume into an unbounded number of accounts.
+SCAN_ACCOUNTS_SQL = (
+    "SELECT aws_account_id FROM (SELECT aws_account_id, org_status, row_number() OVER "
+    "(PARTITION BY org_status IS NULL ORDER BY account_type = 'member', aws_account_id) AS n "
+    "FROM cloud_account WHERE connection_id = :c AND "
+    "coalesce(org_status, 'ACTIVE') = 'ACTIVE') a "
+    "WHERE org_status IS NOT NULL OR n <= :bill_only ORDER BY aws_account_id"
+)
+
+
+async def scan_account_ids(session: AsyncSession, connection_id: uuid.UUID) -> list[str]:
+    """The AWS account IDs a scan of the connection covers (``SCAN_ACCOUNTS_SQL``)."""
+    rows = await session.execute(
+        text(SCAN_ACCOUNTS_SQL),
+        {"c": connection_id, "bill_only": get_settings().max_bill_only_accounts},
+    )
+    return [r.aws_account_id.strip() for r in rows]
+
 
 DiscoveryStatus = Literal["skipped", "succeeded", "failed"]
 

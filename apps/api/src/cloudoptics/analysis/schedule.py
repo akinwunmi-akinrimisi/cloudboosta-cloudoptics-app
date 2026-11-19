@@ -17,10 +17,8 @@ resources another scheduler already handles (a ``Schedule`` tag) are skipped.
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Callable, Iterator
 from datetime import timedelta
-from functools import lru_cache
 from typing import Any, Literal
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -36,6 +34,7 @@ from cloudoptics.analysis.rules import (
     _cli,
     _region_args,
 )
+from cloudoptics.analysis.settings import nonprod_matcher
 
 SCHEDULE_TAG = "cloudoptics:schedule"
 # A resource with one of these tags is already scheduled (ours, or AWS Instance Scheduler).
@@ -53,11 +52,6 @@ TEMPLATE_PATH = "scheduler/cloudoptics-scheduler.yaml"
 Source = Literal["tag", "name"]
 
 
-@lru_cache(maxsize=32)
-def _pattern(pattern: str) -> re.Pattern[str]:
-    return re.compile(pattern, re.IGNORECASE)
-
-
 def non_production(ctx: Context, r: Resource) -> tuple[Source, str] | None:
     """How the resource is known to be non-production (``tag`` or ``name``) and the
     matching text, or None (production, or nothing matches)."""
@@ -66,12 +60,12 @@ def non_production(ctx: Context, r: Resource) -> tuple[Source, str] | None:
     tagged = [(k, v) for k, v in r.tags.items() if k.lower() in keys]
     if any(v.strip().lower() in PROD for _, v in tagged):
         return None
-    pattern = _pattern(settings.nonprod_pattern)
+    pattern = nonprod_matcher(settings.nonprod_pattern)
     for key, value in tagged:
-        if pattern.search(value[:256]):
+        if pattern.search(value):
             return "tag", f"{key}={value}"
     for name in (r.name, r.resource_id):
-        if name and pattern.search(name[:256]):
+        if name and pattern.search(name):
             return "name", name
     return None
 

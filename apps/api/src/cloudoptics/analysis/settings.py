@@ -1,13 +1,23 @@
 """Tenant rule settings (PRD FR-REC-08, WBS AN-17): rules turned off, the tag that hides a
 resource from every rule, the idle thresholds, what counts as non-production and the office
-hours non-production servers are scheduled for (R7). Missing values take the defaults."""
+hours non-production servers are scheduled for (R7). Missing values take the defaults.
+
+The non-production pattern is a regular expression the tenant writes, run in the shared
+worker on text from the tenant's own AWS account (tags, names). It runs on the ``regex``
+engine with a time limit on every match (``MATCH_TIMEOUT``), so a pattern that backtracks
+badly cannot hold the worker: it is refused when saved (``pattern_problem`` times it on
+strings built to make it backtrack) and, if one still times out on real text, it stops
+matching for the rest of the process (``NonprodMatcher``)."""
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
+import regex
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +34,31 @@ MAX_PATTERN_LENGTH = 200
 HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 # A quantified group that is itself quantified, e.g. (a+)+: can take exponential time.
 NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*[+*{]")
+#: Text the pattern is matched against is cut to this length.
+MAX_TEXT = 256
+#: Seconds one match may take. A sensible pattern takes microseconds on 256 characters.
+MATCH_TIMEOUT = 0.1
+SLOW_PATTERN = "The pattern can take too long to match, which would hold up the analysis"
+
+log = logging.getLogger(__name__)
+
+
+def _compile(pattern: str) -> Any:
+    return regex.compile(pattern, regex.IGNORECASE | regex.VERSION0)
+
+
+def _probes(pattern: str) -> list[str]:
+    """Texts that make a backtracking pattern slow: long runs of each character and each
+    word the pattern names (and of common characters), ended by characters that make most
+    matches fail. A heuristic: the time limit on every match is what bounds the cost."""
+    units = dict.fromkeys(c for c in pattern if c.isprintable() and not c.isspace())
+    units.update(dict.fromkeys("a0-_ ."))
+    units.update(dict.fromkeys(re.findall(r"[A-Za-z0-9]{2,}", pattern)))
+    return [
+        (unit * (MAX_TEXT // len(unit)))[: MAX_TEXT - 1] + end
+        for unit in units
+        for end in ("\x00", "!")
+    ]
 
 
 def pattern_problem(pattern: str) -> str | None:
@@ -34,9 +69,43 @@ def pattern_problem(pattern: str) -> str | None:
         return "The pattern repeats a repeated group, which can be very slow"
     try:
         re.compile(pattern)
-    except re.error as exc:
+        compiled = _compile(pattern)
+    except (re.error, regex.error) as exc:
         return f"The pattern is not a valid regular expression: {exc}"
+    try:
+        for probe in _probes(pattern):
+            compiled.search(probe, timeout=MATCH_TIMEOUT)
+    except TimeoutError:
+        return SLOW_PATTERN
     return None
+
+
+class NonprodMatcher:
+    """The tenant's pattern, matched with a time limit. A match that runs out of time counts
+    as no match, and the pattern then matches nothing more in this process, so one slow
+    match is the most a stored pattern can cost a worker."""
+
+    def __init__(self, pattern: str) -> None:
+        self.pattern = pattern
+        self._compiled = _compile(pattern)
+        self.timed_out = False
+
+    def search(self, value: str) -> bool:
+        if self.timed_out:
+            return False
+        try:
+            # concurrent: the GIL is released while matching, so other threads run.
+            found = self._compiled.search(value[:MAX_TEXT], timeout=MATCH_TIMEOUT, concurrent=True)
+        except TimeoutError:
+            self.timed_out = True
+            log.warning("Non-production pattern timed out; it is skipped from now on")
+            return False
+        return found is not None
+
+
+@lru_cache(maxsize=32)
+def nonprod_matcher(pattern: str) -> NonprodMatcher:
+    return NonprodMatcher(pattern)
 
 
 def window_problem(start: str, end: str) -> str | None:

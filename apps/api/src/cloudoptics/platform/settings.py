@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # "inline" runs background jobs inside the request (local, tests, demo); staging and
     # production use the Procrastinate queue and a worker process.
     jobs_mode: Literal["inline", "queue"] = "inline"
+    # Jobs one worker process runs at once. Each extra slot can hold one more bill load in
+    # memory, so this is sized to the worker's memory (512 MB in staging).
+    worker_concurrency: int = Field(default=3, ge=1, le=32)
 
     # Days between a workspace deletion request and the deletion, while admins can cancel it
     # (docs/08 §1.7). PRD US-8.3: the data is gone within 30 days of the request.
@@ -79,6 +82,14 @@ class Settings(BaseSettings):
     # tenant and version (local development); staging keeps aggregates in PostgreSQL only
     # until object storage is provisioned (docs/11b §2.3).
     normalised_dir: str = ""
+    # Limits on what one export may make the shared worker read (the customer writes the
+    # bucket). A version past one is recorded as failed with the limit it hit.
+    cur_max_manifest_bytes: int = 8 * 1024 * 1024
+    cur_max_data_files: int = 500
+    cur_max_period_bytes: int = 8 * 1024**3
+    cur_max_period_rows: int = 20_000_000
+    # Bill-only accounts (in the bills, not seen in the Organization) scanned per connection.
+    max_bill_only_accounts: int = 100
 
     # Cloudoptics staff who may set exchange rates (comma-separated emails). A platform-admin
     # role with MFA replaces this list with the admin console (WBS ADM-10).

@@ -18,7 +18,13 @@ from cloudoptics.ingestion.focus import (
     normalise,
 )
 from cloudoptics.ingestion.quality import Check, QualityChecks, blocked
-from cloudoptics.ingestion.source import ExportSource, Manifest
+from cloudoptics.ingestion.source import (
+    ExportSource,
+    ExportTooLargeError,
+    Manifest,
+    ManifestError,
+)
+from cloudoptics.platform.settings import get_settings
 
 BATCH_ROWS = 200_000
 
@@ -54,7 +60,16 @@ class LoadedExport:
 def load_export(
     source: ExportSource, manifest: Manifest, normalised_dir: Path | None = None
 ) -> LoadedExport:
-    """Read every data file of ``manifest``. Blocking checks leave ``rows`` empty."""
+    """Read every data file of ``manifest``. Blocking checks leave ``rows`` empty.
+
+    Raises ``ExportTooLargeError`` when the period is past the bytes or rows limit."""
+    limits = get_settings()
+    max_rows = limits.cur_max_period_rows
+    if manifest.num_rows is not None and manifest.num_rows > max_rows:
+        raise ExportTooLargeError(
+            f"{manifest.key} lists {manifest.num_rows:,} rows; the limit is {max_rows:,}"
+        )
+    bytes_left = limits.cur_max_period_bytes
     quality = QualityChecks(manifest.billing_period)
     aggregator = DailyAggregator()
     files: list[LoadedFile] = []
@@ -66,36 +81,59 @@ def load_export(
             / f"billing_period={manifest.billing_period:%Y-%m}"
             / f"version={manifest.export_version}"
         )
+        # parse_manifest keeps the version to one plain name; this holds whatever it is.
+        if not out_dir.resolve().is_relative_to(normalised_dir.resolve()):
+            raise ManifestError(f"{manifest.key}: the version would be written outside its folder")
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "part-00000.parquet"
 
+    rows = 0
     try:
         with tempfile.TemporaryDirectory(prefix="cur-") as tmp:
             for index, key in enumerate(manifest.data_keys):
                 local = Path(tmp) / f"{index:05d}.parquet"
-                sha256, size = source.download(key, local)
-                parquet = pq.ParquetFile(local)
-                schema = parquet.schema_arrow
-                quality.schema(schema)
-                wanted = [
-                    c for c in REQUIRED_COLUMNS + OPTIONAL_COLUMNS if schema.get_field_index(c) >= 0
-                ]
-                count = 0
-                if all(schema.get_field_index(c) >= 0 for c in REQUIRED_COLUMNS):
-                    for batch in parquet.iter_batches(batch_size=BATCH_ROWS, columns=wanted):
-                        focus = normalise(batch)
-                        quality.update(batch, focus)
-                        aggregator.update(focus)
-                        if out_path is not None:
-                            lineage = _with_lineage(focus, key, manifest)
-                            writer = writer or pq.ParquetWriter(
-                                out_path, lineage.schema, compression="zstd"
-                            )
-                            writer.write_table(lineage)
-                        count += batch.num_rows
-                else:
-                    count = parquet.metadata.num_rows
+                try:
+                    sha256, size = source.download(key, local, max_bytes=bytes_left)
+                except ExportTooLargeError as exc:
+                    raise ExportTooLargeError(
+                        f"{manifest.key}: the data files are larger than the "
+                        f"{limits.cur_max_period_bytes:,}-byte limit for a period"
+                    ) from exc
+                bytes_left -= size
+                # Closed before the file is removed (Windows will not remove an open file).
+                with pq.ParquetFile(local) as parquet:
+                    schema = parquet.schema_arrow
+                    quality.schema(schema)
+                    wanted = [
+                        c
+                        for c in REQUIRED_COLUMNS + OPTIONAL_COLUMNS
+                        if schema.get_field_index(c) >= 0
+                    ]
+                    count = 0
+                    if all(schema.get_field_index(c) >= 0 for c in REQUIRED_COLUMNS):
+                        for batch in parquet.iter_batches(batch_size=BATCH_ROWS, columns=wanted):
+                            rows += batch.num_rows
+                            if rows > max_rows:
+                                raise ExportTooLargeError(
+                                    f"{manifest.key}: more than {max_rows:,} rows in the period"
+                                )
+                            focus = normalise(batch)
+                            quality.update(batch, focus)
+                            aggregator.update(focus)
+                            if out_path is not None:
+                                lineage = _with_lineage(focus, key, manifest)
+                                writer = writer or pq.ParquetWriter(
+                                    out_path, lineage.schema, compression="zstd"
+                                )
+                                writer.write_table(lineage)
+                            count += batch.num_rows
+                    else:
+                        count = parquet.metadata.num_rows
                 files.append(LoadedFile(key, sha256, size, count))
+                local.unlink()  # one file on disk at a time
+    except BaseException:
+        quality.close()
+        raise
     finally:
         if writer is not None:
             writer.close()

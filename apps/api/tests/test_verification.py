@@ -555,7 +555,11 @@ async def test_jobs(
     monkeypatch.setattr(jobs, "defer_once", fake_defer)
     monkeypatch.setattr(platform_jobs, "get_job_app", lambda: None)
     assert await jobs.poll(0) >= 1
-    assert {"name": jobs.VERIFY_TASK, "tenant_id": str(tid)} in queued
+    assert {
+        "name": jobs.VERIFY_TASK,
+        "run_lock": f"recommendations:{tid}",  # not alongside the tenant's analysis
+        "tenant_id": str(tid),
+    } in queued
 
     sam, _ = await teammate(client, login, owner_sql, str(tid), "member")
     me = owner_sql(

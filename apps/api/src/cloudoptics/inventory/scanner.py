@@ -31,6 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from cloudoptics.connectors.accounts import scan_account_ids
 from cloudoptics.connectors.aws import STACK_REGION, resource_role_arn, session_name
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.service import get_connection, get_session_factory
@@ -470,16 +471,7 @@ async def scan_connection(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> Sca
     async with maker() as session, session.begin():
         await scope(session, tenant_id=tenant_id)
         conn = await get_connection(session, connection_id)
-        accounts = [
-            r.aws_account_id
-            for r in await session.execute(
-                text(
-                    "SELECT aws_account_id FROM cloud_account WHERE connection_id = :c AND "
-                    "coalesce(org_status, 'ACTIVE') = 'ACTIVE' ORDER BY aws_account_id"
-                ),
-                {"c": connection_id},
-            )
-        ]
+        accounts = await scan_account_ids(session, connection_id)
     if conn.status not in USABLE:
         return "skipped"
     external_id = get_encryptor().decrypt(bytes(conn.external_id_enc), tenant_id)
