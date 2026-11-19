@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { useApi } from '../app/context'
 import type { Connection, DataDeletion, StackSteps, Tenant } from '../api/types'
 import { ApiError } from '../api/types'
+import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card } from '../components/ui'
 
 // Deleting data (PRD US-8.3): a disconnected connection's data straight away, the whole
@@ -43,6 +44,9 @@ export function DeleteConnectionData({
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [typed, setTyped] = useState('')
+  const trigger = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLFormElement>(null)
+  useEscapeToClose(open, () => setOpen(false), trigger, panel)
   const remove = useMutation({
     mutationFn: () => api.deleteConnectionData(tenantId, c.id, typed.trim()),
     onSuccess: (deletion) => {
@@ -54,13 +58,14 @@ export function DeleteConnectionData({
   })
   if (!open) {
     return (
-      <Button variant="ghost" onClick={() => setOpen(true)}>
+      <Button ref={trigger} variant="ghost" onClick={() => setOpen(true)}>
         Delete data…
       </Button>
     )
   }
   return (
     <form
+      ref={panel}
       className="flex w-full flex-col gap-2 rounded-sm border border-critical-ink/40 bg-critical-soft/40 p-3 text-sm"
       onSubmit={(e) => {
         e.preventDefault()
@@ -130,6 +135,9 @@ export function DangerZone({ tenant }: { tenant: Tenant }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
   const [typed, setTyped] = useState('')
+  const trigger = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLFormElement>(null)
+  useEscapeToClose(open, () => setOpen(false), trigger, panel)
   const view = useQuery({ queryKey: ['tenant-deletion', tenant.id], queryFn: () => api.getTenantDeletion(tenant.id) })
   const refresh = () => {
     for (const key of ['tenant-deletion', 'tenant', 'deletions', 'audit-log']) {
@@ -174,6 +182,7 @@ export function DangerZone({ tenant }: { tenant: Tenant }) {
         </div>
       ) : open ? (
         <form
+          ref={panel}
           className="flex flex-col gap-2 text-sm"
           onSubmit={(e) => {
             e.preventDefault()
@@ -195,7 +204,7 @@ export function DangerZone({ tenant }: { tenant: Tenant }) {
         </form>
       ) : (
         <div>
-          <Button variant="secondary" onClick={() => setOpen(true)}>
+          <Button ref={trigger} variant="secondary" onClick={() => setOpen(true)}>
             Delete workspace…
           </Button>
         </div>
@@ -241,7 +250,8 @@ export function DeletionHistory({ tenantId }: { tenantId: string }) {
             {d.verification && (
               <details>
                 <summary className="cursor-pointer text-xs text-secondary">{verificationSummary(d)}</summary>
-                <table className="mt-2 w-full text-xs tabular-nums">
+                <div className="mt-2 overflow-x-auto" role="region" aria-label="Verification details" tabIndex={0}>
+                <table className="w-full text-xs tabular-nums">
                   <thead>
                     <tr className="text-left text-muted">
                       <th className="font-medium">Table</th>
@@ -259,6 +269,7 @@ export function DeletionHistory({ tenantId }: { tenantId: string }) {
                     ))}
                   </tbody>
                 </table>
+                </div>
               </details>
             )}
           </li>

@@ -184,7 +184,7 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
         </div>
         <p className="text-xs text-muted">Made {new Date(r.generatedAt).toLocaleDateString('en-GB')}</p>
       </header>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Kpi label="Total spend" value={usd(s.usd)} sub={hasLocal ? local(s.local as number, ccy) : undefined} />
         <Kpi
           label="Against the month before"
@@ -210,6 +210,7 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
       {r.drivers.length > 0 && (
         <Section title="What changed most">
           {r.whatChanged && <p className="text-sm">{r.whatChanged}</p>}
+          <div className="overflow-x-auto" role="region" aria-label="What changed most, by service" tabIndex={0}>
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-muted">
               <tr>
@@ -222,7 +223,7 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
             <tbody>
               {r.drivers.map((d) => (
                 <tr key={d.serviceName} className="border-t border-border">
-                  <td className="py-1 pr-2">{d.serviceName}</td>
+                  <td className="py-1 pr-2 [overflow-wrap:anywhere]">{d.serviceName}</td>
                   <td className="py-1 pl-3 text-right whitespace-nowrap">{usd(d.usd)}</td>
                   <td className="hidden py-1 pl-3 text-right whitespace-nowrap sm:table-cell">{usd(d.previousUsd)}</td>
                   <td className={cx('py-1 pl-3 text-right font-medium whitespace-nowrap', d.changeUsd > 0 && 'text-critical-ink')}>
@@ -232,10 +233,11 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
               ))}
             </tbody>
           </table>
+          </div>
           {s.creditsUsd !== 0 && <p className="text-xs text-secondary">AWS credits applied this month: {usd(-s.creditsUsd)}.</p>}
         </Section>
       )}
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
         <Section title="Budgets">
           {r.budgets.length === 0 ? (
             <p className="text-sm text-secondary">No budgets set.</p>

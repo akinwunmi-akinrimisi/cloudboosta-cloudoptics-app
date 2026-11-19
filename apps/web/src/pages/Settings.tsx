@@ -63,7 +63,7 @@ function WorkspaceSettings({ tenant }: { tenant: Tenant }) {
           Costs are shown in US dollars and in this currency. Dates and the daily cut-off use this time zone.
         </p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="flex flex-col gap-1 text-sm">
           <span className="font-medium">Local currency</span>
           <select
@@ -195,7 +195,7 @@ function RuleSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canEd
           Choose what Cloudoptics looks for. Changes apply straight away to every AWS account in this workspace.
         </p>
       </div>
-      <fieldset className="grid gap-2 sm:grid-cols-2" disabled={!canEdit}>
+      <fieldset className="grid grid-cols-1 gap-2 sm:grid-cols-2" disabled={!canEdit}>
         <legend className="mb-1 text-sm font-medium">Look for</legend>
         {view.rules.map((rule) => (
           <label key={rule} className="flex items-center gap-2 text-sm">
@@ -208,7 +208,7 @@ function RuleSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canEd
           </label>
         ))}
       </fieldset>
-      <fieldset className="grid gap-4 sm:grid-cols-3" disabled={!canEdit}>
+      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-3" disabled={!canEdit}>
         <label className="flex flex-col gap-1 text-sm">
           <span className="font-medium">Idle when CPU stays under</span>
           <select
@@ -250,7 +250,7 @@ function RuleSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canEd
       <p className="text-xs text-muted">
         Add the tag above to any AWS resource (with any value) and Cloudoptics will never suggest changing it.
       </p>
-      <fieldset className="grid gap-4 sm:grid-cols-2" disabled={!canEdit}>
+      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2" disabled={!canEdit}>
         <legend className="mb-1 text-sm font-medium">Non-production servers and databases (office-hours schedule)</legend>
         <label className="flex flex-col gap-1 text-sm">
           <span className="font-medium">Tag keys that say the environment</span>
@@ -418,7 +418,7 @@ function MembersCard({ tenantId, meId, isAdmin }: { tenantId: string; meId: stri
       {isAdmin && (
         <>
           <form
-            className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end"
+            className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,14rem)_auto] sm:items-end"
             onSubmit={(e) => {
               e.preventDefault()
               setNotice(null)

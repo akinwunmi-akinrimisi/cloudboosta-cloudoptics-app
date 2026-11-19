@@ -4,25 +4,36 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   Outlet,
   redirect,
   type RouterHistory,
 } from '@tanstack/react-router'
 
 import type { Api, Me } from '../api/types'
-import { Onboarding } from '../pages/Onboarding'
 import { SignIn } from '../pages/SignIn'
-import { Costs } from '../pages/Costs'
-import { RecommendationDetail, Recommendations } from '../pages/Recommendations'
-import { Reports } from '../pages/Reports'
-import { Settings } from '../pages/Settings'
-import { Staff } from '../pages/Staff'
 import { isSection, type SettingsSection } from '../pages/SettingsNav'
-import { Anomalies } from '../pages/Anomalies'
-import { Budgets } from '../pages/Budgets'
-import { Commitments } from '../pages/Commitments'
 import { Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
+
+// Route-level code splitting (FR-UI-10 / NFR-PERF-03): sign-in, Overview and Connections are
+// in the first download; every other page is its own chunk, fetched when its route loads (or
+// on hover/focus of a link to it, defaultPreload 'intent').
+const Onboarding = lazyRouteComponent(() => import('../pages/Onboarding'), 'Onboarding')
+const Costs = lazyRouteComponent(() => import('../pages/Costs'), 'Costs')
+const Recommendations = lazyRouteComponent(() => import('../pages/Recommendations'), 'Recommendations')
+const RecommendationDetail = lazyRouteComponent(() => import('../pages/Recommendations'), 'RecommendationDetail')
+const Reports = lazyRouteComponent(() => import('../pages/Reports'), 'Reports')
+const Settings = lazyRouteComponent(() => import('../pages/Settings'), 'Settings')
+const Staff = lazyRouteComponent(() => import('../pages/Staff'), 'Staff')
+const Anomalies = lazyRouteComponent(() => import('../pages/Anomalies'), 'Anomalies')
+const Budgets = lazyRouteComponent(() => import('../pages/Budgets'), 'Budgets')
+const Commitments = lazyRouteComponent(() => import('../pages/Commitments'), 'Commitments')
+
+/** For routes whose component wraps a lazy page: load the page's chunk with the route. */
+const preload = (page: { preload?: () => Promise<void> | undefined }) => async () => {
+  await page.preload?.()
+}
 
 export interface RouterContext {
   api: Api
@@ -81,6 +92,7 @@ const onboarding = createRoute({
   beforeLoad: async ({ context }) => {
     await loadMe(context)
   },
+  loader: preload(Onboarding),
   component: function OnboardingRoute() {
     const { step, connection } = onboarding.useSearch()
     return <Onboarding startAt={step ?? 0} connectionId={connection} />
@@ -120,6 +132,7 @@ const recommendations = createRoute({
 const recommendation = createRoute({
   getParentRoute: () => app,
   path: '/recommendations/$recommendationId',
+  loader: preload(RecommendationDetail),
   component: function RecommendationRoute() {
     const { recommendationId } = recommendation.useParams()
     return <RecommendationDetail recommendationId={recommendationId} />
@@ -137,6 +150,7 @@ const reports = createRoute({
   path: '/reports',
   validateSearch: (search: Record<string, unknown>): { month?: string } =>
     typeof search.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(search.month) ? { month: search.month } : {},
+  loader: preload(Reports),
   component: function ReportsRoute() {
     const { month } = reports.useSearch()
     return <Reports month={month} />
@@ -147,6 +161,7 @@ const settings = createRoute({
   path: '/settings',
   validateSearch: (search: Record<string, unknown>): { section?: SettingsSection } =>
     isSection(search.section) ? { section: search.section } : {},
+  loader: preload(Settings),
   component: function SettingsRoute() {
     const { section } = settings.useSearch()
     return <Settings section={section} />

@@ -14,6 +14,10 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: retryQuery, retryDelay } },
 })
 const router = createAppRouter({ api, queryClient })
+// A returning user: ask for /v1/me now, alongside AuthGate's /v1/auth/config, not after it.
+// One round trip less before the first page (FR-UI-10: Overview within 4 s on 3G). Under
+// WorkOS there is no stored token, so this waits for the provider as before.
+if (api.isSignedIn()) void queryClient.prefetchQuery({ queryKey: ['me'], queryFn: () => api.me() })
 
 const root = document.getElementById('root')
 if (!root) throw new Error('Missing #root element')

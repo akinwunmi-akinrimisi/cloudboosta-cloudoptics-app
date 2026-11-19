@@ -7,13 +7,17 @@ import { expect, test } from '@playwright/test'
 
 import { openSignedIn, seedWorkspace, signInApi, uniqueEmail } from './support'
 
-// axe-core on each main page with real layout (docs/11f §1.1 "Accessibility"). It reports
-// and does not fail: the accessibility pass comes next. E2E_A11Y_STRICT=1 makes any
-// violation fail, for when that pass is done. Output: reports/a11y/summary.md and one JSON
-// file per page, uploaded with the HTML report in CI.
+// axe-core on each main page with real layout (docs/11f §1.1 "Accessibility"), on a few
+// opened states (inline confirmations, the mobile menu) and at a phone width. Any violation
+// fails the test (FE-12, WCAG 2.2 AA); E2E_A11Y_STRICT=0 only reports, for investigating.
+// Output: reports/a11y/summary.md and one JSON file per page, uploaded with the HTML report
+// in CI. What axe cannot check (keyboard, focus, motion, layout) is in keyboard.spec.ts and
+// mobile.spec.ts.
 
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice']
 const OUT = path.join(import.meta.dirname, '..', 'reports', 'a11y')
+const STRICT = process.env.E2E_A11Y_STRICT !== '0'
+const PHONE = { width: 390, height: 844 }
 
 interface PageResult {
   name: string
@@ -62,7 +66,7 @@ function summary(results: PageResult[]): string {
 }
 
 test('axe on each main page', async ({ page, browser, request }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(300_000)
   const ws = await seedWorkspace(request)
   const recs = await ws.api.get<{ id: string }[]>(`/v1/tenants/${ws.tenantId}/recommendations`)
   const results: PageResult[] = []
@@ -77,6 +81,11 @@ test('axe on each main page', async ({ page, browser, request }) => {
   await openSignedIn(anon, newcomer.token, undefined, '/onboarding')
   await expect(anon.getByRole('heading', { name: 'Create your workspace' })).toBeVisible()
   results.push(await audit(anon, 'Onboarding: create workspace', '/onboarding'))
+  await anon.getByLabel('Company or team name').fill('A11y Apps')
+  await anon.getByRole('button', { name: 'Create workspace' }).click()
+  await expect(anon.getByRole('heading', { name: 'Connect your AWS account' })).toBeVisible()
+  await anon.waitForLoadState('networkidle')
+  results.push(await audit(anon, 'Onboarding: connect AWS', '/onboarding (step 2)'))
   await fresh.close()
 
   // [name, path, path as reported, h1]
@@ -102,6 +111,53 @@ test('axe on each main page', async ({ page, browser, request }) => {
     })
   }
 
+  // Opened states: inline panels that take focus and close with Escape.
+  await test.step('Recommendations: bulk dismiss form', async () => {
+    await page.goto('/recommendations')
+    await page.getByRole('checkbox', { name: /^Select / }).first().check()
+    await page.getByRole('button', { name: 'Dismiss…' }).click()
+    await expect(page.getByLabel(/Why are you dismissing/)).toBeFocused()
+    results.push(await audit(page, 'Recommendations: dismiss form open', '/recommendations (dismissing)'))
+  })
+  await test.step('Connections: reload bills panel', async () => {
+    await page.goto('/settings/connections')
+    await page.getByRole('button', { name: 'Reload bills…' }).click()
+    await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeVisible()
+    results.push(await audit(page, 'Connections: reload panel open', '/settings/connections (reload)'))
+  })
+  await test.step('Settings: delete workspace confirmation', async () => {
+    await page.goto('/settings')
+    await page.getByRole('button', { name: 'Delete workspace…' }).click()
+    await expect(page.getByLabel(/Type the workspace name/)).toBeFocused()
+    results.push(await audit(page, 'Settings: delete confirmation open', '/settings (danger zone)'))
+  })
+  await test.step('Charts as tables', async () => {
+    await page.goto('/overview')
+    await page.getByText('Show daily spend as a table').click()
+    await expect(page.getByRole('table', { name: 'Daily spend' })).toBeVisible()
+    results.push(await audit(page, 'Overview: chart table open', '/overview (table)'))
+  })
+
+  // A phone (390 x 844): the pages, and the navigation drawer open.
+  const phone = await browser.newContext({ viewport: PHONE, isMobile: true, hasTouch: true })
+  const mobile = await phone.newPage()
+  await openSignedIn(mobile, ws.api.token, ws.tenantId, '/overview')
+  for (const [name, url, shown, heading] of pages) {
+    await test.step(`${name} (phone)`, async () => {
+      await mobile.goto(url)
+      await expect(mobile.getByRole('heading', { level: 1, name: heading }).first()).toBeVisible()
+      await mobile.waitForLoadState('networkidle')
+      results.push(await audit(mobile, `${name} (390 px)`, shown))
+    })
+  }
+  await test.step('Menu drawer (phone)', async () => {
+    await mobile.goto('/overview')
+    await mobile.getByRole('button', { name: 'Open menu' }).click()
+    await expect(mobile.getByRole('dialog', { name: 'Cloudoptics' })).toBeVisible()
+    results.push(await audit(mobile, 'Menu open (390 px)', '/overview (menu)'))
+  })
+  await phone.close()
+
   await mkdir(OUT, { recursive: true })
   for (const r of results) {
     await writeFile(path.join(OUT, `${r.name.toLowerCase().replace(/\W+/g, '-')}.json`), JSON.stringify(r, null, 2))
@@ -111,5 +167,5 @@ test('axe on each main page', async ({ page, browser, request }) => {
   await test.info().attach('a11y-summary.md', { body: report, contentType: 'text/markdown' })
   const total = results.reduce((n, r) => n + r.violations.length, 0)
   console.log(`axe: ${total} violation(s) across ${results.length} pages; see reports/a11y/summary.md`)
-  if (process.env.E2E_A11Y_STRICT === '1') expect(total, report).toBe(0)
+  if (STRICT) expect(total, report).toBe(0)
 })

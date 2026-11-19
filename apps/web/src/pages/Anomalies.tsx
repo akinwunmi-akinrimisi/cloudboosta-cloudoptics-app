@@ -151,7 +151,7 @@ function AnomalyDetailPanel({ anomaly: a, tenantId, canEdit }: { anomaly: Anomal
       {a.contributors.length > 0 && (
         <div>
           <h3 className="mb-2 text-sm font-medium">What rose most</h3>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" role="region" aria-label="What rose most" tabIndex={0}>
           <table className="w-full whitespace-nowrap text-sm">
             <thead className="text-left text-xs text-muted">
               <tr>
@@ -253,7 +253,7 @@ function AlertSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canE
             ` There is no ${s.anomalyMinImpactCurrency} exchange rate yet, so USD ${view.defaults.anomalyMinImpact} applies for now.`}
         </p>
       </div>
-      <fieldset className="grid gap-4 sm:grid-cols-3" disabled={!canEdit}>
+      <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-3" disabled={!canEdit}>
         <div className="flex flex-col gap-1 text-sm">
           <span className="font-medium">Minimum above expected, per day</span>
           <div className="flex gap-2">

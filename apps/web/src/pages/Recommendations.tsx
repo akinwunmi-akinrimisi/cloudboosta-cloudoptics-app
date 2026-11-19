@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, ExternalLink, ShieldCheck } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { useApi } from '../app/context'
 import type {
@@ -18,6 +18,7 @@ import { UsageChart } from '../components/charts'
 import { Commands, CopyButton } from '../components/commands'
 import { ExportButton } from '../components/exports'
 import { NatRoutes } from '../components/natRoutes'
+import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { RULES } from '../lib/rules'
 import { Kpi, useMoney, useWorkspace } from './Workspace'
@@ -160,6 +161,9 @@ export function Recommendations() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dismissing, setDismissing] = useState(false)
   const [reason, setReason] = useState('')
+  const dismissButton = useRef<HTMLButtonElement>(null)
+  const dismissForm = useRef<HTMLFormElement>(null)
+  useEscapeToClose(dismissing, () => setDismissing(false), dismissButton, dismissForm)
   const summary = useQuery({
     queryKey: ['recommendation-summary', tenantId],
     queryFn: () => api.recommendationSummary(tenantId as string),
@@ -202,7 +206,7 @@ export function Recommendations() {
       else next.add(id)
       return next
     })
-  const select = 'h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm'
+  const select = 'h-8 min-w-0 max-w-full rounded-sm border border-border-strong bg-surface-1 px-2 text-sm'
 
   return (
     <div className="flex flex-col gap-6">
@@ -223,7 +227,7 @@ export function Recommendations() {
           scan.
         </Alert>
       )}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
           label="Monthly savings identified"
           value={summary.data ? money(summary.data.savingsUsdMonth) : '—'}
@@ -256,8 +260,8 @@ export function Recommendations() {
       </div>
       <Card className="p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-3">
+            <label className="flex min-w-0 max-w-full items-center gap-2 text-sm">
               <span className="text-secondary">Type</span>
               <select className={select} value={rule} onChange={(e) => setRule(e.target.value)}>
                 <option value="all">All</option>
@@ -268,7 +272,7 @@ export function Recommendations() {
                 ))}
               </select>
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-w-0 max-w-full items-center gap-2 text-sm">
               <span className="text-secondary">Risk</span>
               <select
                 className={select}
@@ -281,7 +285,7 @@ export function Recommendations() {
                 <option value="high">High</option>
               </select>
             </label>
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex min-w-0 max-w-full items-center gap-2 text-sm">
               <span className="text-secondary">Assigned to</span>
               <select className={select} value={assigned} onChange={(e) => setAssigned(e.target.value)}>
                 <option value="anyone">Anyone</option>
@@ -322,6 +326,7 @@ export function Recommendations() {
             )}
             {dismissing ? (
               <form
+                ref={dismissForm}
                 className="flex flex-wrap items-center gap-2"
                 onSubmit={(e) => {
                   e.preventDefault()
@@ -355,7 +360,7 @@ export function Recommendations() {
                 <Button variant="secondary" disabled={bulk.isPending} onClick={() => bulk.mutate({ status: 'done' })}>
                   Mark as done
                 </Button>
-                <Button variant="ghost" onClick={() => setDismissing(true)}>
+                <Button ref={dismissButton} variant="ghost" onClick={() => setDismissing(true)}>
                   Dismiss…
                 </Button>
                 <select
@@ -392,9 +397,10 @@ export function Recommendations() {
           {recs.map((r) => (
             <li key={r.id} className="flex items-center hover:bg-surface-2">
               {canChange && (
+                // 24 px: WCAG 2.2 target size (2.5.8); the row's link starts right beside it.
                 <input
                   type="checkbox"
-                  className="ml-5"
+                  className="ml-4 size-6 shrink-0 cursor-pointer accent-accent"
                   aria-label={`Select ${r.title}`}
                   checked={selected.has(r.id)}
                   onChange={() => toggle(r.id)}
@@ -413,7 +419,7 @@ export function Recommendations() {
                     {r.assigneeId && ` · ${r.assigneeId === me?.id ? 'You' : (names.get(r.assigneeId) ?? 'A teammate')}`}
                   </p>
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
                   {r.status === 'verified' && <VerifiedBadge />}
                   <Pill tone={r.riskLevel}>{`${capitalise(r.riskLevel)} risk`}</Pill>
                   <Pill tone="neutral">{`${capitalise(r.confidence)} confidence`}</Pill>
@@ -622,6 +628,9 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
   const qc = useQueryClient()
   const [dismissing, setDismissing] = useState(false)
   const [reason, setReason] = useState('')
+  const dismissButton = useRef<HTMLButtonElement>(null)
+  const dismissForm = useRef<HTMLFormElement>(null)
+  useEscapeToClose(dismissing, () => setDismissing(false), dismissButton, dismissForm)
   const change = useMutation({
     mutationFn: (body: RecommendationChange) => api.updateRecommendation(tenantId, rec.id, body),
     onSuccess: (updated) => {
@@ -639,7 +648,7 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
   const closed = !['new', 'assigned', 'in_progress'].includes(rec.status)
   return (
     <div className="flex flex-col gap-3">
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex min-w-0 max-w-full items-center gap-2 text-sm">
         <span className="font-medium">Assigned to</span>
         <select
           className="h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm"
@@ -660,6 +669,7 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
       )}
       {dismissing ? (
         <form
+          ref={dismissForm}
           className="flex flex-col gap-2"
           onSubmit={(e) => {
             e.preventDefault()
@@ -706,7 +716,7 @@ function Actions({ rec, tenantId }: { rec: Recommendation; tenantId: string }) {
                   Start
                 </Button>
               )}
-              <Button variant="ghost" onClick={() => setDismissing(true)}>
+              <Button ref={dismissButton} variant="ghost" onClick={() => setDismissing(true)}>
                 Dismiss…
               </Button>
             </>
@@ -818,7 +828,7 @@ function Usage({ tenantId, rec }: { tenantId: string; rec: Recommendation }) {
   return (
     <Card className="flex flex-col gap-4 p-5">
       <h2 className="text-base font-semibold">Usage</h2>
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {charts.map(({ series: s, chart: c }) => {
           return (
             <div key={s.metric} className="flex flex-col gap-2">
@@ -945,9 +955,9 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
     <div className="flex flex-col gap-6">
       {back}
       <div>
-        <h1 className="text-2xl font-semibold">{r.title}</h1>
+        <h1 className="text-2xl font-semibold [overflow-wrap:anywhere]">{r.title}</h1>
         <p className="text-sm text-secondary">
-          {RULES[r.ruleId] ?? r.ruleId} · account {r.accountId} · {r.regionId} · <code>{r.resourceId}</code> ·{' '}
+          {RULES[r.ruleId] ?? r.ruleId} · account {r.accountId} · {r.regionId} · <code className="[overflow-wrap:anywhere]">{r.resourceId}</code> ·{' '}
           {STATUS[r.status]}
         </p>
         {r.status === 'verified' && (
@@ -967,7 +977,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
           with the buying ladder and the cost in your currency if it weakens.
         </Alert>
       )}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Kpi
           label="Monthly saving"
           value={money(r.savingsUsdMonth)}
@@ -982,7 +992,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
         />
         <Kpi label="Confidence" value={capitalise(r.confidence)} note={`Effort ${r.effort}`} />
       </div>
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="flex flex-col gap-5 p-5 lg:col-span-2">
           <div className="flex flex-col gap-3">
             <h2 className="text-base font-semibold">How to fix it</h2>
@@ -1001,7 +1011,7 @@ export function RecommendationDetail({ recommendationId }: { recommendationId: s
               </div>
             )}
             {(r.fix.checklist?.length ?? 0) > 0 || (r.fix.console?.steps.length ?? 0) > 0 ? (
-              <ol className="list-decimal space-y-1 pl-5 text-sm">
+              <ol className="list-decimal space-y-1 pl-5 text-sm [overflow-wrap:anywhere]">
                 {(r.fix.checklist?.length ? r.fix.checklist : (r.fix.console?.steps ?? [])).map((item) => (
                   <li key={item}>{item}</li>
                 ))}

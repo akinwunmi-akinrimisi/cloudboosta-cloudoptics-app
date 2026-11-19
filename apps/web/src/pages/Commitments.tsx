@@ -121,7 +121,7 @@ export function Commitments() {
       {held.data?.coverage.map((c) => (
         <Card key={c.connectionId} className="p-5">
           <h2 className="mb-3 text-base font-semibold">Coverage and use, last 30 days (AWS Cost Explorer)</h2>
-          <dl className="grid gap-3 text-sm sm:grid-cols-4">
+          <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-4">
             <Stat label="Savings Plans cover" value={percent(c.savingsPlansCoveragePercent)} />
             <Stat label="Savings Plans used" value={percent(c.savingsPlansUtilisationPercent)} />
             <Stat label="Reservations cover (hours)" value={percent(c.reservationsCoveragePercent)} />
@@ -151,9 +151,12 @@ function Advice({ advice: a, advisory, several }: { advice: SavingsPlanAdvice; a
   const o = a.default
   return (
     <section className="flex flex-col gap-4" aria-label={`Savings Plan advisory for ${a.payerAccountId}`}>
-      {several && <h2 className="text-lg font-semibold">Payer account {a.payerAccountId}</h2>}
+      {/* The cards below use h3, so each advisory has its h2 (heading order), shown when there are several. */}
+      <h2 className={several ? 'text-lg font-semibold' : 'sr-only'}>
+        {several ? `Payer account ${a.payerAccountId}` : 'Savings Plan advisory'}
+      </h2>
       {a.status !== 'ok' && <Alert tone={a.status === 'not_enough_data' ? 'warning' : 'info'}>{STATUS_NOTE[a.status]}</Alert>}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Coverage current={a.currentCoveragePercent} target={a.status === 'ok' ? a.targetCoveragePercent : null} />
         <Kpi
           label="Savings Plans used"
@@ -227,7 +230,7 @@ function Recommended({ advice: a, option: o, returnWindowDays }: { advice: Savin
             : 'The shortest term with nothing up front: it covers any instance family, size or region, so it keeps working as your servers change.'}
         </p>
       </div>
-      <dl className="grid gap-3 text-sm sm:grid-cols-4">
+      <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-4">
         <Stat label="Hourly commitment" value={hourly(o.hourlyCommitmentUsd)} />
         <Stat label="Monthly saving" value={money(o.monthlySavingsUsd)} />
         <Stat label="Pays back" value={months(o.breakEvenMonths)} />
@@ -300,30 +303,33 @@ function Matrix({ options, best }: { options: CommitmentOption[]; best: Commitme
     </tr>
   )
   return (
-    <Card className="overflow-x-auto p-5">
+    <Card className="p-5">
       <h3 className="mb-1 text-base font-semibold">Options</h3>
       <p className="mb-3 text-xs text-muted">
         Our sizing priced each way, then AWS&apos;s own recommendation (1-year Compute Savings Plan, from 30 and 60 days of
         usage). Reserved Instances fix the instance family and region. Break-even: when the on-demand cost avoided has paid
         back the upfront payment. * discount AWS estimated for your usage; the others are typical rates.
       </p>
-      <table className="w-full min-w-[680px] text-sm">
-        <thead className="text-left text-xs text-muted">
-          <tr>
-            <th className="pb-2 pr-3 font-medium">Option</th>
-            <th className="pb-2 pr-3 text-right font-medium">Commitment</th>
-            <th className="pb-2 pr-3 text-right font-medium">Discount</th>
-            <th className="pb-2 pr-3 text-right font-medium">Saving a month</th>
-            <th className="pb-2 pr-3 text-right font-medium">Upfront</th>
-            <th className="pb-2 pr-3 text-right font-medium">Total</th>
-            <th className="pb-2 text-right font-medium">Break-even</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {ours.map((o) => row(o, optionName(o)))}
-          {aws.map((o) => row(o, `AWS recommends: 1 year, ${PAYMENT[o.payment]} (${o.lookbackDays ?? '?'} days of usage)`))}
-        </tbody>
-      </table>
+      {/* Scrolls sideways on a phone; focusable so the keyboard can scroll it too. */}
+      <div className="overflow-x-auto" role="region" aria-label="Savings Plan options" tabIndex={0}>
+        <table className="w-full min-w-[680px] text-sm">
+          <thead className="text-left text-xs text-muted">
+            <tr>
+              <th className="pb-2 pr-3 font-medium">Option</th>
+              <th className="pb-2 pr-3 text-right font-medium">Commitment</th>
+              <th className="pb-2 pr-3 text-right font-medium">Discount</th>
+              <th className="pb-2 pr-3 text-right font-medium">Saving a month</th>
+              <th className="pb-2 pr-3 text-right font-medium">Upfront</th>
+              <th className="pb-2 pr-3 text-right font-medium">Total</th>
+              <th className="pb-2 text-right font-medium">Break-even</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {ours.map((o) => row(o, optionName(o)))}
+            {aws.map((o) => row(o, `AWS recommends: 1 year, ${PAYMENT[o.payment]} (${o.lookbackDays ?? '?'} days of usage)`))}
+          </tbody>
+        </table>
+      </div>
     </Card>
   )
 }
@@ -336,7 +342,7 @@ function Ladder({ advice: a, advisory }: { advice: SavingsPlanAdvice; advisory: 
         Start with {advisory.ladderFirstPercent}% of the target, then add about {advisory.ladderStepPercent}% each month while
         usage holds. Each step is a separate 1-year Savings Plan, so they also end in steps.
       </p>
-      <ol className="grid gap-2 text-sm sm:grid-cols-3 lg:grid-cols-5">
+      <ol className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3 lg:grid-cols-5">
         {a.ladder.map((s) => (
           <li key={s.month} className="rounded-sm border border-border p-3">
             <p className="text-xs text-muted">{s.month === 0 ? 'Now' : day(s.buyOn)}</p>
@@ -368,6 +374,7 @@ function FxStress({ advice: a, option: o }: { advice: SavingsPlanAdvice; option:
         The commitment is billed in US dollars. At {fx.estimated ? '≈' : ''}
         {fx.rate.toLocaleString()} {fx.currency} per USD ({day(fx.rateDate)}) it costs {local(fx.rate)} a month.
       </p>
+      <div className="overflow-x-auto" role="region" aria-label="Cost if the currency weakens" tabIndex={0}>
       <table className="w-full text-sm">
         <thead className="text-left text-xs text-muted">
           <tr>
@@ -388,6 +395,7 @@ function FxStress({ advice: a, option: o }: { advice: SavingsPlanAdvice; option:
           ))}
         </tbody>
       </table>
+      </div>
       <label className="mt-4 flex flex-col gap-1 text-sm">
         <span>
           Try a move of <strong>{shift}%</strong>: {local(fx.rate * (1 + shift / 100))} a month
@@ -411,7 +419,7 @@ function Held({ commitments, alertDays, loading }: { commitments: Commitment[]; 
   const current = commitments.filter((c) => c.current)
   const soonest = Math.max(...alertDays)
   return (
-    <Card className="overflow-x-auto p-5">
+    <Card className="p-5">
       <h2 className="mb-1 text-base font-semibold">What you hold</h2>
       <p className="mb-3 text-xs text-muted">
         Read daily from AWS. Admins and members get an email {alertDays.join(', ')} days before each one ends (Settings,
@@ -421,55 +429,58 @@ function Held({ commitments, alertDays, loading }: { commitments: Commitment[]; 
       {!loading && current.length === 0 && (
         <p className="text-sm text-secondary">No Savings Plans or Reserved Instances found yet.</p>
       )}
+      {/* Scrolls sideways on a phone; focusable so the keyboard can scroll it too. */}
       {current.length > 0 && (
-        <table className="w-full min-w-[640px] text-sm">
-          <thead className="text-left text-xs text-muted">
-            <tr>
-              <th className="pb-2 pr-3 font-medium">Commitment</th>
-              <th className="pb-2 pr-3 font-medium">Account</th>
-              <th className="pb-2 pr-3 text-right font-medium">Per hour</th>
-              <th className="pb-2 pr-3 text-right font-medium">Used</th>
-              <th className="pb-2 text-right font-medium">Ends</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {current.map((c) => (
-              <tr key={c.id}>
-                <td className="py-2 pr-3">
-                  <p className="font-medium">{c.description}</p>
-                  <p className="text-xs text-muted">
-                    {KIND[c.kind]}
-                    {c.paymentOption ? ` · ${c.paymentOption}` : ''}
-                    {c.termMonths ? ` · ${c.termMonths / 12} yr` : ''}
-                  </p>
-                </td>
-                <td className="py-2 pr-3 text-xs">
-                  {c.accountId ?? '—'}
-                  {c.regionId ? ` · ${c.regionId}` : ''}
-                </td>
-                <td className="py-2 pr-3 text-right tabular-nums">
-                  {c.hourlyCommitmentUsd === null ? '—' : hourly(c.hourlyCommitmentUsd)}
-                </td>
-                <td
-                  className={cx(
-                    'py-2 pr-3 text-right tabular-nums',
-                    c.utilisationPct !== null && c.utilisationPct < 80 && 'text-warning-ink',
-                  )}
-                >
-                  {percent(c.utilisationPct)}
-                </td>
-                <td className="py-2 text-right">
-                  {c.endsAt ? day(c.endsAt) : '—'}
-                  {c.daysLeft !== null && c.daysLeft <= soonest && (
-                    <span className="ml-2 inline-flex rounded-full bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning-ink">
-                      {c.daysLeft} days left
-                    </span>
-                  )}
-                </td>
+        <div className="overflow-x-auto" role="region" aria-label="Commitments you hold" tabIndex={0}>
+          <table className="w-full min-w-[640px] text-sm">
+            <thead className="text-left text-xs text-muted">
+              <tr>
+                <th className="pb-2 pr-3 font-medium">Commitment</th>
+                <th className="pb-2 pr-3 font-medium">Account</th>
+                <th className="pb-2 pr-3 text-right font-medium">Per hour</th>
+                <th className="pb-2 pr-3 text-right font-medium">Used</th>
+                <th className="pb-2 text-right font-medium">Ends</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {current.map((c) => (
+                <tr key={c.id}>
+                  <td className="py-2 pr-3">
+                    <p className="font-medium">{c.description}</p>
+                    <p className="text-xs text-muted">
+                      {KIND[c.kind]}
+                      {c.paymentOption ? ` · ${c.paymentOption}` : ''}
+                      {c.termMonths ? ` · ${c.termMonths / 12} yr` : ''}
+                    </p>
+                  </td>
+                  <td className="py-2 pr-3 text-xs">
+                    {c.accountId ?? '—'}
+                    {c.regionId ? ` · ${c.regionId}` : ''}
+                  </td>
+                  <td className="py-2 pr-3 text-right tabular-nums">
+                    {c.hourlyCommitmentUsd === null ? '—' : hourly(c.hourlyCommitmentUsd)}
+                  </td>
+                  <td
+                    className={cx(
+                      'py-2 pr-3 text-right tabular-nums',
+                      c.utilisationPct !== null && c.utilisationPct < 80 && 'text-warning-ink',
+                    )}
+                  >
+                    {percent(c.utilisationPct)}
+                  </td>
+                  <td className="py-2 text-right">
+                    {c.endsAt ? day(c.endsAt) : '—'}
+                    {c.daysLeft !== null && c.daysLeft <= soonest && (
+                      <span className="ml-2 inline-flex rounded-full bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning-ink">
+                        {c.daysLeft} days left
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </Card>
   )

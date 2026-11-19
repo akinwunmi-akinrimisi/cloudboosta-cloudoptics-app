@@ -14,6 +14,7 @@ import type {
   RecommendationSummary,
 } from '../api/types'
 import { DailySpendChart, ShareList } from '../components/charts'
+import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, StatusPill, cx } from '../components/ui'
 import { ACCESS_STACK_NAME } from '../api/types'
 import { CopyValue } from './Onboarding'
@@ -193,7 +194,7 @@ export function Overview() {
           24 hours of connecting.
         </Alert>
       )}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {costTiles(summary.data, money).map((tile) => (
           <Kpi key={tile.label} {...tile} />
         ))}
@@ -201,7 +202,7 @@ export function Overview() {
         <Kpi {...rateTile(currency, rate)} />
       </div>
       {tenantId !== null && (summary.data?.status === 'ready' || summary.data?.status === 'provisional') && (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <SpendTrend tenantId={tenantId} />
           <TopSpend tenantId={tenantId} />
         </div>
@@ -457,6 +458,9 @@ function ConnectionActions({
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [confirming, setConfirming] = useState(false)
+  const confirmButton = useRef<HTMLButtonElement>(null)
+  const confirmPanel = useRef<HTMLDivElement>(null)
+  useEscapeToClose(confirming, () => setConfirming(false), confirmButton, confirmPanel)
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ['connections', tenantId] })
     void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
@@ -502,7 +506,7 @@ function ConnectionActions({
     <div className="mt-4 flex flex-col gap-3">
       {error && <Alert tone="error">{error.message}</Alert>}
       {confirming ? (
-        <div className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
+        <div ref={confirmPanel} className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
           <p>
             Disconnect AWS account {c.awsAccountId}? Cloudoptics stops reading it and its open recommendations close.
             Past costs stay. To remove our access completely, also delete the{' '}
@@ -533,7 +537,7 @@ function ConnectionActions({
           >
             Set up again
           </Button>
-          <Button variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
+          <Button ref={confirmButton} variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
             Disconnect…
           </Button>
         </div>

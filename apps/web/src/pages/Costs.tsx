@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 
 import { useApi } from '../app/context'
 import type { CostDimension, CostMonth, CreditsRunway } from '../api/types'
 import { DailySpendChart } from '../components/charts'
 import { ExportButton } from '../components/exports'
+import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, Field, cx } from '../components/ui'
 import { ForecastPanel, WhatChanged } from './Forecast'
 import { DIMENSIONS, useMoney, useWorkspace } from './Workspace'
@@ -197,6 +198,7 @@ export function Costs() {
           </p>
         )}
         {items.length > 0 && (
+          <div className="overflow-x-auto" role="region" aria-label="Spend breakdown" tabIndex={0}>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted">
@@ -231,6 +233,7 @@ export function Costs() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
       {/* The forecast and the credits runway are about the current month only. */}
@@ -277,6 +280,9 @@ export function CreditsCard({ tenantId }: { tenantId: string }) {
   const { money } = useMoney()
   const isAdmin = me?.memberships.find((m) => m.tenantId === tenantId)?.role === 'admin'
   const [editing, setEditing] = useState(false)
+  const editButton = useRef<HTMLButtonElement>(null)
+  const editPanel = useRef<HTMLDivElement>(null)
+  useEscapeToClose(editing, () => setEditing(false), editButton, editPanel)
   const credits = useQuery({ queryKey: ['credits', tenantId], queryFn: () => api.getCredits(tenantId) })
   const c = credits.data
   if (!c || (c.status === 'no_credits' && !isAdmin)) return null
@@ -291,7 +297,7 @@ export function CreditsCard({ tenantId }: { tenantId: string }) {
           </p>
         </div>
         {isAdmin && !editing && (
-          <Button variant="secondary" onClick={() => setEditing(true)}>
+          <Button ref={editButton} variant="secondary" onClick={() => setEditing(true)}>
             {c.balance ? 'Update the balance' : 'Enter the balance'}
           </Button>
         )}
@@ -332,7 +338,11 @@ export function CreditsCard({ tenantId }: { tenantId: string }) {
           {c.balance.note && ` (${c.balance.note})`}. Credits applied since: {money(c.usedSinceBalanceUsd ?? 0)}.
         </p>
       )}
-      {editing && <BalanceForm tenantId={tenantId} current={c} onDone={() => setEditing(false)} />}
+      {editing && (
+        <div ref={editPanel}>
+          <BalanceForm tenantId={tenantId} current={c} onDone={() => setEditing(false)} />
+        </div>
+      )}
     </Card>
   )
 }
@@ -349,7 +359,7 @@ function RunwayFigures({ c, money }: { c: CreditsRunway; money: (usd: number) =>
     ['Bill without credits', `${money(c.spendBeforeCreditsUsdMonth)} a month`],
   ]
   return (
-    <dl className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-5">
       {figures.map(([label, value]) => (
         <div key={label} className="rounded-sm border border-border p-3">
           <dt className="text-xs text-muted">{label}</dt>
@@ -385,7 +395,7 @@ function BalanceForm({ tenantId, current, onDone }: { tenantId: string; current:
       <p className="text-sm text-secondary">
         In the AWS Billing console, open Credits and copy the remaining amount (all credits together, in USD).
       </p>
-      <div className="grid gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <Field label="Remaining balance (USD)" type="number" min={0} step="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} />
         <Field label="As shown on" type="date" max={today} required value={asOf} onChange={(e) => setAsOf(e.target.value)} />
         <Field label="Expires on (optional)" type="date" value={expiresOn} onChange={(e) => setExpiresOn(e.target.value)} />

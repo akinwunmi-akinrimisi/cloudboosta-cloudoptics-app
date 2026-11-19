@@ -1,4 +1,4 @@
-import { Link, Outlet, useNavigate } from '@tanstack/react-router'
+import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bell,
@@ -8,17 +8,22 @@ import {
   LayoutDashboard,
   Lightbulb,
   LogOut,
+  Menu,
   PiggyBank,
   Plug,
   Settings,
 } from 'lucide-react'
 
+import { useEffect, useRef, useState } from 'react'
+
 import type { CurrencyMode } from '../lib/currency'
 import { MFA_REQUIRED_MESSAGE, isMfaRequired } from '../api/types'
+import { Drawer } from '../components/overlay'
 import { Alert, Button, Logo, cx } from '../components/ui'
 import { DeletionBanner } from '../pages/DataDeletion'
 import { SupportBanner } from '../pages/Staff'
 import { useApi, useCurrentTenantId, useMe } from './context'
+import { useRouteFocus } from './routeFocus'
 
 const NAV = [
   { to: '/overview', label: 'Overview', icon: LayoutDashboard },
@@ -37,6 +42,26 @@ const MODES: [CurrencyMode, string][] = [
   ['local', 'Local'],
   ['both', 'Both'],
 ]
+
+function MainNav({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <nav aria-label="Main" className="flex flex-col gap-1 px-2 pb-4">
+      {NAV.map(({ to, label, icon: Icon }) => (
+        <Link
+          key={to}
+          to={to}
+          activeOptions={{ exact: to === '/settings' }}
+          className="flex min-h-10 items-center gap-3 rounded-sm px-3 py-2 text-sm text-sidebar-muted hover:text-white"
+          activeProps={{ className: 'bg-sidebar-active !text-white' }}
+          onClick={onNavigate}
+        >
+          <Icon size={18} aria-hidden="true" />
+          {label}
+        </Link>
+      ))}
+    </nav>
+  )
+}
 
 export function AppShell() {
   const api = useApi()
@@ -61,35 +86,60 @@ export function AppShell() {
   // Every workspace page would fail the same way, so explain once instead.
   const mfaRequired = isMfaRequired(tenant.error)
   const membership = me?.memberships.find((m) => m.tenantId === tenantId)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuButton = useRef<HTMLButtonElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  // The location once the new page has rendered, so its heading is the one found.
+  const pathname = useRouterState({ select: (state) => (state.resolvedLocation ?? state.location).pathname })
+  useRouteFocus(pathname, mainRef)
+  useEffect(() => {
+    // The drawer is for small screens only; widening the window closes it.
+    const wide = window.matchMedia?.('(min-width: 768px)')
+    const onChange = () => wide?.matches && setMenuOpen(false)
+    wide?.addEventListener('change', onChange)
+    return () => wide?.removeEventListener('change', onChange)
+  }, [])
 
   return (
-    <div className="min-h-screen md:grid md:grid-cols-[240px_1fr] print:block">
-      <aside className="bg-brand-navy text-white md:min-h-screen print:hidden">
+    <div className="min-h-screen md:grid md:grid-cols-[240px_minmax(0,1fr)] print:block">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-50 focus:rounded-sm focus:bg-surface-1 focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary focus:shadow-lg"
+        onClick={(e) => {
+          // Hash URLs route in the demo build, so move focus without changing the URL.
+          e.preventDefault()
+          mainRef.current?.focus()
+        }}
+      >
+        Skip to main content
+      </a>
+      <aside className="hidden bg-brand-navy text-white md:block md:min-h-screen print:hidden" inert={menuOpen}>
         <div className="flex h-14 items-center gap-2 px-4 font-semibold">
           <Logo size={26} /> Cloudoptics
         </div>
-        <nav aria-label="Main" className="flex gap-1 overflow-x-auto px-2 pb-2 md:flex-col md:pb-0">
-          {NAV.map(({ to, label, icon: Icon }) => (
-            <Link
-              key={to}
-              to={to}
-              activeOptions={{ exact: to === '/settings' }}
-              className="flex shrink-0 items-center gap-3 rounded-sm px-3 py-2 text-sm text-sidebar-muted hover:text-white"
-              activeProps={{ className: 'bg-sidebar-active !text-white' }}
-            >
-              <Icon size={18} aria-hidden="true" />
-              {label}
-            </Link>
-          ))}
-        </nav>
+        <MainNav />
       </aside>
-      <div className="min-w-0">
-        <header className="flex h-14 items-center justify-between gap-3 border-b border-border bg-surface-1 px-4 print:hidden">
+      <Drawer open={menuOpen} onClose={() => setMenuOpen(false)} label="Cloudoptics" trigger={menuButton}>
+        <MainNav onNavigate={() => setMenuOpen(false)} />
+      </Drawer>
+      <div className="min-w-0" inert={menuOpen}>
+        <header className="flex h-14 items-center justify-between gap-2 border-b border-border bg-surface-1 px-2 sm:gap-3 sm:px-4 print:hidden">
           <div className="flex min-w-0 items-center gap-2">
+            <button
+              ref={menuButton}
+              type="button"
+              aria-label="Open menu"
+              aria-haspopup="dialog"
+              aria-expanded={menuOpen}
+              className="inline-flex size-10 shrink-0 items-center justify-center rounded-sm text-primary hover:bg-surface-2 md:hidden"
+              onClick={() => setMenuOpen(true)}
+            >
+              <Menu size={20} aria-hidden="true" />
+            </button>
             {me && me.memberships.length > 1 ? (
               <select
                 aria-label="Workspace"
-                className="h-8 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm"
+                className="h-8 min-w-0 max-w-48 rounded-sm border border-border-strong bg-surface-1 px-2 text-sm"
                 value={tenantId ?? ''}
                 onChange={(e) => setTenantId(e.target.value)}
               >
@@ -113,7 +163,7 @@ export function AppShell() {
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
             <div role="group" aria-label="Currency" className="flex overflow-hidden rounded-sm border border-border-strong">
               {MODES.map(([mode, label]) => (
                 <button
@@ -121,7 +171,7 @@ export function AppShell() {
                   type="button"
                   aria-pressed={me?.preferredCurrencyView === mode}
                   className={cx(
-                    'px-2.5 py-1 text-xs font-medium',
+                    'min-h-7 px-2 text-xs font-medium sm:px-2.5',
                     me?.preferredCurrencyView === mode ? 'bg-accent text-on-accent' : 'bg-surface-1 text-primary',
                   )}
                   onClick={() => setView.mutate(mode)}
@@ -133,14 +183,19 @@ export function AppShell() {
             <button
               type="button"
               aria-label="Sign out"
-              className="rounded-sm p-2 text-secondary hover:bg-surface-2"
+              className="inline-flex size-10 items-center justify-center rounded-sm text-secondary hover:bg-surface-2"
               onClick={signOut}
             >
-              <LogOut size={18} />
+              <LogOut size={18} aria-hidden="true" />
             </button>
           </div>
         </header>
-        <main className="mx-auto max-w-6xl px-4 py-6 md:px-6 print:max-w-none print:p-0">
+        <main
+          id="main"
+          ref={mainRef}
+          tabIndex={-1}
+          className="mx-auto max-w-6xl px-4 py-6 focus:outline-none md:px-6 print:max-w-none print:p-0"
+        >
           {mfaRequired ? (
             <div className="space-y-3">
               <Alert tone="warning">{MFA_REQUIRED_MESSAGE}</Alert>
