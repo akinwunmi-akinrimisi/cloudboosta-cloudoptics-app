@@ -42,6 +42,7 @@ UNVERSIONED = {
     "aws_api_usage",
     "tenant_data_version",
     "data_version_pending",
+    "data_deletion",  # deletion requests and verification records (no cached read uses them)
 }
 
 

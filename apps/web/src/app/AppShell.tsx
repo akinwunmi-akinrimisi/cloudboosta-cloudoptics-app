@@ -16,6 +16,7 @@ import {
 import type { CurrencyMode } from '../lib/currency'
 import { MFA_REQUIRED_MESSAGE, isMfaRequired } from '../api/types'
 import { Alert, Button, Logo, cx } from '../components/ui'
+import { DeletionBanner } from '../pages/DataDeletion'
 import { useApi, useCurrentTenantId, useMe } from './context'
 
 const NAV = [
@@ -141,7 +142,15 @@ export function AppShell() {
               </Button>
             </div>
           ) : (
-            <Outlet />
+            <>
+              {tenant.data && (
+                <DeletionBanner
+                  tenant={tenant.data}
+                  isAdmin={me?.memberships.find((m) => m.tenantId === tenantId)?.role === 'admin'}
+                />
+              )}
+              <Outlet />
+            </>
           )}
         </main>
       </div>

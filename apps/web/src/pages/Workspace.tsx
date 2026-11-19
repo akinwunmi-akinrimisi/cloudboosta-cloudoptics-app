@@ -7,6 +7,7 @@ import { useApi, useCurrentTenantId, useMe } from '../app/context'
 import type {
   Connection,
   CostDimension,
+  DataDeletion,
   CostSummary,
   CurrentRate,
   LastScan,
@@ -16,6 +17,8 @@ import { DailySpendChart, ShareList } from '../components/charts'
 import { Alert, Button, Card, StatusPill, cx } from '../components/ui'
 import { ACCESS_STACK_NAME } from '../api/types'
 import { CopyValue } from './Onboarding'
+import { DeleteConnectionData, verificationSummary } from './DataDeletion'
+import { SettingsLayout } from './SettingsNav'
 import { WhatChanged } from './Forecast'
 import { ReloadBills } from './ReloadBills'
 import type { FxRate } from '../lib/currency'
@@ -332,8 +335,11 @@ export function rateTile(currency: string, current: CurrentRate | undefined): { 
 
 export function Connections() {
   const { me, tenantId, connections } = useWorkspace()
-  const isAdmin = me?.memberships.find((m) => m.tenantId === tenantId)?.role === 'admin'
+  const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
+  const isAdmin = role === 'admin'
+  const [deleted, setDeleted] = useState<DataDeletion | null>(null)
   return (
+    <SettingsLayout current="connections" role={role}>
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -351,6 +357,12 @@ export function Connections() {
           </Link>
         </div>
       </div>
+      {deleted && (
+        <Alert tone="info">
+          Deleted the data for AWS account {deleted.targetLabel}: {verificationSummary(deleted)} The record is in
+          Settings, Workspace.
+        </Alert>
+      )}
       {connections.isLoading && <p className="text-sm text-secondary">Loading…</p>}
       {connections.data?.length === 0 && <Alert tone="info">No accounts connected yet.</Alert>}
       {connections.data?.map((c) => (
@@ -365,7 +377,9 @@ export function Connections() {
             </div>
             <StatusPill status={c.status} />
           </div>
-          {isAdmin && tenantId !== null && <ConnectionActions connection={c} tenantId={tenantId} />}
+          {isAdmin && tenantId !== null && (
+            <ConnectionActions connection={c} tenantId={tenantId} onDeleted={setDeleted} />
+          )}
           {c.status !== 'disconnected' && c.permissionChecks.length > 0 && (
             <ul className="mt-4 divide-y divide-border">
               {c.permissionChecks.map((check) => (
@@ -396,6 +410,7 @@ export function Connections() {
       ))}
       {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} />}
     </div>
+    </SettingsLayout>
   )
 }
 
@@ -428,8 +443,16 @@ function RefreshConnections({ tenantId, updatedAt }: { tenantId: string; updated
   )
 }
 
-/** Check again, set the stack up again, disconnect, or reconnect (admins). */
-function ConnectionActions({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
+/** Check again, set the stack up again, disconnect, reconnect or delete its data (admins). */
+function ConnectionActions({
+  connection: c,
+  tenantId,
+  onDeleted,
+}: {
+  connection: Connection
+  tenantId: string
+  onDeleted: (deletion: DataDeletion) => void
+}) {
   const api = useApi()
   const qc = useQueryClient()
   const navigate = useNavigate()
@@ -463,13 +486,14 @@ function ConnectionActions({ connection: c, tenantId }: { connection: Connection
     return (
       <div className="mt-4 flex flex-col gap-2">
         <p className="text-sm text-secondary">
-          Disconnected. Cloudoptics no longer reads this account; past costs stay.
+          Disconnected. Cloudoptics no longer reads this account; past costs stay until you delete them.
         </p>
         {error && <Alert tone="error">{error.message}</Alert>}
-        <div>
+        <div className="flex flex-wrap gap-2">
           <Button variant="secondary" disabled={busy} onClick={() => reconnect.mutate()}>
             Reconnect
           </Button>
+          <DeleteConnectionData connection={c} tenantId={tenantId} onDeleted={onDeleted} />
         </div>
       </div>
     )

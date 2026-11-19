@@ -5,7 +5,7 @@ from functools import lru_cache
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_AUTH_SECRET = "dev-only-secret-change-me-0123456789abcdef"  # noqa: S105 - refused outside dev
@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # "inline" runs background jobs inside the request (local, tests, demo); staging and
     # production use the Procrastinate queue and a worker process.
     jobs_mode: Literal["inline", "queue"] = "inline"
+
+    # Days between a workspace deletion request and the deletion, while admins can cancel it
+    # (docs/08 §1.7). PRD US-8.3: the data is gone within 30 days of the request.
+    tenant_deletion_grace_days: int = Field(default=7, ge=1, le=21)
 
     # Billing ingestion. With a folder set, normalised FOCUS Parquet is written there per
     # tenant and version (local development); staging keeps aggregates in PostgreSQL only

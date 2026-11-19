@@ -33,6 +33,7 @@ import type {
   CostSummary,
   CurrentRate,
   DailyCosts,
+  DataDeletion,
   Me,
   InventorySummary,
   Invite,
@@ -52,6 +53,7 @@ import type {
   ResourceScan,
   Role,
   Tenant,
+  TenantDeletion,
 } from './types'
 import { ApiError, MFA_REQUIRED_MESSAGE, rateLimitedMessage } from './types'
 
@@ -341,6 +343,26 @@ export class HttpApi implements Api {
 
   disconnectConnection(tenantId: string, connectionId: string): Promise<void> {
     return this.request('DELETE', `/v1/tenants/${tenantId}/connections/${connectionId}`)
+  }
+
+  deleteConnectionData(tenantId: string, connectionId: string, confirm: string): Promise<DataDeletion> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connections/${connectionId}/delete-data`, { confirm })
+  }
+
+  listDeletions(tenantId: string): Promise<DataDeletion[]> {
+    return this.request('GET', `/v1/tenants/${tenantId}/deletions`)
+  }
+
+  getTenantDeletion(tenantId: string): Promise<TenantDeletion> {
+    return this.request('GET', `/v1/tenants/${tenantId}/deletion`)
+  }
+
+  scheduleTenantDeletion(tenantId: string, confirmName: string): Promise<TenantDeletion> {
+    return this.request('POST', `/v1/tenants/${tenantId}/deletion`, { confirmName })
+  }
+
+  cancelTenantDeletion(tenantId: string): Promise<void> {
+    return this.request('DELETE', `/v1/tenants/${tenantId}/deletion`)
   }
 
   scanResources(tenantId: string, connectionId: string): Promise<ResourceScan> {

@@ -804,8 +804,55 @@ export interface RuleSettingsView {
 }
 
 export interface TenantChange {
+  name?: string
   displayCurrency?: string
   timeZone?: string
+}
+
+export type DeletionStatus = 'scheduled' | 'cancelled' | 'completed' | 'failed'
+
+/** Rows per table before and after a deletion, each checked to be zero afterwards. */
+export interface DeletionVerification {
+  tables: Record<string, { before: number; after: number }>
+  rowsDeleted: number
+  verified: boolean
+  /** Connection deletions: the AWS accounts whose data went. */
+  accounts?: string[]
+  unusedTagSetsDeleted?: number
+  /** Workspace deletions: what is kept (the audit log). */
+  kept?: Record<string, number>
+}
+
+/** A request to delete a disconnected connection's data, or the whole workspace. */
+export interface DataDeletion {
+  id: string
+  kind: 'connection' | 'tenant'
+  connectionId: string | null
+  /** The AWS account ID or the workspace name. */
+  targetLabel: string
+  status: DeletionStatus
+  requestedAt: string
+  requestedByEmail: string | null
+  scheduledFor: string
+  cancelledAt: string | null
+  completedAt: string | null
+  verification: DeletionVerification | null
+  error: string | null
+}
+
+/** The CloudFormation stacks a connection created in the customer's AWS account. */
+export interface StackSteps {
+  awsAccountId: string
+  accountType: string
+  stacks: string[]
+}
+
+/** The workspace's scheduled deletion (null when none), and what to delete in AWS. */
+export interface TenantDeletion {
+  deletion: DataDeletion | null
+  stacks: StackSteps[]
+  stacksConsoleUrl: string
+  graceDays: number
 }
 
 export interface AuditEntry {
@@ -990,6 +1037,15 @@ export interface Api {
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
   disconnectConnection(tenantId: string, connectionId: string): Promise<void>
+  /** Admins only, once disconnected: `confirm` is the connection's AWS account ID. */
+  deleteConnectionData(tenantId: string, connectionId: string, confirm: string): Promise<DataDeletion>
+  /** Admins only: every deletion request, newest first, with its verification. */
+  listDeletions(tenantId: string): Promise<DataDeletion[]>
+  /** Admins only: the workspace's scheduled deletion (if any) and the AWS stacks to delete. */
+  getTenantDeletion(tenantId: string): Promise<TenantDeletion>
+  /** Admins only: `confirmName` is the workspace name. Deleted after the grace period. */
+  scheduleTenantDeletion(tenantId: string, confirmName: string): Promise<TenantDeletion>
+  cancelTenantDeletion(tenantId: string): Promise<void>
   /** Look for the resource role now. `queued` means the worker scans within a minute or two. */
   scanResources(tenantId: string, connectionId: string): Promise<ResourceScan>
   /** What the scans found, and each connection's latest scan. */
