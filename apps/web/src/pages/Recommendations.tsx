@@ -22,7 +22,7 @@ import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { accountLabel, accountNoun } from '../lib/providers'
 import { RULES } from '../lib/rules'
-import { Kpi, useMoney, useWorkspace } from './Workspace'
+import { Kpi, useCloudWords, useMoney, useWorkspace } from './Workspace'
 
 const FACTORS: Record<string, string> = {
   production: 'Tagged as production',
@@ -151,6 +151,7 @@ export function Recommendations() {
   const api = useApi()
   const qc = useQueryClient()
   const { me, tenantId } = useWorkspace()
+  const words = useCloudWords()
   const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
   const canChange = role !== undefined && role !== 'viewer'
   const { money } = useMoney()
@@ -220,12 +221,24 @@ export function Recommendations() {
       </div>
       {summary.data && evaluated === null && (
         <Alert tone="info">
-          Recommendations need resource access in your AWS accounts. The single Cloudoptics stack adds it; if{' '}
-          <Link to="/settings/connections" className="font-medium text-accent underline">
-            Connections
-          </Link>{' '}
-          offers to move your account to it, do that first. The first results appear within a few minutes of the next
-          scan.
+          {words.awsOnly ? (
+            <>
+              Recommendations need resource access in your AWS accounts. The single Cloudoptics stack adds it; if{' '}
+              <Link to="/settings/connections" className="font-medium text-accent underline">
+                Connections
+              </Link>{' '}
+              offers to move your account to it, do that first. The first results appear within a few minutes of the
+              next scan.
+            </>
+          ) : (
+            <>
+              Recommendations follow the first resource scan, every 12 hours. An admin can choose Scan now on{' '}
+              <Link to="/settings/connections" className="font-medium text-accent underline">
+                Connections
+              </Link>{' '}
+              to look straight away; the first results appear within a few minutes.
+            </>
+          )}
         </Alert>
       )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

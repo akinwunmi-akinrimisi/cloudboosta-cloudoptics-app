@@ -5,12 +5,48 @@ import { useApi } from '../app/context'
 import type { Connection, PeriodReload, ReloadStatus } from '../api/types'
 import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button } from '../components/ui'
+import type { Provider } from '../lib/providers'
+import { providerOf } from '../lib/providers'
 
 const OUTCOME: Record<PeriodReload['outcome'], string> = {
   reloaded: 'Reloaded',
   unchanged: 'Unchanged (the bills read the same)',
   failed: 'Failed',
-  not_in_bucket: 'Not in the bucket',
+  not_in_bucket: 'Not in the export',
+}
+
+/** Where each provider's bills come from, and how a missing month gets there. */
+function billSource(c: Connection): { from: string; reread: string; missing: string | null } {
+  const p: Provider = providerOf(c.provider)
+  if (p === 'gcp') {
+    return {
+      from: 'your billing export in BigQuery',
+      reread: 'reads the bills for this billing account again from your billing export in BigQuery',
+      missing: 'Months before the export was turned on are not in it.',
+    }
+  }
+  if (p === 'azure') {
+    const where = c.curBucket ? ` (${c.curBucket})` : ''
+    return {
+      from: 'your FOCUS cost export in Azure Blob Storage',
+      reread: `reads the bills for this connection again from your FOCUS cost export in Azure Blob Storage${where}, the latest run of each month`,
+      missing:
+        'Months before the export was created are not in the container. In Cost Management you can run the export for an earlier month, then reload.',
+    }
+  }
+  if (p === 'digitalocean') {
+    return {
+      from: 'DigitalOcean',
+      reread: 'reads this team’s invoices again from DigitalOcean',
+      missing: null,
+    }
+  }
+  return {
+    from: 'your S3 bucket',
+    reread: `reads the bills for this account again from your S3 bucket (${c.curBucket ?? ''}), the latest version AWS delivered for each month`,
+    missing:
+      'Months before the export was created are not in the bucket. AWS can fill them in: open a support case (Billing) and ask for a backfill of the Data Export into the same bucket, then reload.',
+  }
 }
 
 function monthName(month: string): string {
@@ -43,7 +79,7 @@ const REFRESH_AFTER = [
 
 const running = (s: ReloadStatus | undefined) => s?.status === 'queued' || s?.status === 'running'
 
-/** Admins: read a connection's bills again from its S3 bucket (all months, or one), with progress and the result per month. */
+/** Admins: read a connection's bills again from its export (all months, or one), with progress and the result per month. */
 export function ReloadBills({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
   const api = useApi()
   const qc = useQueryClient()
@@ -80,6 +116,7 @@ export function ReloadBills({ connection: c, tenantId }: { connection: Connectio
     wasBusy.current = busy
   }, [busy, qc, tenantId])
   const waitUntil = s?.nextAllowedAt && !busy ? s.nextAllowedAt : null
+  const source = billSource(c)
 
   return (
     <div className="mt-4 flex flex-col gap-3 rounded-sm bg-surface-2 p-3 text-sm">
@@ -87,7 +124,7 @@ export function ReloadBills({ connection: c, tenantId }: { connection: Connectio
         <div>
           <p className="font-medium">Bills</p>
           <p className="text-secondary">
-            Cloudoptics loads new bills from your S3 bucket every 6 hours. Reload them to read months again.
+            Cloudoptics loads new bills from {source.from} every 6 hours. Reload them to read months again.
           </p>
         </div>
         {!open && (
@@ -99,15 +136,11 @@ export function ReloadBills({ connection: c, tenantId }: { connection: Connectio
       {open && (
         <div ref={panel} className="flex flex-col gap-3 border-t border-border pt-3">
           <p className="text-secondary">
-            Reloading reads the bills for this account again from your S3 bucket ({c.curBucket}), the latest version AWS
-            delivered for each month, and replaces what Cloudoptics holds for those months. Use it when a month looks
+            Reloading {source.reread}, and replaces what Cloudoptics holds for those months. Use it when a month looks
             incomplete or out of date, or after Cloudoptics starts reading more from the bills (such as per-resource
             costs). Recommendations, budgets and anomalies are checked again afterwards. One reload an hour.
           </p>
-          <p className="text-secondary">
-            Months before the export was created are not in the bucket. AWS can fill them in: open a support case
-            (Billing) and ask for a backfill of the Data Export into the same bucket, then reload.
-          </p>
+          {source.missing && <p className="text-secondary">{source.missing}</p>}
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-1">
               <span className="text-xs text-muted">Months</span>
@@ -136,12 +169,12 @@ export function ReloadBills({ connection: c, tenantId }: { connection: Connectio
         </div>
       )}
       {reload.error && <Alert tone="error">{reload.error.message}</Alert>}
-      {s && s.status !== 'none' && <ReloadResult status={s} />}
+      {s && s.status !== 'none' && <ReloadResult status={s} aws={providerOf(c.provider) === 'aws'} />}
     </div>
   )
 }
 
-function ReloadResult({ status: s }: { status: ReloadStatus }) {
+function ReloadResult({ status: s, aws }: { status: ReloadStatus; aws: boolean }) {
   const what = s.period ? monthName(s.period) : 'all months in the export'
   if (running(s)) {
     return (
@@ -175,7 +208,7 @@ function ReloadResult({ status: s }: { status: ReloadStatus }) {
           ))}
         </ul>
       )}
-      {s.periods.some((p) => p.outcome === 'not_in_bucket') && (
+      {aws && s.periods.some((p) => p.outcome === 'not_in_bucket') && (
         <p className="mt-1">Months not in the bucket need AWS to backfill the export (a support case).</p>
       )}
     </Alert>

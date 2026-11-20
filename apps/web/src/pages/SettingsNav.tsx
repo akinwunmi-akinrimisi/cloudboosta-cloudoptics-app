@@ -36,7 +36,7 @@ export function SettingsLayout({
     <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[180px_minmax(0,1fr)] lg:items-start">
       <nav aria-label="Settings" className="flex gap-1 overflow-x-auto lg:sticky lg:top-4 lg:flex-col">
         <Link to="/settings/connections" className={`${itemClass} ${current === 'connections' ? activeClass : ''}`}>
-          AWS connections
+          Cloud connections
         </Link>
         {SECTIONS.filter((s) => role !== undefined && s.roles.includes(role)).map((s) => (
           <Link

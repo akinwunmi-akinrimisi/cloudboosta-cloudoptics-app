@@ -1,7 +1,8 @@
 """Deleting data: a disconnected connection's, or the whole workspace (PRD US-8.3, ADM-7).
 
 - ``POST /v1/tenants/{t}/connections/{c}/delete-data`` deletes a disconnected connection's
-  data (typed confirmation: its AWS account ID).
+  data (typed confirmation: its account ID: AWS account, Google Cloud billing account, Azure
+  subscription or billing account, DigitalOcean team).
 - ``POST /v1/tenants/{t}/deletion`` schedules the workspace's deletion after the grace
   period (typed confirmation: its name); ``GET`` shows it; ``DELETE`` cancels it.
 - ``GET /v1/tenants/{t}/deletions`` lists every request with its verification record.
@@ -24,11 +25,13 @@ from cloudoptics.identity.deps import AdminAccess, Session
 from cloudoptics.platform.api import ApiModel, ApiProblem, user_actor
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.privacy import service
+from cloudoptics.providers.naming import connection_label
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}", tags=["privacy"])
 
 LOAD_CONNECTION = text(
-    "SELECT id, provider_account_id AS aws_account_id, status FROM cloud_connection WHERE id = :c"
+    "SELECT id, provider_account_id AS aws_account_id, provider, account_type, status "
+    "FROM cloud_connection WHERE id = :c"
 )
 
 
@@ -36,7 +39,8 @@ class DataDeletion(ApiModel):
     id: uuid.UUID
     kind: Literal["connection", "tenant"]
     connection_id: uuid.UUID | None
-    # The AWS account ID or the workspace name.
+    # The connection's account ID (AWS account, Google Cloud billing account, Azure
+    # subscription or billing account, DigitalOcean team) or the workspace name.
     target_label: str
     status: Literal["scheduled", "cancelled", "completed", "failed"]
     requested_at: datetime
@@ -66,7 +70,7 @@ class TenantDeletion(ApiModel):
 
 
 class ConnectionDeleteBody(ApiModel):
-    # The connection's AWS account ID, typed by the admin.
+    # The connection's account ID, typed by the admin.
     confirm: str = Field(max_length=64)
 
 
@@ -110,18 +114,19 @@ async def delete_connection_data(
     conn = (await session.execute(LOAD_CONNECTION, {"c": connection_id})).one_or_none()
     if conn is None:
         raise ApiProblem(status.HTTP_404_NOT_FOUND, "not_found", "Connection not found")
+    account = str(conn.aws_account_id).strip()
+    label = connection_label(conn.provider, account, conn.account_type)
     if conn.status != "disconnected":
         raise ApiProblem(
             status.HTTP_409_CONFLICT,
             "connection_not_disconnected",
-            "Disconnect this AWS account before deleting its data.",
+            f"Disconnect {label} before deleting its data.",
         )
-    account = str(conn.aws_account_id).strip()
     if body.confirm.strip() != account:
         raise ApiProblem(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "confirmation_mismatch",
-            f"Type the AWS account ID {account} to confirm.",
+            f"Type the {label.removesuffix(account).strip()} ID {account} to confirm.",
         )
     open_requests = await service.list_deletions(
         session, access.tenant_id, kind="connection", status="scheduled"
@@ -155,7 +160,7 @@ async def delete_connection_data(
         action="connection.data_deletion_requested",
         target_type="cloud_connection",
         target_id=str(connection_id),
-        after={"awsAccountId": account},
+        after={"awsAccountId": account, "provider": conn.provider},
     )
     from cloudoptics.platform.jobs import get_job_app
     from cloudoptics.privacy.jobs import defer_deletion

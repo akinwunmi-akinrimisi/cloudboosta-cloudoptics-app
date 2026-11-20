@@ -865,3 +865,39 @@ async def test_disconnect_drops_the_code_and_connecting_again_issues_a_new_one(
     again = await connect(client, tenant, headers, azure.subscription)
     assert again["connection"]["id"] == cid and again["connection"]["status"] == "pending"
     assert again["ownershipCode"] != first["ownershipCode"]
+
+
+async def test_reconnect_keeps_the_settings_and_issues_a_new_code(
+    client: AsyncClient, login, owner_sql: Sql, azure
+) -> None:
+    """Reconnect on the Connections page: no form to fill again, a new ownership code."""
+    tenant, headers = await workspace(client, login, "Azure Reconnect Ltd")
+    first = await connect(client, tenant, headers, azure.subscription)
+    cid = first["connection"]["id"]
+    url = f"/v1/tenants/{tenant}/providers/azure/connections/{cid}/reconnect"
+    still = await client.post(url, headers=headers)
+    assert still.status_code == 409 and "Set up again" in still.json()["title"]
+
+    assert (
+        await client.delete(f"/v1/tenants/{tenant}/connections/{cid}", headers=headers)
+    ).status_code == 204
+    r = await client.post(url, headers=headers)
+    assert r.status_code == 200, r.text
+    again = r.json()
+    assert again["connection"]["id"] == cid and again["connection"]["status"] == "pending"
+    assert again["connection"]["storageAccount"] == first["connection"]["storageAccount"]
+    assert again["connection"]["exportPath"] == first["connection"]["exportPath"]
+    assert again["ownershipCode"] != first["ownershipCode"]
+    assert again["ownershipCode"] in again["roleAssignmentCommand"]
+    assert first["ownershipCode"] not in again["roleAssignmentCommand"]
+    # The steps can be shown again (Set up again) with the new code.
+    shown = await client.get(
+        f"/v1/tenants/{tenant}/providers/azure/connections/{cid}", headers=headers
+    )
+    assert shown.status_code == 200 and shown.json()["ownershipCode"] == again["ownershipCode"]
+    assert owner_sql(
+        "SELECT action FROM audit_log WHERE tenant_id = %s AND target_id = %s ORDER BY id DESC "
+        "LIMIT 1",
+        tenant,
+        cid,
+    ) == [("connection.reconnected",)]

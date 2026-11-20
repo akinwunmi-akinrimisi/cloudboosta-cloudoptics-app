@@ -9,7 +9,8 @@ import { ExportButton } from '../components/exports'
 import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, Field, cx } from '../components/ui'
 import { ForecastPanel, WhatChanged } from './Forecast'
-import { DIMENSIONS, useMoney, useWorkspace } from './Workspace'
+import type { CloudWords } from '../lib/providers'
+import { DIMENSIONS, useCloudWords, useMoney, useWorkspace } from './Workspace'
 
 const RANGES = [30, 90] as const
 
@@ -64,6 +65,7 @@ export function Costs() {
   const api = useApi()
   const { tenantId } = useWorkspace()
   const { money } = useMoney()
+  const words = useCloudWords()
   const [days, setDays] = useState<(typeof RANGES)[number]>(30)
   const [dimension, setDimension] = useState<CostDimension>('service')
   // null: the current month.
@@ -97,7 +99,10 @@ export function Costs() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Cost Explorer</h1>
-          <p className="text-sm text-secondary">Amortised cost after credits, from your AWS Cost and Usage Report.</p>
+          <p className="text-sm text-secondary">
+            Amortised cost after credits, from{' '}
+            {words.awsOnly ? 'your AWS Cost and Usage Report' : words.single ? `your ${words.single} bills` : 'your cloud bills'}.
+          </p>
         </div>
         {ended.length > 0 && (
           <label className="flex items-center gap-2 text-sm">
@@ -117,13 +122,15 @@ export function Costs() {
           </label>
         )}
       </div>
-      {past && <PastMonth month={past} money={money} />}
+      {past && <PastMonth month={past} money={money} words={words} />}
       {daily.data && daily.data.source === null && (
-        <Alert tone="info">Costs appear here once the first report from AWS is loaded.</Alert>
+        <Alert tone="info">
+          Costs appear here once the first {words.awsOnly ? 'report from AWS' : 'bill'} is loaded.
+        </Alert>
       )}
       {provisional && (
         <Alert tone="info">
-          Provisional figures from AWS Cost Explorer until the first Cost and Usage Report is loaded.
+          Provisional figures from {words.provisional} until the first {words.firstBill} is loaded.
         </Alert>
       )}
       <Card className="p-5">
@@ -245,17 +252,23 @@ export function Costs() {
 }
 
 /** Which ended month is shown, whether its figures are final, and its monthly report. */
-function PastMonth({ month: m, money }: { month: CostMonth; money: (usd: number) => string }) {
+function PastMonth({ month: m, money, words }: { month: CostMonth; money: (usd: number) => string; words: CloudWords }) {
+  const cloud = words.single ?? 'each provider'
   const name = monthLabel(m.month)
   return (
     <Alert tone={m.state === 'final' ? 'info' : 'warning'}>
       <p>
         <strong>{name}</strong>: {money(m.total)} after credits,{' '}
-        {m.source === 'cur' ? 'from the AWS bills' : 'provisional figures from AWS Cost Explorer'}.{' '}
+        {m.source === 'cur'
+          ? `from the ${words.single ? `${words.single} ` : ''}bills`
+          : `provisional figures from ${words.provisional}`}
+        .{' '}
         {m.state === 'final'
           ? 'The bill for this month is final.'
-          : 'Still changing: AWS may restate this month until its bill is final, usually by the 6th of the next month.'}{' '}
-        The forecast and AWS credits cover the current month only.
+          : words.awsOnly
+            ? 'Still changing: AWS may restate this month until its bill is final, usually by the 6th of the next month.'
+            : `Still changing: ${cloud} may restate this month until its bill is final.`}{' '}
+        The forecast and {words.single ? words.credits : 'credits'} cover the current month only.
       </p>
       {m.report && (
         <p className="mt-1">
@@ -273,9 +286,10 @@ function dateLabel(iso: string): string {
   return new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
-/** AWS credits runway (PRD US-2.4): burn from the bills, countdown from the balance an admin enters. */
+/** Credits runway (PRD US-2.4): burn from the bills, countdown from the balance an admin enters. */
 export function CreditsCard({ tenantId }: { tenantId: string }) {
   const api = useApi()
+  const words = useCloudWords()
   const { me } = useWorkspace()
   const { money } = useMoney()
   const isAdmin = me?.memberships.find((m) => m.tenantId === tenantId)?.role === 'admin'
@@ -290,7 +304,7 @@ export function CreditsCard({ tenantId }: { tenantId: string }) {
     <Card className="p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="text-base font-semibold">AWS credits</h2>
+          <h2 className="text-base font-semibold">{words.credits}</h2>
           <p className="text-xs text-muted">
             {c.burnDays ? `Average over the last ${c.burnDays} days of bills` : 'No bills yet'}
             {c.dataThrough && `, to ${dateLabel(c.dataThrough)}`}
@@ -307,8 +321,10 @@ export function CreditsCard({ tenantId }: { tenantId: string }) {
       )}
       {c.status === 'no_balance' && (
         <Alert tone="info">
-          Credits are being applied, but AWS does not report the balance left. {isAdmin ? 'Enter it' : 'An admin can enter it'} from
-          the AWS Billing console (Credits page) to see when they run out.
+          Credits are being applied, but {words.awsOnly ? 'AWS does' : 'the bills do'} not report the balance left.{' '}
+          {isAdmin ? 'Enter it' : 'An admin can enter it'} from{' '}
+          {words.awsOnly ? 'the AWS Billing console (Credits page)' : 'your provider’s billing console'} to see when they
+          run out.
         </Alert>
       )}
       {c.status === 'ending_soon' && c.depletionDate && (

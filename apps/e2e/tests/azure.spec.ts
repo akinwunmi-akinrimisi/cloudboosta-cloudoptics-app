@@ -62,4 +62,19 @@ test('a new admin connects an Azure subscription and sees its costs', async ({ p
     const amount = Number((await tile.innerText()).split(' · ')[0].replace(/[$,]/g, ''))
     expect(amount).toBeGreaterThan(0)
   })
+
+  await test.step('the Connections page offers Scan now, Reload bills and the Azure steps again', async () => {
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Connections' }).click()
+    await expect(page.getByText(`Azure subscription ${customer.subscriptionId}`)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Scan now' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Reload bills…' })).toBeVisible()
+    await page.getByRole('button', { name: 'Set up again' }).click()
+    const steps = page.getByRole('region', { name: 'Set up access in Azure again' })
+    await expect(steps.getByRole('link', { name: /Grant admin consent/ })).toHaveAttribute(
+      'href',
+      new RegExp(`^https://login\\.microsoftonline\\.com/${customer.directoryId}/adminconsent\\?`),
+    )
+    await expect(steps.getByText(/cloudoptics-verify=co-[0-9a-f]+/).first()).toBeVisible()
+    await expect(page).toHaveURL(/\/settings\/connections/)
+  })
 })

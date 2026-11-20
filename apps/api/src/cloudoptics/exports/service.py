@@ -42,7 +42,8 @@ KEEP_DAYS = 7
 
 #: First characters a spreadsheet reads as the start of a formula or a control code.
 FORMULA_START = ("=", "+", "-", "@", "\t", "\r", "\n")
-ACCOUNT_ID = r"^\d{12}$"
+# Any provider's account ID: AWS account, Google Cloud project, Azure GUID, DigitalOcean team.
+ACCOUNT_ID = r"^[0-9A-Za-z:_.-]{1,128}$"
 ProgressFn = Callable[[float], Awaitable[None]]
 
 

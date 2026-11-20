@@ -41,7 +41,7 @@ describe('Settings', () => {
     await user.click(screen.getByRole('link', { name: 'Settings' }))
     const nav = await screen.findByRole('navigation', { name: 'Settings' })
     expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual([
-      'AWS connections',
+      'Cloud connections',
       'Users & roles',
       'Notifications',
       'Preferences',
@@ -53,7 +53,7 @@ describe('Settings', () => {
     }
     await user.click(within(nav).getByRole('link', { name: 'Workspace' }))
     await waitFor(() => expect(router.state.location.search).toEqual({ section: 'workspace' }))
-    await user.click(within(nav).getByRole('link', { name: 'AWS connections' }))
+    await user.click(within(nav).getByRole('link', { name: 'Cloud connections' }))
     expect(await screen.findByText(`AWS account ${ACCOUNT}`)).toBeTruthy()
     expect(screen.getByRole('navigation', { name: 'Settings' })).toBeTruthy()
   })

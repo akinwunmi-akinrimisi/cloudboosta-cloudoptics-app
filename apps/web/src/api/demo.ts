@@ -1,5 +1,7 @@
 import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
+import type { Provider } from '../lib/providers'
+import { connectionKind, connectionLabel } from '../lib/providers'
 import type {
   AccountList,
   AzureConnection,
@@ -78,7 +80,7 @@ import type {
 import { ApiError } from './types'
 import { demoAdvisory, demoCommitments, demoR8 } from './demoCommitments'
 import { demoCsv } from './demoExports'
-import { DEMO_AZURE_CHECKS, demoAzureConnection, demoAzureSetup } from './demoAzure'
+import { DEMO_AZURE_CHECKS, demoAzureConnection, demoAzureSetup, demoOwnershipCode } from './demoAzure'
 
 // In-browser stand-in for the API, used by the public GitHub Pages build. Nothing leaves
 // the browser and no AWS call is made; state lives in this viewer's localStorage only.
@@ -151,6 +153,10 @@ interface State {
   intents?: Record<string, { tenantId: string; createdAt: number; connectionId: string | null }>
   /** Google Cloud connections: where the export is, and the dataset label that proves ownership. */
   gcp?: Record<string, { settings: GcpSettings; labelValue: string }>
+  /** Azure connections' own settings (the Connections page lists them with the others). */
+  azure?: Record<string, { tenantId: string; conn: AzureConnection; code: string }>
+  /** deletionId -> the deleted connection's provider (its audit entry names it, as the API's). */
+  deletionProviders?: Record<string, Provider>
 }
 
 const DEMO_GRACE_DAYS = 7
@@ -889,9 +895,6 @@ export class DemoApi implements Api {
   /** This session's exports (not kept across reloads): the file, and when a "large" one is ready. */
   private readonly exports = new Map<string, { tenantId: string; job: ExportJob; csv: string; startedAt: number; readyAt: number }>()
 
-  /** This session's Azure connections (not kept across reloads). */
-  private readonly azure = new Map<string, { tenantId: string; conn: AzureConnection }>()
-
   constructor(latencyMs = 250) {
     this.latencyMs = latencyMs
     this.scanMs = latencyMs * 32
@@ -1396,7 +1399,7 @@ export class DemoApi implements Api {
   async createAzureConnection(tenantId: string, body: AzureConnectionCreate): Promise<AzureConnectionSetup> {
     await this.tick()
     this.tenant(tenantId)
-    const taken = [...this.azure.values()].some(
+    const taken = Object.values(this.state.azure ?? {}).some(
       ({ tenantId: t, conn }) =>
         t === tenantId &&
         conn.status !== 'disconnected' &&
@@ -1406,31 +1409,76 @@ export class DemoApi implements Api {
     )
     if (taken) throw new ApiError(409, 'This Azure subscription or billing account is already connected to this workspace.')
     const conn = demoAzureConnection(randomId(), body)
-    this.azure.set(conn.id, { tenantId, conn })
-    return demoAzureSetup(conn)
+    const code = demoOwnershipCode()
+    ;(this.state.azure ??= {})[conn.id] = { tenantId, conn, code }
+    // As the API: the shared /connections list has every provider's connections.
+    ;(this.state.connections[tenantId] ??= []).push({
+      id: conn.id,
+      provider: 'azure',
+      awsAccountId: body.scopeType === 'billing_account' ? (body.billingAccountId ?? '') : (body.subscriptionIds[0] ?? ''),
+      accountType: body.scopeType === 'billing_account' ? 'management' : 'standalone',
+      roleArn: '',
+      status: 'pending',
+      createCurExport: false,
+      curBucket: `${body.storageAccount}/${body.container}`,
+      curPrefix: body.exportPath || null,
+      curExportArn: null,
+      permissionChecks: [],
+      lastError: null,
+      lastValidatedAt: null,
+      createdAt: conn.createdAt,
+      stackName: 'azure',
+      stackVersion: null,
+    })
+    this.save()
+    return demoAzureSetup(conn, code)
   }
 
-  private azureConnection(tenantId: string, connectionId: string): AzureConnection {
-    const found = this.azure.get(connectionId)
+  private azureConnection(tenantId: string, connectionId: string): { conn: AzureConnection; code: string } {
+    const found = this.state.azure?.[connectionId]
     if (!found || found.tenantId !== tenantId) throw new ApiError(404, 'Connection not found')
-    return found.conn
+    // The shared list is where Disconnect records the status.
+    found.conn.status = this.connection(tenantId, connectionId).status
+    return found
   }
 
   async getAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup> {
     await this.tick()
-    return demoAzureSetup(this.azureConnection(tenantId, connectionId))
+    const { conn, code } = this.azureConnection(tenantId, connectionId)
+    if (conn.status === 'disconnected') {
+      throw new ApiError(409, 'This connection is disconnected. Connect the subscription again to use it.')
+    }
+    return demoAzureSetup(conn, code)
+  }
+
+  /** As the API: the same settings, a new ownership code (disconnecting deleted the old one). */
+  async reconnectAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup> {
+    await this.tick()
+    const found = this.azureConnection(tenantId, connectionId)
+    if (found.conn.status !== 'disconnected') {
+      throw new ApiError(409, 'This connection is still connected. Use Set up again to see its steps.')
+    }
+    found.code = demoOwnershipCode()
+    const reset = { status: 'pending' as const, permissionChecks: [], lastError: null, lastValidatedAt: null }
+    Object.assign(found.conn, reset)
+    Object.assign(this.connection(tenantId, connectionId), { ...reset, permissionChecks: [] })
+    this.save()
+    return demoAzureSetup(found.conn, found.code)
   }
 
   async validateAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnection> {
     await delay(this.latencyMs * 4)
-    const conn = this.azureConnection(tenantId, connectionId)
+    const { conn } = this.azureConnection(tenantId, connectionId)
     if (conn.status === 'disconnected') throw new ApiError(409, 'This connection is disconnected.')
-    Object.assign(conn, {
-      status: 'healthy',
+    const checked = {
+      status: 'healthy' as const,
       permissionChecks: structuredClone(DEMO_AZURE_CHECKS),
       lastError: null,
       lastValidatedAt: new Date().toISOString(),
-    })
+    }
+    Object.assign(conn, checked)
+    Object.assign(this.connection(tenantId, connectionId), structuredClone(checked))
+    this.save()
     return structuredClone(conn)
   }
 
@@ -1466,13 +1514,15 @@ export class DemoApi implements Api {
   async deleteConnectionData(tenantId: string, connectionId: string, confirm: string): Promise<DataDeletion> {
     await this.tick()
     const conn = this.connection(tenantId, connectionId)
+    const label = connectionLabel(conn)
     if (conn.status !== 'disconnected') {
-      throw new ApiError(409, 'Disconnect this AWS account before deleting its data.', [], 'connection_not_disconnected')
+      throw new ApiError(409, `Disconnect ${label} before deleting its data.`, [], 'connection_not_disconnected')
     }
     if (confirm.trim() !== conn.awsAccountId) {
-      throw new ApiError(422, `Type the AWS account ID ${conn.awsAccountId} to confirm.`, [], 'confirmation_mismatch')
+      throw new ApiError(422, `Type the ${connectionKind(conn)} ID ${conn.awsAccountId} to confirm.`, [], 'confirmation_mismatch')
     }
     const deletion = this.newDeletion('connection', conn.awsAccountId, conn.id)
+    ;(this.state.deletionProviders ??= {})[deletion.id] = conn.provider ?? 'aws'
     deletion.status = 'completed'
     deletion.completedAt = deletion.requestedAt
     deletion.verification = demoConnectionVerification(conn)
@@ -1558,8 +1608,8 @@ export class DemoApi implements Api {
   async reloadBills(tenantId: string, connectionId: string, period: string | null): Promise<ReloadStatus> {
     await this.tick()
     const conn = this.connection(tenantId, connectionId)
-    // Google Cloud bills come from BigQuery, not a bucket.
-    if ((conn.status !== 'healthy' && conn.status !== 'degraded') || (!conn.curBucket && conn.provider !== 'gcp')) {
+    // Only AWS reads a CUR bucket: the other clouds keep their export settings server-side.
+    if ((conn.status !== 'healthy' && conn.status !== 'degraded') || (!conn.curBucket && (conn.provider ?? 'aws') === 'aws')) {
       throw new ApiError(409, 'Check the connection first: bills are reloaded for a working connection with an export.')
     }
     const last = this.state.reloads?.[connectionId]
@@ -1755,6 +1805,10 @@ export class DemoApi implements Api {
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {
     await delay(this.latencyMs * 4)
     const conn = this.connection(tenantId, connectionId)
+    if (conn.provider === 'azure') {
+      await this.validateAzureConnection(tenantId, connectionId)
+      return structuredClone(this.connection(tenantId, connectionId))
+    }
     if (conn.provider === 'digitalocean') {
       conn.status = 'healthy'
       conn.lastValidatedAt = new Date().toISOString()
@@ -2901,7 +2955,7 @@ export class DemoApi implements Api {
           targetType: 'cloud_connection',
           targetId: d.connectionId,
           before: null,
-          after: { awsAccountId: d.targetLabel, ...d.verification },
+          after: { awsAccountId: d.targetLabel, provider: this.state.deletionProviders?.[d.id] ?? 'aws', ...d.verification },
           ip: null,
         })
         continue

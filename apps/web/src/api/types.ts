@@ -835,6 +835,8 @@ export interface NotificationChoices {
 export interface MonthlyReport {
   month: string
   workspace: string
+  /** The workspace's providers when the report was made; absent from older reports (AWS). */
+  providers?: Provider[]
   currency: string
   generatedAt: string
   spend: {
@@ -1261,6 +1263,8 @@ export interface Api {
   createAzureConnection(tenantId: string, body: AzureConnectionCreate): Promise<AzureConnectionSetup>
   /** Azure, admins only. */
   getAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup>
+  /** Azure, admins only, once disconnected: the same settings with a new ownership code (the steps in Azure again). */
+  reconnectAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup>
   /** Azure: checks access now (a few seconds); 409 if disconnected. */
   validateAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnection>
   /** Admins only, once disconnected: `confirm` is the connection's AWS account ID. */

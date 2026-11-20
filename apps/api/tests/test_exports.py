@@ -186,7 +186,7 @@ async def test_costs_export_by_service_account_and_tag_in_both_currencies(
         {"kind": "costs", "start": "2025-01-01", "end": "2026-09-01"},
         {"kind": "costs", "start": "2026-09-01", "end": "2026-09-02", "groupBy": ["tag"]},
         {"kind": "costs", "start": "2026-09-01", "end": "2026-09-02", "tagKey": "team"},
-        {"kind": "costs", "start": "2026-09-01", "end": "2026-09-02", "accountId": "12"},
+        {"kind": "costs", "start": "2026-09-01", "end": "2026-09-02", "accountId": "not an id"},
         {"kind": "invoices"},
     ):
         assert (await client.post(base, json=bad, headers=admin)).status_code == 422, bad

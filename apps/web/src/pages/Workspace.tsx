@@ -1,7 +1,7 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ExternalLink, Plus, RefreshCw } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useId, useRef, useState } from 'react'
 
 import { useApi, useCurrentTenantId, useMe } from '../app/context'
 import type {
@@ -24,9 +24,23 @@ import { WhatChanged } from './Forecast'
 import { ReloadBills } from './ReloadBills'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
-import { accountLabel, connectionLabel, providerOf, workspaceProviders } from '../lib/providers'
+import type { CloudWords, Provider } from '../lib/providers'
+import {
+  PROVIDER_LABEL,
+  accountLabel,
+  accountNoun,
+  cloudWords,
+  connectionKind,
+  connectionLabel,
+  providerOf,
+  supports,
+  workspaceProviders,
+} from '../lib/providers'
 import { ReplaceDigitalOceanToken } from './connect/DigitalOceanConnect'
 import { ProviderBadge } from '../components/providers'
+
+// Fetched only when an admin opens Set up again on an Azure connection.
+const AzureSetupAgain = lazy(() => import('./AzureSetupAgain'))
 
 export function useWorkspace() {
   const api = useApi()
@@ -46,6 +60,12 @@ export function useWorkspace() {
       q.state.data?.some((c) => c.status === 'pending' || c.status === 'validating') ? 3_000 : false,
   })
   return { me, tenantId, tenant, connections }
+}
+
+/** Wording from the workspace's connected providers (AWS alone reads as it always has). */
+export function useCloudWords(): CloudWords {
+  const { connections } = useWorkspace()
+  return cloudWords(workspaceProviders(connections.data ?? []))
 }
 
 /** Formats USD amounts in the viewer's currency mode, with today's rate for the workspace. */
@@ -100,6 +120,7 @@ function shortDate(isoDate: string): string {
 function costTiles(
   summary: CostSummary | undefined,
   money: (usd: number) => string,
+  words: CloudWords,
 ): { label: string; value: string; note: string }[] {
   const waiting =
     summary?.lastLoadStatus === 'failed'
@@ -108,7 +129,12 @@ function costTiles(
   const mtd = summary?.monthToDate
   const forecast = summary?.forecast
   const hasData = summary?.status === 'ready' || summary?.status === 'provisional'
-  const source = summary?.source === 'cost_explorer' ? 'Provisional (Cost Explorer)' : 'Amortised, after credits'
+  const source =
+    summary?.source === 'cost_explorer'
+      ? words.awsOnly
+        ? 'Provisional (Cost Explorer)'
+        : 'Provisional'
+      : 'Amortised, after credits'
   return [
     {
       label: 'Month-to-date spend',
@@ -152,6 +178,7 @@ export function Overview() {
     enabled: tenantId !== null,
   })
   const waiting = summary.data?.status === 'waiting'
+  const words = cloudWords(workspaceProviders(connections.data ?? []))
 
   return (
     <div className="flex flex-col gap-6">
@@ -163,7 +190,7 @@ export function Overview() {
       </div>
       {connections.data && connections.data.length === 0 && (
         <Alert tone="info">
-          No AWS account is connected yet.{' '}
+          No cloud account is connected yet.{' '}
           <Link to="/onboarding" search={{ step: 1 }} className="font-medium text-accent underline">
             Connect one
           </Link>{' '}
@@ -172,20 +199,21 @@ export function Overview() {
       )}
       {waiting && connections.data?.some((c) => c.status === 'healthy' || c.status === 'degraded') && (
         <Alert tone="info">
-          Connected. AWS delivers the first Cost and Usage Report within 24 hours; your costs and recommendations appear
-          here as soon as it lands.
+          {words.awsOnly
+            ? 'Connected. AWS delivers the first Cost and Usage Report within 24 hours; your costs and recommendations appear here as soon as it lands.'
+            : 'Connected. Your costs and recommendations appear here as soon as the first bill is loaded.'}
         </Alert>
       )}
       {summary.data?.reconciliation?.status === 'mismatch' && (
         <Alert tone="warning">
-          {reconciliationMessage(summary.data.reconciliation.month, summary.data.reconciliation.differencePct)}
+          {reconciliationMessage(summary.data.reconciliation.month, summary.data.reconciliation.differencePct, words)}
         </Alert>
       )}
       {credits.data && (credits.data.status === 'ending_soon' || credits.data.status === 'used_up') && (
         <Alert tone="warning">
           {credits.data.status === 'used_up'
-            ? 'Your AWS credits are used up. '
-            : `Your AWS credits ${credits.data.expiresFirst ? 'expire' : 'run out'} in about ${credits.data.daysLeft} days. `}
+            ? `Your ${words.single ? words.credits : 'credits'} are used up. `
+            : `Your ${words.single ? words.credits : 'credits'} ${credits.data.expiresFirst ? 'expire' : 'run out'} in about ${credits.data.daysLeft} days. `}
           <Link to="/costs" className="font-medium underline">
             See the credits runway
           </Link>
@@ -193,12 +221,13 @@ export function Overview() {
       )}
       {summary.data?.status === 'provisional' && (
         <Alert tone="info">
-          Provisional figures from AWS Cost Explorer. Full detail arrives with the first Cost and Usage Report, within
-          24 hours of connecting.
+          {words.awsOnly
+            ? 'Provisional figures from AWS Cost Explorer. Full detail arrives with the first Cost and Usage Report, within 24 hours of connecting.'
+            : `Provisional figures from ${words.provisional}. Full detail arrives with the first bill.`}
         </Alert>
       )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {costTiles(summary.data, money).map((tile) => (
+        {costTiles(summary.data, money, words).map((tile) => (
           <Kpi key={tile.label} {...tile} />
         ))}
         <Kpi {...savingsTile(savings.data, money)} />
@@ -207,7 +236,7 @@ export function Overview() {
       {tenantId !== null && (summary.data?.status === 'ready' || summary.data?.status === 'provisional') && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <SpendTrend tenantId={tenantId} />
-          <TopSpend tenantId={tenantId} />
+          <TopSpend tenantId={tenantId} words={words} />
         </div>
       )}
       {tenantId !== null && summary.data?.status === 'ready' && <WhatChanged tenantId={tenantId} />}
@@ -242,7 +271,7 @@ export const DIMENSIONS: { id: CostDimension; label: string }[] = [
   { id: 'region', label: 'Region' },
 ]
 
-function TopSpend({ tenantId }: { tenantId: string }) {
+function TopSpend({ tenantId, words }: { tenantId: string; words: CloudWords }) {
   const api = useApi()
   const [dimension, setDimension] = useState<CostDimension>('service')
   const breakdown = useQuery({
@@ -275,7 +304,7 @@ function TopSpend({ tenantId }: { tenantId: string }) {
       {breakdown.data && items.length === 0 && (
         <p className="text-sm text-secondary">
           {breakdown.data.source === 'cost_explorer'
-            ? 'Available once the first Cost and Usage Report is loaded.'
+            ? `Available once the first ${words.firstBill} is loaded.`
             : 'No spend this month yet.'}
         </p>
       )}
@@ -308,13 +337,13 @@ function savingsTile(
   }
 }
 
-function reconciliationMessage(month: string, differencePct: number | null): string {
+function reconciliationMessage(month: string, differencePct: number | null, words: CloudWords): string {
   const name = new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-GB', {
     month: 'long',
     timeZone: 'UTC',
   })
   const by = differencePct === null ? '' : ` by ${Math.abs(differencePct).toFixed(1)}%`
-  return `${name} totals differ from AWS Cost Explorer${by}. We're reconciling; figures may change.`
+  return `${name} totals differ from ${words.total}${by}. We're reconciling; figures may change.`
 }
 
 /** The exchange-rate tile: today's rate for the workspace currency, and where it came from. */
@@ -341,8 +370,10 @@ export function Connections() {
   const { me, tenantId, connections } = useWorkspace()
   const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
   const isAdmin = role === 'admin'
-  const [deleted, setDeleted] = useState<DataDeletion | null>(null)
-  const multiProvider = workspaceProviders(connections.data ?? []).length > 1
+  // The connection's label is kept with the result: its card may be gone once the data is.
+  const [deleted, setDeleted] = useState<{ deletion: DataDeletion; label: string } | null>(null)
+  const providers = workspaceProviders(connections.data ?? [])
+  const multiProvider = providers.length > 1
   return (
     <SettingsLayout current="connections" role={role}>
     <div className="flex flex-col gap-6">
@@ -364,8 +395,8 @@ export function Connections() {
       </div>
       {deleted && (
         <Alert tone="info">
-          Deleted the data for AWS account {deleted.targetLabel}: {verificationSummary(deleted)} The record is in
-          Settings, Workspace.
+          Deleted the data for {deleted.label}: {verificationSummary(deleted.deletion)} The record is in Settings,
+          Workspace.
         </Alert>
       )}
       {connections.isLoading && <p className="text-sm text-secondary">Loading…</p>}
@@ -380,20 +411,18 @@ export function Connections() {
                 <ProviderBadge provider={c.provider} show={multiProvider} />
               </p>
               <p className="text-xs text-muted">
-                {providerOf(c.provider) === 'digitalocean'
-                  ? 'DigitalOcean team, read-only token'
-                  : providerOf(c.provider) === 'gcp'
-                  ? 'Billing account, with every project billed to it'
-                  : c.accountType === 'management'
-                    ? 'Management (payer) account'
-                    : 'Standalone account'}
+                {connectionKindNote(c)}
                 {c.lastValidatedAt && ` · checked ${new Date(c.lastValidatedAt).toLocaleString()}`}
               </p>
             </div>
             <StatusPill status={c.status} />
           </div>
           {isAdmin && tenantId !== null && (
-            <ConnectionActions connection={c} tenantId={tenantId} onDeleted={setDeleted} />
+            <ConnectionActions
+              connection={c}
+              tenantId={tenantId}
+              onDeleted={(deletion) => setDeleted({ deletion, label: connectionLabel(c) })}
+            />
           )}
           {c.status !== 'disconnected' && c.permissionChecks.length > 0 && (
             <ul className="mt-4 divide-y divide-border">
@@ -420,10 +449,17 @@ export function Connections() {
           )}
           {isAdmin &&
             tenantId !== null &&
+            providerOf(c.provider) === 'aws' &&
             c.stackName === ACCESS_STACK_NAME &&
             (c.status === 'healthy' || c.status === 'degraded') && <ResourceAccess connection={c} tenantId={tenantId} />}
           {isAdmin &&
             tenantId !== null &&
+            providerOf(c.provider) !== 'aws' &&
+            supports(c.provider, 'scan') &&
+            (c.status === 'healthy' || c.status === 'degraded') && <ProviderScan connection={c} tenantId={tenantId} />}
+          {isAdmin &&
+            tenantId !== null &&
+            supports(c.provider, 'reload') &&
             // AWS needs its CUR bucket; other clouds keep their export settings server-side.
             (c.curBucket || providerOf(c.provider) !== 'aws') &&
             (c.status === 'healthy' || c.status === 'degraded') && (
@@ -431,7 +467,9 @@ export function Connections() {
           )}
         </Card>
       ))}
-      {tenantId !== null && connections.data && connections.data.length > 0 && <Accounts tenantId={tenantId} showProvider={multiProvider} />}
+      {tenantId !== null && connections.data && connections.data.length > 0 && (
+        <Accounts tenantId={tenantId} showProvider={multiProvider} providers={providers} />
+      )}
     </div>
     </SettingsLayout>
   )
@@ -493,19 +531,31 @@ function ConnectionActions({
     onSuccess: () => setConfirming(false),
     onSettled: refresh,
   })
-  const gcp = providerOf(c.provider) === 'gcp'
+  const provider = providerOf(c.provider)
+  const gcp = provider === 'gcp'
+  const azure = provider === 'azure'
+  // Azure's steps open on the card ("Set up again"); after Reconnect they show the new code.
+  const [azureSteps, setAzureSteps] = useState<'closed' | 'open' | 'reconnected'>('closed')
+  const stepsId = useId()
   const reconnect = useMutation({
-    mutationFn: async () =>
-      gcp
+    mutationFn: async () => {
+      if (azure) {
+        const setup = await api.reconnectAzureConnection(tenantId, c.id)
+        qc.setQueryData(['azure-setup', tenantId, c.id], setup)
+        return null
+      }
+      return gcp
         ? api.createGcpConnection(tenantId, (await api.getGcpSetup(tenantId, c.id)).settings)
         : api.createConnection(tenantId, {
             awsAccountId: c.awsAccountId,
             accountType: c.accountType,
             createCurExport: c.createCurExport,
-          }),
+          })
+    },
     onSuccess: (setup) => {
       refresh()
-      void navigate({ to: '/onboarding', search: { connection: setup.connection.id } })
+      if (setup === null) setAzureSteps('reconnected')
+      else void navigate({ to: '/onboarding', search: { connection: setup.connection.id } })
     },
   })
   const error = check.error ?? disconnect.error ?? reconnect.error
@@ -562,7 +612,8 @@ function ConnectionActions({
     return (
       <div className="mt-4 flex flex-col gap-2">
         <p className="text-sm text-secondary">
-          Disconnected. Cloudoptics no longer reads this account; past costs stay until you delete them.
+          Disconnected. Cloudoptics no longer reads this {connectionKind(c)}; past costs stay until you delete them.
+          {azure && ' Reconnect gives it a new ownership code, so the steps in Azure are done again.'}
         </p>
         {error && <Alert tone="error">{error.message}</Alert>}
         <div className="flex flex-wrap gap-2">
@@ -583,6 +634,12 @@ function ConnectionActions({
             <p>
               Disconnect {connectionLabel(c)}? Cloudoptics stops reading it and its open recommendations close. Past
               costs stay. To remove our access completely, also remove the roles you gave {c.roleArn} in Google Cloud.
+            </p>
+          ) : azure ? (
+            <p>
+              Disconnect {connectionLabel(c)}? Cloudoptics stops reading it, deletes its ownership code, and its open
+              recommendations close. Past costs stay. To remove our access completely, also remove the Cloudoptics
+              role assignments in Azure.
             </p>
           ) : (
           <p>
@@ -609,18 +666,118 @@ function ConnectionActions({
           <Button variant="secondary" disabled={busy || c.status === 'validating'} onClick={() => check.mutate()}>
             {check.isPending || c.status === 'validating' ? 'Checking…' : 'Check again'}
           </Button>
-          <Button
-            variant="secondary"
-            disabled={busy}
-            onClick={() => void navigate({ to: '/onboarding', search: { connection: c.id } })}
-          >
-            Set up again
-          </Button>
+          {azure ? (
+            <Button
+              variant="secondary"
+              disabled={busy}
+              aria-expanded={azureSteps !== 'closed'}
+              aria-controls={stepsId}
+              onClick={() => setAzureSteps((s) => (s === 'closed' ? 'open' : 'closed'))}
+            >
+              {azureSteps === 'closed' ? 'Set up again' : 'Hide the steps'}
+            </Button>
+          ) : (
+            // AWS opens its stack, Google Cloud its commands and dataset label (Onboarding).
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => void navigate({ to: '/onboarding', search: { connection: c.id } })}
+            >
+              Set up again
+            </Button>
+          )}
           <Button ref={confirmButton} variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
             Disconnect…
           </Button>
         </div>
       )}
+      {azure && azureSteps !== 'closed' && (
+        <Suspense fallback={<p className="text-sm text-secondary">Loading…</p>}>
+          <AzureSetupAgain
+            tenantId={tenantId}
+            connection={c}
+            newCode={azureSteps === 'reconnected'}
+            id={stepsId}
+          />
+        </Suspense>
+      )}
+    </div>
+  )
+}
+
+/** The line under a connection's name: what it reads, in the provider's words. */
+function connectionKindNote(c: Connection): string {
+  switch (providerOf(c.provider)) {
+    case 'digitalocean':
+      return 'DigitalOcean team, read-only token'
+    case 'gcp':
+      return 'Billing account, with every project billed to it'
+    case 'azure':
+      return c.accountType === 'management'
+        ? 'Billing account, with every subscription billed to it'
+        : 'Subscription, with its FOCUS cost export'
+    default:
+      return c.accountType === 'management' ? 'Management (payer) account' : 'Standalone account'
+  }
+}
+
+/** Plural of what a provider's scan covers: accounts, projects, subscriptions, teams. */
+function scopeNouns(provider: Provider | null | undefined): string {
+  return `${accountNoun(provider)}s`
+}
+
+/**
+ * Scan now for a Google Cloud, Azure or DigitalOcean connection (admins). The shared scan route
+ * finds the connection's plug-in by its cloud; there is no AWS role to look for first.
+ */
+function ProviderScan({ connection: c, tenantId }: { connection: Connection; tenantId: string }) {
+  const api = useApi()
+  const qc = useQueryClient()
+  const summary = useQuery({
+    queryKey: ['resource-summary', tenantId],
+    queryFn: () => api.resourceSummary(tenantId),
+    refetchInterval: (q) =>
+      q.state.data?.scans.some((s) => s.connectionId === c.id && s.status === 'running') ? 2_000 : false,
+  })
+  const scan = useMutation({
+    mutationFn: () => api.scanResources(tenantId, c.id),
+    onSuccess: () => {
+      for (const key of ['accounts', 'recommendations', 'resource-summary']) {
+        void qc.invalidateQueries({ queryKey: [key, tenantId] })
+      }
+    },
+  })
+  const last = summary.data?.scans.find((s) => s.connectionId === c.id)
+  const running = last?.status === 'running'
+  const wasRunning = useRef(running)
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      void qc.invalidateQueries({ queryKey: ['accounts', tenantId] })
+      void qc.invalidateQueries({ queryKey: ['recommendations', tenantId] })
+    }
+    wasRunning.current = running
+  }, [running, qc, tenantId])
+  return (
+    <div className="mt-4 flex flex-col gap-3 rounded-sm bg-surface-2 p-3 text-sm">
+      <div>
+        <p className="font-medium">Resources</p>
+        <p className="text-secondary">
+          Cloudoptics scans the resources in this {connectionKind(c)} every 12 hours for recommendations. Scan now to
+          look straight away.
+        </p>
+      </div>
+      {running ? <ScanRunning scan={last} /> : last && <LastScanResult scan={last} provider={c.provider} />}
+      {scan.error && <Alert tone="error">{scan.error.message}</Alert>}
+      {scan.data?.status === 'skipped' && (
+        <Alert tone="warning">
+          {PROVIDER_LABEL[providerOf(c.provider)]} returned nothing to scan yet. Check the connection, then scan again.
+        </Alert>
+      )}
+      <div>
+        <Button variant="secondary" disabled={scan.isPending || running} onClick={() => scan.mutate()}>
+          {scan.isPending ? 'Starting…' : running ? 'Scanning…' : 'Scan now'}
+        </Button>
+      </div>
     </div>
   )
 }
@@ -839,7 +996,7 @@ function ScanRunning({ scan }: { scan: LastScan }) {
 }
 
 /** What the latest scan found, and what it could not read, in plain words. */
-function LastScanResult({ scan }: { scan: LastScan }) {
+function LastScanResult({ scan, provider }: { scan: LastScan; provider?: Provider | null }) {
   const when = new Date(scan.finishedAt ?? scan.startedAt).toLocaleString()
   if (scan.status === 'failed') {
     return (
@@ -849,7 +1006,11 @@ function LastScanResult({ scan }: { scan: LastScan }) {
       </Alert>
     )
   }
-  const found = `${scan.resources} ${scan.resources === 1 ? 'resource' : 'resources'} in ${scan.regions} regions across ${scan.accountsWithAccess} of ${scan.accounts} accounts`
+  const resources = `${scan.resources} ${scan.resources === 1 ? 'resource' : 'resources'} in ${scan.regions} regions`
+  const found =
+    providerOf(provider) !== 'aws' && scan.accounts <= 1
+      ? resources
+      : `${resources} across ${scan.accountsWithAccess} of ${scan.accounts} ${scopeNouns(provider)}`
   return (
     <div className="flex flex-col gap-2">
       <p>
@@ -875,8 +1036,17 @@ function orgStatusLabel(status: string | null): string | null {
   return status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, ' ')
 }
 
-/** Accounts from the AWS Organization and the bills, with coverage (PRD US-1.3). */
-function Accounts({ tenantId, showProvider }: { tenantId: string; showProvider: boolean }) {
+/** The accounts, projects, subscriptions and teams from the connections and the bills, with
+ * coverage (PRD US-1.3); AWS's come from its Organization. */
+function Accounts({
+  tenantId,
+  showProvider,
+  providers,
+}: {
+  tenantId: string
+  showProvider: boolean
+  providers: Provider[]
+}) {
   const api = useApi()
   const list = useQuery({
     queryKey: ['accounts', tenantId],
@@ -886,7 +1056,7 @@ function Accounts({ tenantId, showProvider }: { tenantId: string; showProvider: 
   const { coverage, accounts } = list.data
   return (
     <Card>
-      <h2 className="text-base font-semibold">AWS accounts</h2>
+      <h2 className="text-base font-semibold">{accountsHeading(providers)}</h2>
       <p className="mt-1 text-sm text-secondary">
         {coverage.withCostData} of {coverage.accounts} accounts have cost data · {coverage.withResourceAccess} of{' '}
         {coverage.accounts} have resource access for recommendations
@@ -903,11 +1073,7 @@ function Accounts({ tenantId, showProvider }: { tenantId: string; showProvider: 
                   <ProviderBadge provider={a.provider} show={showProvider} />
                 </p>
                 <p className="text-xs text-muted">
-                  {a.accountType === 'management'
-                    ? 'Management (payer)'
-                    : a.accountType === 'member'
-                      ? 'Member'
-                      : 'Standalone'}
+                  {accountTypeLabel(a.provider, a.accountType)}
                   {status && ` · ${status}`}
                 </p>
               </div>
@@ -925,4 +1091,20 @@ function Accounts({ tenantId, showProvider }: { tenantId: string; showProvider: 
       </ul>
     </Card>
   )
+}
+
+/** "AWS accounts", "Google Cloud projects", or "Accounts" for several providers. */
+function accountsHeading(providers: Provider[]): string {
+  const p = providers.length === 1 ? providers[0] : undefined
+  if (!p) return 'Accounts'
+  return `${PROVIDER_LABEL[p]} ${scopeNouns(p)}`
+}
+
+/** An account's role in its connection, in its provider's words. */
+function accountTypeLabel(provider: Provider | null | undefined, type: 'management' | 'member' | 'standalone'): string {
+  const p = providerOf(provider)
+  if (p === 'aws') return type === 'management' ? 'Management (payer)' : type === 'member' ? 'Member' : 'Standalone'
+  if (type === 'management') return 'Billing account'
+  const noun = accountNoun(p)
+  return noun.charAt(0).toUpperCase() + noun.slice(1)
 }

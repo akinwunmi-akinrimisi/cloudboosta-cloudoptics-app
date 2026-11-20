@@ -1,7 +1,7 @@
 """Weekly digest (PRD US-6.4, FR-NOT-02/03/06, docs/09 §2.4 ``digest.weekly``).
 
 Every Monday from 07:00 in the workspace's time zone, each member who has not turned it
-off gets one email about the week before (Monday to Sunday, AWS charge days in UTC):
+off gets one email about the week before (Monday to Sunday, the providers' charge days in UTC):
 spend against the week before and the services that changed most, open recommendations
 (the best five, and what is new), savings marked done, budgets this month, and the week's
 anomalies. Amounts are in USD, with the workspace currency beside them when it has a rate.
@@ -32,6 +32,7 @@ from cloudoptics.notifications import preferences
 from cloudoptics.notifications.email import Email, EmailError, get_mailer
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.providers import naming
 from cloudoptics.recommendations import queries as recommendations
 from cloudoptics.trends import changes as what_changed
 
@@ -96,6 +97,8 @@ class Digest:
     credits: credits.Runway
     #: The month so far against the same days last month, as of the week's end.
     month_changes: what_changed.WhatChanged | None = None
+    #: The workspace's providers, for the wording ("Your AWS week", "Your cloud week").
+    providers: tuple[str, ...] = ("aws",)
 
     @property
     def change_percent(self) -> float | None:
@@ -157,6 +160,7 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, week_start: date) -
         anomalies=await anomalies.period(session, week_start, week_end),
         credits=await credits.runway(session, week_end),
         month_changes=await what_changed.what_changed(session, week_end),
+        providers=tuple(await naming.workspace_providers(session)),
     )
 
 
@@ -169,7 +173,7 @@ def render(d: Digest, app_url: str) -> tuple[str, str, str]:
     app = app_url.rstrip("/")
     pct = d.change_percent
     trend = "" if pct is None else f" ({pct:+.0f}% on the week before)"
-    subject = f"Your AWS week: {d.money(d.spend)} spent{trend}"
+    subject = f"Your {naming.clouds(d.providers)} week: {d.money(d.spend)} spent{trend}"
     sections: list[tuple[str, list[str], str]] = []
 
     spend = [f"Spent {d.money(d.spend)}, against {d.money(d.previous)} the week before."]
@@ -202,7 +206,7 @@ def render(d: Digest, app_url: str) -> tuple[str, str, str]:
         )
     if r.verified_count:
         recs.append(
-            f"Verified in AWS this week: {r.verified_count}, saving "
+            f"Verified in {naming.where(d.providers)} this week: {r.verified_count}, saving "
             f"{d.money(r.realised_usd_month)} a month."
         )
     sections.append(("Recommendations", recs, f"{app}/recommendations"))
@@ -231,7 +235,7 @@ def render(d: Digest, app_url: str) -> tuple[str, str, str]:
 
     runway = credits.describe(d.credits, d.money)
     if runway:
-        sections.append(("AWS credits", [runway], f"{app}/costs"))
+        sections.append((naming.credits_title(d.providers), [runway], f"{app}/costs"))
 
     settings_link = f"{app}/settings"
     footer = (

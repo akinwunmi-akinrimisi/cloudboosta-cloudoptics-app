@@ -7,7 +7,7 @@ import type { Commitment, CommitmentKind, CommitmentOption, CommitmentPayment, S
 import { DailySpendChart } from '../components/charts'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { formatMoney } from '../lib/currency'
-import { Kpi, useMoney, useWorkspace } from './Workspace'
+import { Kpi, useCloudWords, useMoney, useWorkspace } from './Workspace'
 
 const KIND: Record<CommitmentKind, string> = {
   savings_plan: 'Savings Plan',
@@ -59,8 +59,11 @@ function day(iso: string): string {
 export function Commitments() {
   const api = useApi()
   const qc = useQueryClient()
-  const { me, tenantId } = useWorkspace()
+  const { me, tenantId, connections } = useWorkspace()
   const role = me?.memberships.find((m) => m.tenantId === tenantId)?.role
+  const words = useCloudWords()
+  // Savings Plans and Reserved Instances are AWS's: nothing to read without an AWS connection.
+  const noAws = connections.data !== undefined && connections.data.length > 0 && !words.hasAws
   const held = useQuery({
     queryKey: ['commitments', tenantId],
     queryFn: () => api.listCommitments(tenantId as string),
@@ -80,6 +83,21 @@ export function Commitments() {
     },
   })
   if (tenantId === null) return null
+  if (noAws) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-2xl font-semibold">Commitments</h1>
+          <p className="text-sm text-secondary">AWS Savings Plans and Reserved Instances.</p>
+        </div>
+        <Alert tone="info">
+          Commitments are AWS-only for now: Cloudoptics reads AWS Savings Plans and Reserved Instances. This workspace
+          has no AWS connection, so there is nothing to show here. Costs, budgets and recommendations work for every
+          cloud you connect.
+        </Alert>
+      </div>
+    )
+  }
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -89,8 +107,9 @@ export function Commitments() {
             <span className="rounded-full bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-secondary">Advisory only</span>
           </h1>
           <p className="text-sm text-secondary">
-            Savings Plans and Reserved Instances: what you hold, when it ends, and whether to commit to more. Cloudoptics
-            never buys anything for you.
+            {words.awsOnly ? 'Savings Plans' : 'AWS Savings Plans'} and Reserved Instances: what you hold, when it ends,
+            and whether to commit to more. Cloudoptics never buys anything for you.
+            {!words.awsOnly && ' Commitments are AWS-only; your other clouds are not shown here.'}
           </p>
         </div>
         {role === 'admin' && (
