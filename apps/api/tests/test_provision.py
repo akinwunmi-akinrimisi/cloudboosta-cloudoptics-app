@@ -210,3 +210,21 @@ def test_digitalocean_oauth_client_is_plain_and_its_secret_masked(
         assert "type" not in e["CLOUDOPTICS_DO_OAUTH_CLIENT_ID"]
         assert e["CLOUDOPTICS_DO_OAUTH_CLIENT_SECRET"]["type"] == "SECRET"
     assert "CLOUDOPTICS_DO_OAUTH_CLIENT_SECRET" not in envs(spec, "migrate")
+
+
+def test_gcp_settings_reach_api_and_worker_as_plain_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-019: the two values infra/gcp/setup.sh prints, set by Staging setup."""
+    for var in (*provision.RUNTIME_PLAIN.values(), *provision.RUNTIME_SECRET.values()):
+        monkeypatch.delenv(var, raising=False)
+    provider = "projects/1/locations/global/workloadIdentityPools/cloudoptics/providers/aws-broker"
+    monkeypatch.setenv("CLOUDOPTICS_GCP_WORKLOAD_PROVIDER", provider)
+    monkeypatch.setenv("CLOUDOPTICS_GCP_SERVICE_ACCOUNT_PROJECT", "cloudoptics-staging")
+    spec = app_spec()
+    provision.apply_runtime_config(spec, None)
+    for name in ("api", "worker"):
+        e = envs(spec, name)
+        assert e["CLOUDOPTICS_GCP_WORKLOAD_PROVIDER"]["value"] == provider
+        assert e["CLOUDOPTICS_GCP_SERVICE_ACCOUNT_PROJECT"]["value"] == "cloudoptics-staging"
+        assert "type" not in e["CLOUDOPTICS_GCP_WORKLOAD_PROVIDER"]
