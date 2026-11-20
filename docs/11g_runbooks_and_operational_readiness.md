@@ -647,6 +647,24 @@ Who pays: queries run in the customer's query project at BigQuery on-demand pric
 ### RB-22: DigitalOcean connections (ADR-021)
 
 Symptoms, fixes and owner steps are in `apps/api/src/cloudoptics/providers/digitalocean/README.md`. In short: a `failed` connection whose "Read the team" check says the token was not accepted means the customer deleted the token or it expired, and they use **Replace token…**; a `degraded` one is missing a read scope (costs still load). Never ask a customer for their token or print one: the checks say what it can do.
+### RB-22: Azure connections (ADR-020)
+
+**Set up (once per environment):** the owner steps in ADR-020 (the Cloudoptics app, the deployer
+app with its GitHub federated credential, four GitHub variables), then Staging setup with
+`azure_certificate=true`. **Rotate** with the Roles Anywhere certificate (`certificate_days`).
+Details per check: `apps/api/src/cloudoptics/providers/azure/README.md`.
+
+| Symptom (check or `sync_run.error_code`) | Cause | Fix |
+|---|---|---|
+| `consent` "could not sign in" (AADSTS700027 / 7000215) | Our certificate expired or is not on the app | Staging setup, `azure_certificate=true` |
+| `consent` AADSTS700016 / 65001 | The customer's admin has not consented | They open the consent link (Set up again shows it) |
+| `ownership` error | The storage account lacks the `cloudoptics-verify` tag with this connection's code | They run the Cloud Shell script again |
+| `ownership` "another workspace" | The scope is verified in another workspace (ADR-017) | Disconnect it there or invite the person |
+| `blob_reader` / `cur.ingest` `AuthorizationPermissionMismatch` | No Storage Blob Data Reader on the container | The script; role assignments take up to 10 minutes |
+| Batch failed with `fx` error | A non-USD bill, no Cloudoptics rate and no `x_BilledCostInUsd` | Staff set the rate, then Reload bills |
+| `cost.reconcile` mismatch | Microsoft restated the month after the run | The next daily run reloads it; Reload bills to do it now |
+
+Azure does not charge for these calls. Cost Management queries are limited per customer directory (QPU quotas; a 429 is retried after the wait Azure gives).
 
 ### RB-19: Security-audit follow-ups
 

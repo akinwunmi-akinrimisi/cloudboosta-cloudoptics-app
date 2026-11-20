@@ -46,14 +46,16 @@ def test_aws_is_registered_with_every_capability_but_native_recs() -> None:
         assert aws.capability(name) is not None, name
     assert aws.native_recs is None
     assert "nat_gateway" in aws.resource_types
-    assert [p.name for p in providers.registered()] == ["aws", "gcp", "digitalocean"]
+    assert [p.name for p in providers.registered()] == ["aws", "gcp", "digitalocean", "azure"]
 
 
 def test_unknown_and_unregistered_providers() -> None:
     assert set(providers.PROVIDER_NAMES) == {"aws", "gcp", "azure", "digitalocean"}
+    # Every provider the schema accepts has a plug-in now (ADR-019, -020, -021).
+    assert {p.name for p in providers.registered()} == set(providers.PROVIDER_NAMES)
     with pytest.raises(providers.UnknownProviderError):
-        providers.get("azure")  # valid in the schema, no plug-in yet
-    assert providers.find("azure") is None
+        providers.get("oracle")
+    assert providers.find("oracle") is None
     with pytest.raises(ValueError, match="not a provider"):
         register(
             CloudProvider(
@@ -137,8 +139,9 @@ async def test_jobs_dispatch_by_the_connections_provider(
 
     # A capability the plug-in lacks, and a provider with no plug-in: skipped, nothing runs.
     assert await inventory_jobs.scan(tenant, gcp_conn) == "unsupported"
-    assert await ingestion_jobs.ingest(tenant, azure_conn) == "unsupported"
-    assert await ingestion_jobs.snapshot(tenant, azure_conn) == "unsupported"
+    # Azure has a plug-in (ADR-020) that skips a connection without its settings row.
+    assert await ingestion_jobs.ingest(tenant, azure_conn) == "skipped"
+    assert await ingestion_jobs.snapshot(tenant, azure_conn) == "skipped"
 
 
 async def test_a_gone_connection_is_reported_by_the_aws_code(client: AsyncClient, login) -> None:

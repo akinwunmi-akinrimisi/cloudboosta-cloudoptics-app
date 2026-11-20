@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react'
+import { Suspense, lazy } from 'react'
 
 import type { Provider } from '../../api/types'
 import { PROVIDER_LABEL } from '../../lib/providers'
@@ -8,6 +9,23 @@ import { ConnectNew } from '../Onboarding'
 import type { ConnectProps } from './GcpConnect'
 import { GcpConnect } from './GcpConnect'
 import { DigitalOceanConnect } from './DigitalOceanConnect'
+
+// Azure's wizard is fetched only when someone picks it (it ends with its own access check).
+const AzureConnect = lazy(() => import('./AzureConnect'))
+
+function AzureStep({ tenantId }: ConnectProps) {
+  return (
+    <Suspense
+      fallback={
+        <p role="status" className="text-sm text-secondary">
+          Loading…
+        </p>
+      }
+    >
+      <AzureConnect tenantId={tenantId} />
+    </Suspense>
+  )
+}
 
 export type { ConnectProps }
 
@@ -45,5 +63,11 @@ export const CONNECT_PROVIDERS: ConnectProvider[] = [
     label: PROVIDER_LABEL.digitalocean,
     description: 'A read-only API token you paste once.',
     Component: DigitalOceanConnect,
+  },
+  {
+    id: 'azure',
+    label: PROVIDER_LABEL.azure,
+    description: 'Your FOCUS cost export in Blob Storage.',
+    Component: AzureStep,
   },
 ]

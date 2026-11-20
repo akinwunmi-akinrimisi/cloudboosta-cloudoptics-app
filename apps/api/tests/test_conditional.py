@@ -48,6 +48,7 @@ UNVERSIONED = {
     "support_access_request",  # requests made under those grants
     "funnel_event",  # first-time funnel steps for staff analytics (no cached read uses them)
     "gcp_connection",  # a Google Cloud connection's export settings (read by its setup page only)
+    "azure_connection",  # Azure connection settings (ADR-020); only uncached admin routes read them
 }
 
 
