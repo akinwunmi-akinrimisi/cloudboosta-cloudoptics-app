@@ -35,6 +35,13 @@ const MESSAGES: Record<FieldName, [missing: string, wrong: string]> = {
 }
 const OPTIONAL: FieldName[] = ['queryProjectId', 'datasetLocation']
 
+/** The table Google's managed FOCUS export writes: gcp_billing_export_focus_<billing account
+ * ID>, dashes as underscores (its dataset is gcp_billing_immutable_<ID>_<location>). */
+export function focusTableName(billingAccountId: string): string {
+  const id = billingAccountId.trim().toUpperCase()
+  return PATTERNS.billingAccountId.test(id) ? `gcp_billing_export_focus_${id.replace(/-/g, '_')}` : ''
+}
+
 /** Client-side checks; returns a message per field in error. */
 export function validateGcp(body: GcpConnectionCreate): Partial<Record<FieldName, string>> {
   const errors: Partial<Record<FieldName, string>> = {}
@@ -117,7 +124,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
   const [billingAccountId, setBillingAccountId] = useState('')
   const [exportProjectId, setExportProjectId] = useState('')
   const [exportDatasetId, setExportDatasetId] = useState('')
-  const [exportTableId, setExportTableId] = useState('focus')
+  const [exportTableId, setExportTableId] = useState('')
   const [exportKind, setExportKind] = useState<GcpExportKind>('focus_export')
   const [queryProjectId, setQueryProjectId] = useState('')
   const [datasetLocation, setDatasetLocation] = useState('')
@@ -132,7 +139,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
       billingAccountId: billingAccountId.trim().toUpperCase(),
       exportProjectId: exportProjectId.trim(),
       exportDatasetId: exportDatasetId.trim(),
-      exportTableId: exportTableId.trim(),
+      exportTableId: exportTableId.trim() || (exportKind === 'focus_export' ? focusTableName(billingAccountId) : ''),
       exportKind,
       queryProjectId: queryProjectId.trim() || null,
       datasetLocation: datasetLocation.trim() || null,
@@ -191,7 +198,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
         />
         <Field
           label="Dataset"
-          hint="The BigQuery dataset the billing export writes to."
+          hint="The managed FOCUS export creates gcp_billing_immutable_ followed by the billing account ID and location. For a view, the dataset that holds it."
           required
           autoComplete="off"
           spellCheck={false}
@@ -201,8 +208,13 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
         />
         <Field
           label="Table or view"
-          hint="The FOCUS export table, or the FOCUS view you made."
-          required
+          hint={
+            exportKind === 'focus_export'
+              ? 'Leave empty for the table Google names gcp_billing_export_focus_ followed by the billing account ID.'
+              : 'The FOCUS view you saved.'
+          }
+          placeholder={exportKind === 'focus_export' ? focusTableName(billingAccountId) : undefined}
+          required={exportKind !== 'focus_export'}
           autoComplete="off"
           spellCheck={false}
           value={exportTableId}
@@ -307,7 +319,7 @@ function GrantAccess({
       </h1>
       <p className="mt-1 text-sm text-secondary">
         Run these commands in Cloud Shell, or in a terminal signed in to Google Cloud. The first adds a label that proves
-        the dataset is yours.
+        the dataset is yours. For a view, label every dataset it reads too.
       </p>
       {!setup.enabled && (
         <div className="mt-4">

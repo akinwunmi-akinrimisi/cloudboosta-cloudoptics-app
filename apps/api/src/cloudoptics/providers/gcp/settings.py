@@ -39,6 +39,11 @@ class GcpSettings(BaseSettings):
     #: Projects scanned for resources and recommendations per connection at most.
     max_projects: int = 100
     http_timeout_seconds: float = 60.0
+    #: Transient Google errors (429, 5xx, BigQuery's ``rateLimitExceeded`` and
+    #: ``backendError``) are retried this many times, with truncated exponential backoff
+    #: from ``retry_base_seconds`` (AIP-194; BigQuery's quota troubleshooting page).
+    retries: int = 3
+    retry_base_seconds: float = 1.0
 
     sts_url: str = "https://sts.googleapis.com/v1/token"
     iamcredentials_url: str = "https://iamcredentials.googleapis.com/v1"

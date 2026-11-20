@@ -3,7 +3,8 @@
 Unit of work: (connection, billing period). BigQuery does the aggregation: one query per
 period groups the FOCUS rows to the ``cost_daily`` grain (day x project x service x region x
 SKU x charge category x tags), so what Cloudoptics reads is small whatever the bill's size.
-Every query is filtered on ``BillingPeriodStart`` and capped by ``maximumBytesBilled``; it runs
+Every query is filtered on ``BillingPeriodStart`` (the invoice month) and capped by
+``maximumBytesBilled``; it runs
 in the connection's query project, which pays for it (BigQuery on-demand pricing; the first
 TiB a month is free, and a month of grouped FOCUS rows is usually a few MB).
 
@@ -11,6 +12,17 @@ The result's SHA-256 is the period's version. Google rewrites the export several
 and adjusts a month until its invoice closes, so the current and the previous month are read
 at every poll; a version already loaded is skipped, and a new one replaces the period's rows
 in one transaction (the same idempotent period replace as AWS's CUR loads).
+
+Google's managed FOCUS export (``gcp_billing_export_focus_<billing account>`` in the linked
+dataset ``gcp_billing_immutable_<billing account>_<location>``) has no ``Credit`` or
+``Purchase`` rows and no FOCUS ``Tags`` column: credits are inside ``BilledCost`` and
+``EffectiveCost`` (cost + credits) and itemised in ``x_Credits``; resource labels are
+``x_Labels``. The load reads ``Tags`` when a table has it (a FOCUS view) and ``x_Labels``
+otherwise.
+
+``BillingPeriodStart`` is a TIMESTAMP made from the invoice month, and Google does not say at
+which hour (Google's invoice months follow US Pacific time). Periods are therefore matched
+within a day of midnight UTC, which holds whichever way it is stored.
 
 Amounts are stored in the bill's own currency beside USD (migration 0043). Non-USD bills
 convert day by day with the FX service (a staff-set rate first, ADR-010), falling back to the
@@ -73,6 +85,8 @@ GROUPED = {
     "sku_id": ("SkuId", "SkuId"),
     "tags": ("Tags", "TO_JSON_STRING(Tags)"),
 }
+#: Read instead of a missing grouped column: Google's FOCUS export has labels, not Tags.
+FALLBACK = {"tags": ("x_Labels", "TO_JSON_STRING(x_Labels)")}
 
 DAILY_SQL = (
     "/* co:daily */ SELECT DATE(ChargePeriodStart) AS usage_date, "
@@ -80,18 +94,22 @@ DAILY_SQL = (
     "ServiceName AS service_name, ChargeCategory AS charge_category, "
     "BillingCurrency AS billing_currency, {grouped}, "
     "SUM(BilledCost) AS billed_cost, SUM(EffectiveCost) AS effective_cost, {optional}, "
-    "COUNT(*) AS line_items FROM `{table}` WHERE BillingPeriodStart = TIMESTAMP(@period) "
+    "COUNT(*) AS line_items FROM `{table}` "
+    "WHERE BillingPeriodStart >= TIMESTAMP_SUB(TIMESTAMP(@period), INTERVAL 1 DAY) "
+    "AND BillingPeriodStart < TIMESTAMP_ADD(TIMESTAMP(@period), INTERVAL 1 DAY) "
     "GROUP BY usage_date, billing_account_id, project_id, service_name, charge_category, "
     "billing_currency, {group_by}"
-)
+)  # The period: BillingPeriodStart within a day of midnight UTC (module doc).
 TOTALS_SQL = (
     "/* co:totals */ SELECT SubAccountId AS project_id, SUM(BilledCost) AS billed "
-    "FROM `{table}` WHERE BillingPeriodStart = TIMESTAMP(@period) GROUP BY project_id"
+    "FROM `{table}` WHERE BillingPeriodStart >= TIMESTAMP_SUB(TIMESTAMP(@period), INTERVAL 1 DAY) "
+    "AND BillingPeriodStart < TIMESTAMP_ADD(TIMESTAMP(@period), INTERVAL 1 DAY) "
+    "GROUP BY project_id"
 )
 PROJECTS_SQL = (
     "/* co:projects */ SELECT SubAccountId AS project_id, {name} AS name FROM `{table}` "
-    "WHERE BillingPeriodStart >= TIMESTAMP(@since) AND SubAccountId IS NOT NULL "
-    "GROUP BY project_id LIMIT 2000"
+    "WHERE BillingPeriodStart >= TIMESTAMP_SUB(TIMESTAMP(@since), INTERVAL 1 DAY) "
+    "AND SubAccountId IS NOT NULL GROUP BY project_id LIMIT 2000"
 )
 
 LOADED_SQL = text(
@@ -175,9 +193,18 @@ def periods_to_read(today: date, loaded: set[date], backfill: int) -> list[date]
     return [p for p in window if p in recent or p not in loaded]
 
 
+def _grouped(alias: str, col: str, expr: str, columns: set[str]) -> str:
+    if col in columns:
+        return expr
+    fallback = FALLBACK.get(alias)
+    if fallback and fallback[0] in columns:
+        return fallback[1]
+    return "CAST(NULL AS STRING)"
+
+
 def daily_sql(gs: GcpSettingsRow, columns: set[str]) -> str:
     grouped = [
-        f"{expr if col in columns else 'CAST(NULL AS STRING)'} AS {alias}"
+        f"{_grouped(alias, col, expr, columns)} AS {alias}"
         for alias, (col, expr) in GROUPED.items()
     ]
     optional = [
@@ -199,8 +226,14 @@ def version_of(rows: list[dict[str, Any]]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:20]
 
 
+def _kv(item: dict[str, Any], name: str) -> Any:
+    return item.get(name, item.get(name.capitalize()))
+
+
 def parse_tags(raw: Any) -> list[tuple[str, str]]:
-    """FOCUS ``Tags`` as BigQuery's JSON: an object, or a list of key/value records."""
+    """FOCUS ``Tags`` as BigQuery's JSON: an object, or a list of key/value records
+    (``x_Labels`` is ``[{"Key": ..., "Value": ...}]``; the detailed export's ``labels`` are
+    lower case)."""
     if raw in (None, "", "null"):
         return []
     value = json.loads(raw) if isinstance(raw, str) else raw
@@ -210,9 +243,9 @@ def parse_tags(raw: Any) -> list[tuple[str, str]]:
         return [(str(k), "" if v is None else str(v)) for k, v in value.items()]
     if isinstance(value, list):
         return [
-            (str(i.get("key")), "" if i.get("value") is None else str(i.get("value")))
+            (str(_kv(i, "key")), "" if _kv(i, "value") is None else str(_kv(i, "value")))
             for i in value
-            if isinstance(i, dict) and i.get("key") is not None
+            if isinstance(i, dict) and _kv(i, "key") is not None
         ]
     return []
 

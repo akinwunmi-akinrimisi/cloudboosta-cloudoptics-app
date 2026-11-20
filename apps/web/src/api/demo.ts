@@ -846,7 +846,7 @@ function demoGcpCommands(s: GcpSettings, serviceAccount: string, labelValue: str
   const member = `serviceAccount:${serviceAccount}`
   const location = s.datasetLocation ? ` --location=${s.datasetLocation}` : ''
   const grant = `GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`${s.exportProjectId}.${s.exportDatasetId}\` TO "${member}"`
-  const roles = 'roles/compute.viewer roles/monitoring.viewer roles/recommender.viewer roles/cloudsql.viewer'
+  const roles = 'roles/compute.viewer roles/monitoring.viewer roles/recommender.computeViewer roles/recommender.cloudsqlViewer roles/cloudsql.viewer'
   return [
     {
       id: 'label',
@@ -1746,7 +1746,7 @@ export class DemoApi implements Api {
         `Choose Edit details, add the label cloudoptics with the value ${gcp.labelValue}, and save.`,
         `Choose Sharing, then Permissions, and add ${sa} with the role BigQuery Data Viewer.`,
         `In IAM for project ${s.queryProjectId}, grant ${sa} the role BigQuery Job User.`,
-        'Optional, for resources and recommendations: in each project grant it Compute Viewer, Monitoring Viewer, Recommender Viewer and Cloud SQL Viewer.',
+        'Optional, for resources and recommendations: in each project grant it Compute Viewer, Monitoring Viewer, Compute Recommender Viewer, Cloud SQL Recommender Viewer and Cloud SQL Viewer.',
       ],
       enabled: true,
     }

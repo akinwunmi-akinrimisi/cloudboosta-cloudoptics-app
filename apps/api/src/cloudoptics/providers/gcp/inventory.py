@@ -41,19 +41,23 @@ PROJECT_ID = re.compile(r"[a-z][a-z0-9-]{4,28}[a-z0-9]")
 RESOURCE_TYPES = frozenset(
     {"gce_instance", "gce_disk", "gce_address", "gce_snapshot", "cloudsql_instance"}
 )
-#: recommender -> (location kind, resource type it is about)
-RECOMMENDERS: dict[str, tuple[str, str]] = {
-    "google.compute.instance.IdleResourceRecommender": ("zone", "gce_instance"),
-    "google.compute.instance.MachineTypeRecommender": ("zone", "gce_instance"),
-    "google.compute.disk.IdleResourceRecommender": ("zone", "gce_disk"),
-    "google.compute.address.IdleResourceRecommender": ("region", "gce_address"),
-    "google.cloudsql.instance.IdleRecommender": ("region", "cloudsql_instance"),
-    "google.cloudsql.instance.OverprovisionedRecommender": ("region", "cloudsql_instance"),
+#: recommender -> (location kinds, resource type it is about). Google's guides: VMs and
+#: machine types by zone; disks by zone or region (regional disks); IP addresses by region,
+#: and ``global`` for global addresses; Cloud SQL by region.
+RECOMMENDERS: dict[str, tuple[tuple[str, ...], str]] = {
+    "google.compute.instance.IdleResourceRecommender": (("zone",), "gce_instance"),
+    "google.compute.instance.MachineTypeRecommender": (("zone",), "gce_instance"),
+    "google.compute.disk.IdleResourceRecommender": (("zone", "region"), "gce_disk"),
+    "google.compute.address.IdleResourceRecommender": (("region", "global"), "gce_address"),
+    "google.cloudsql.instance.IdleRecommender": (("region",), "cloudsql_instance"),
+    "google.cloudsql.instance.OverprovisionedRecommender": (("region",), "cloudsql_instance"),
 }
 METRIC_DAYS = 15
+#: resource type -> (metric, monitored resource type). Both are GAUGE DOUBLE fractions of
+#: the allocated CPU (0.0-1.0, may exceed 1.0), sampled every 60 s.
 CPU_METRICS = {
-    "gce_instance": "compute.googleapis.com/instance/cpu/utilization",
-    "cloudsql_instance": "cloudsql.googleapis.com/database/cpu/utilization",
+    "gce_instance": ("compute.googleapis.com/instance/cpu/utilization", "gce_instance"),
+    "cloudsql_instance": ("cloudsql.googleapis.com/database/cpu/utilization", "cloudsql_database"),
 }
 DAYS_PER_MONTH = Decimal("30.4167")
 
@@ -249,7 +253,11 @@ def money(m: dict[str, Any] | None) -> Decimal:
     return Decimal(str(m.get("units") or 0)) + Decimal(int(m.get("nanos") or 0)) / Decimal(10**9)
 
 
-def _seconds(duration: str | None) -> Decimal:
+def _seconds(duration: Any) -> Decimal:
+    """A ``google-duration`` (``"2592000s"`` in REST JSON; ``{"seconds": ...}`` as gcloud
+    prints it) in seconds; 30 days when absent."""
+    if isinstance(duration, dict):
+        duration = f"{duration.get('seconds') or 2592000}s"
     try:
         return Decimal(str(duration or "2592000s").rstrip("s"))
     except ArithmeticError:
@@ -257,8 +265,9 @@ def _seconds(duration: str | None) -> Decimal:
 
 
 def recommendation_summary(rec: dict[str, Any], recommender: str) -> dict[str, Any]:
-    """What a rule needs from one Recommender recommendation: monthly savings in the bill's
-    currency, and the machine type or tier it suggests."""
+    """What a rule needs from one Recommender recommendation: monthly savings in the currency
+    of ``costProjection.cost`` (negative cost is a saving), and the machine type or tier it
+    suggests."""
     cost = ((rec.get("primaryImpact") or {}).get("costProjection")) or {}
     seconds = _seconds(cost.get("duration"))
     amount = money(cost.get("cost"))
@@ -281,23 +290,34 @@ def recommendation_summary(rec: dict[str, Any], recommender: str) -> dict[str, A
     }
 
 
-def target_name(rec: dict[str, Any]) -> str | None:
-    """The resource a recommendation is about (its overview, else its first operation)."""
+def target_names(rec: dict[str, Any]) -> list[str]:
+    """The resources a recommendation may be about, most likely first: its overview, then the
+    resources its operations change. An ``add`` creates something new (the idle-disk
+    recommendation's first operation adds a snapshot), so it comes last."""
     content = rec.get("content") or {}
-    name = (content.get("overview") or {}).get("resourceName")
-    for group in content.get("operationGroups") or []:
-        for op in group.get("operations") or []:
-            name = name or op.get("resource")
-    return short(str(name)) if name else None
+    names: list[str] = []
+    overview = (content.get("overview") or {}).get("resourceName")
+    if overview:
+        names.append(str(overview))
+    ops = [op for g in content.get("operationGroups") or [] for op in g.get("operations") or []]
+    ops.sort(key=lambda op: str(op.get("action", "")).lower() == "add")
+    names += [str(op["resource"]) for op in ops if op.get("resource")]
+    return [n for n in (short(x) for x in names) if n]
+
+
+def target_name(rec: dict[str, Any]) -> str | None:
+    names = target_names(rec)
+    return names[0] if names else None
 
 
 async def fetch_recommendations(api: GcpApi, project: str, records: list[Record]) -> list[str]:
     """Attach Recommender's active recommendations to the matching records; errors per
     recommender and location (a disabled API or a missing role is not fatal)."""
     by_key: dict[tuple[str, str | None], Record] = {(r.resource_type, r.name): r for r in records}
-    locations: dict[str, set[str]] = {"zone": set(), "region": set()}
+    locations: dict[str, set[str]] = {"zone": set(), "region": set(), "global": set()}
     for r in records:
         if r.location == "global":
+            locations["global"].add("global")
             continue
         zonal = re.fullmatch(r".+-[a-z]", r.location) is not None
         locations["zone" if zonal else "region"].add(r.location)
@@ -305,30 +325,34 @@ async def fetch_recommendations(api: GcpApi, project: str, records: list[Record]
             locations["region"].add(region_of(r.location))
     errors: list[str] = []
     s = api.settings
-    for recommender, (kind, rtype) in RECOMMENDERS.items():
-        if not any(r.resource_type == rtype for r in records):
+    for recommender, (kinds, rtype) in RECOMMENDERS.items():
+        wanted = {r.location for r in records if r.resource_type == rtype}
+        if not wanted:
             continue
-        for location in sorted(locations[kind]):
+        where = sorted({loc for k in kinds for loc in locations[k]})
+        # Only where this type has resources (a region also covers its zones' regional ones).
+        where = [loc for loc in where if loc in wanted or region_of(loc) in wanted]
+        for location in where:
             url = (
                 f"{s.recommender_url}/projects/{project}/locations/{location}/recommenders/"
                 f"{recommender}/recommendations"
             )
             try:
                 async for rec in api.pages(
-                    url, "recommendations", {"filter": "stateInfo.state=ACTIVE"}
+                    url, "recommendations", {"filter": "stateInfo.state = ACTIVE"}
                 ):
-                    name = target_name(rec)
-                    target = by_key.get((rtype, name)) if name else None
+                    target = next(
+                        (by_key[(rtype, n)] for n in target_names(rec) if (rtype, n) in by_key),
+                        None,
+                    )
                     if target is not None:
                         target.config.setdefault("recommendations", []).append(
                             recommendation_summary(rec, recommender)
                         )
             except GcpError as exc:
-                if not (exc.api_disabled or exc.denied):
-                    errors.append(
-                        f"{project} {location} {recommender.rsplit('.', 2)[-2]}: {exc.code}"
-                    )
-                break  # the same answer for every location of this recommender
+                if exc.api_disabled or exc.denied:
+                    break  # the same answer for every location of this recommender
+                errors.append(f"{project} {location} {recommender.rsplit('.', 2)[-2]}: {exc.code}")
     return errors
 
 
@@ -515,11 +539,12 @@ async def pull(tenant_id: uuid.UUID, connection_id: uuid.UUID, now: datetime | N
             for r in resources
             if r.resource_type == "cloudsql_instance"
         }
-        for rtype, metric in CPU_METRICS.items():
+        for rtype, (metric, monitored) in CPU_METRICS.items():
             if not any(k[0] == rtype for k in ids):
                 continue
             query = {
-                "filter": f'metric.type="{metric}"',
+                "filter": f'metric.type = "{metric}" AND resource.type = "{monitored}"',
+                "view": "FULL",
                 "interval.startTime": start.isoformat().replace("+00:00", "Z"),
                 "interval.endTime": end.isoformat().replace("+00:00", "Z"),
                 "aggregation.alignmentPeriod": "3600s",
