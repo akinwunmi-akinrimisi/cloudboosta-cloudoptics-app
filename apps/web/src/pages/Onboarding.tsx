@@ -26,14 +26,14 @@ import {
 import type { FormEvent, ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 
-import type { Connection, IntentSetup } from '../api/types'
+import type { Connection, IntentSetup, Provider } from '../api/types'
 import { ACCESS_STACK_NAME, ApiError } from '../api/types'
 import { rememberTenant, useApi, useCurrentTenantId, useMe } from '../app/context'
 import type { NextStep } from '../components/onboarding'
 import { AccessPanel, Checks, CopyRow, Disclosure, Flow, Kicker, Lede, Next, Todo, TodoItem } from '../components/onboarding'
 import { PermissionPanel, SiteLinks } from '../components/permissions'
 import { Alert, Button, Field, Logo, StatusPill, cx } from '../components/ui'
-import { connectionLabel, providerOf } from '../lib/providers'
+import { PROVIDER_LABEL, connectionLabel, providerOf } from '../lib/providers'
 import { DEMO_URL, HOW_IT_WORKS_STACK, absoluteSiteUrl } from '../lib/site'
 import { GcpConnect } from './connect/GcpConnect'
 import { CONNECT_PROVIDERS, DEFAULT_CONNECT } from './connect/providers'
@@ -60,7 +60,23 @@ const POLL_MS = 5000
 // After this long with no word from the stack, say so and offer the link again.
 const SLOW_MS = 10 * 60 * 1000
 
-function Progress({ step }: { step: number }) {
+/** The second step's name follows the cloud being connected: "Connect Azure". */
+export function connectStepLabel(provider: Provider): string {
+  return `Connect ${PROVIDER_LABEL[provider]}`
+}
+
+function StepName({ index, provider }: { index: number; provider: Provider }) {
+  if (index !== 1 || provider === 'aws') return <>{STEPS[index]}</>
+  // Below 360 px a long cloud name does not fit a third of the bar: "Connect cloud" there.
+  return (
+    <>
+      <span className="min-[360px]:hidden">Connect cloud</span>
+      <span className="hidden min-[360px]:inline">{connectStepLabel(provider)}</span>
+    </>
+  )
+}
+
+function Progress({ step, provider }: { step: number; provider: Provider }) {
   return (
     <ol className="ed-progress" aria-label="Setup progress">
       {STEPS.map((label, i) => (
@@ -69,7 +85,7 @@ function Progress({ step }: { step: number }) {
             {i < step ? <Check size={22} /> : i + 1}
           </span>
           <span>
-            {label}
+            <StepName index={i} provider={provider} />
             {i < step && <span className="sr-only">, done</span>}
           </span>
         </li>
@@ -643,8 +659,17 @@ function ConnectExisting({
 }
 
 /** A new connection: "Which cloud?", then that provider's connect step (AWS by default). */
-function ConnectStep({ tenantId, onConnected }: { tenantId: string; onConnected: (connectionId: string) => void }) {
-  const [providerId, setProviderId] = useState<string>('aws')
+function ConnectStep({
+  tenantId,
+  onConnected,
+  providerId,
+  onProvider,
+}: {
+  tenantId: string
+  onConnected: (connectionId: string) => void
+  providerId: Provider
+  onProvider: (provider: Provider) => void
+}) {
   const Selected = (CONNECT_PROVIDERS.find((p) => p.id === providerId) ?? DEFAULT_CONNECT).Component
   return (
     <>
@@ -658,7 +683,7 @@ function ConnectStep({ tenantId, onConnected }: { tenantId: string; onConnected:
                 name="connect-provider"
                 value={p.id}
                 checked={p.id === providerId}
-                onChange={() => setProviderId(p.id)}
+                onChange={() => onProvider(p.id)}
               />
               <b className="min-w-0">{p.label}</b>
             </label>
@@ -760,6 +785,16 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
   // Already in a workspace: this is "New workspace" from the menu (the route guard sees to it).
   // Fixed on arrival, so creating the first workspace does not flip the heading.
   const [another] = useState(() => !!me?.memberships.length)
+  // The cloud being connected: picked on the connect step, or the existing connection's.
+  const [picked, setPicked] = useState<Provider>('aws')
+  const existing = useQuery({
+    queryKey: ['connections', tid],
+    queryFn: () => api.listConnections(tid as string),
+    enabled: Boolean(connectionId && tid),
+  })
+  const provider = connectionId
+    ? providerOf(existing.data?.find((c) => c.id === connectionId)?.provider)
+    : picked
   const workspaceName = step > 0 ? me?.memberships.find((m) => m.tenantId === tid)?.tenantName : undefined
 
   const createWorkspace = (e: FormEvent) => {
@@ -803,7 +838,7 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
         </div>
       </header>
       <main className={cx('ed-main', step === 0 && 'narrow')}>
-        <Progress step={step} />
+        <Progress step={step} provider={provider} />
 
         {step === 0 && (
           <section>
@@ -859,7 +894,9 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
           </section>
         )}
 
-        {step === 1 && tid && !connectionId && <ConnectStep tenantId={tid} onConnected={connected} />}
+        {step === 1 && tid && !connectionId && (
+          <ConnectStep tenantId={tid} onConnected={connected} providerId={picked} onProvider={setPicked} />
+        )}
         {step === 1 && tid && connectionId && (
           <ConnectAgain tenantId={tid} connectionId={connectionId} onConnected={() => connected(connectionId)} />
         )}
