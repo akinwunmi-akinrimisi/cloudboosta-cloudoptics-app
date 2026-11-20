@@ -1390,6 +1390,9 @@ export class DemoApi implements Api {
     }
     conn.lastValidatedAt = new Date().toISOString()
     this.save()
+    return structuredClone(conn)
+  }
+
   async createAzureConnection(tenantId: string, body: AzureConnectionCreate): Promise<AzureConnectionSetup> {
     await this.tick()
     this.tenant(tenantId)
