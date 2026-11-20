@@ -648,6 +648,8 @@ Who pays: queries run in the customer's query project at BigQuery on-demand pric
 
 Symptoms, fixes and owner steps are in `apps/api/src/cloudoptics/providers/digitalocean/README.md`. In short: a `failed` connection whose "Read the team" check says the token was not accepted means the customer deleted the token or it expired, and they use **Replace token…**; a `degraded` one is missing a read scope (costs still load). Never ask a customer for their token or print one: the checks say what it can do.
 
+**Signed-in connections ("Connect DigitalOcean", OAuth, since 20 Nov 2026).** The Connections page shows **Reconnect** instead of Replace token. Tokens are checked hourly and renew about every 23 days (`connectors:connections.refresh_tokens`, one connection at a time under a row lock). A `failed` connection with the check "Renew access" (`last_error.code = refresh_refused`) means DigitalOcean refused the refresh token, usually because the customer removed Cloudoptics in DigitalOcean: the admins were emailed, and an admin uses **Reconnect** (history stays). A renewal job retrying with `server_error` or `network:…` is DigitalOcean's token endpoint being down; nothing changes until it answers. Sign-in errors at onboarding: "expired or was already used" (click again; states are single-use, 10 minutes, per admin and workspace) and `oauth_refused` (check `CLOUDOPTICS_DO_OAUTH_CLIENT_ID` / `_SECRET` and the registered callback URL `https://cloudoptics.cloudboosta.com/app/connect/digitalocean/callback`). Setup, the owner steps and the one-hour scope test: the same README. Never print an access or refresh token.
+
 ### RB-23: Azure connections (ADR-020)
 
 **Set up (once per environment):** the owner steps in ADR-020 (the Cloudoptics app, the deployer

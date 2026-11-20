@@ -87,6 +87,8 @@ TABLES: dict[str, TenantTable] = {
     # Where a Google Cloud connection's bill is (migration 0044, ADR-019).
     "gcp_connection": TenantTable("connection_id"),
     "azure_connection": TenantTable("connection_id"),  # ADR-020
+    # Short-lived DigitalOcean sign-in states (ADR-021, migration 0048): workspace-wide.
+    "oauth_state": TenantTable(None),
     "connection_intent": TenantTable("connection_id"),
     "sync_run": TenantTable("connection_id"),
     "ingest_batch": TenantTable("connection_id"),

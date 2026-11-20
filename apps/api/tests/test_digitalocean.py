@@ -291,6 +291,40 @@ def test_inspect_refused_token(fake_do: FakeDigitalOcean) -> None:
 # --- through the API ----------------------------------------------------------------------
 
 
+async def assert_secrets_kept_secret(
+    client: AsyncClient,
+    owner_sql: Sql,
+    caplog: pytest.LogCaptureFixture,
+    tenant: str,
+    headers: dict[str, str],
+    cid: str,
+    secrets: list[str],
+) -> None:
+    """Each secret (a pasted token, or a sign-in's access and refresh tokens) is only in the
+    ciphertext: not in the audit log, sync runs, the connection row, the sign-in states, any
+    log line (captured at DEBUG) or any connection response."""
+    stored = owner_sql("SELECT external_id_enc FROM cloud_connection WHERE id = %s", cid)[0][0]
+    everything = owner_sql(
+        "SELECT coalesce(string_agg(t::text, ''), '') FROM (SELECT row_to_json(a) t FROM "
+        "audit_log a WHERE tenant_id = %s UNION ALL SELECT row_to_json(s) FROM sync_run s "
+        "WHERE tenant_id = %s UNION ALL SELECT row_to_json(c) FROM cloud_connection c "
+        "WHERE tenant_id = %s UNION ALL SELECT row_to_json(o) FROM oauth_state o "
+        "WHERE tenant_id = %s) x",
+        tenant, tenant, tenant, tenant,
+    )[0][0]  # fmt: skip
+    responses = [
+        (await client.get(f"/v1/tenants/{tenant}/connections{path}", headers=headers)).text
+        for path in ("", f"/{cid}")
+    ]
+    for secret in secrets:
+        if stored is not None:
+            assert secret.encode() not in bytes(stored)
+        for part in (secret, secret[7:]):
+            assert part not in everything
+            assert part not in caplog.text
+            assert all(part not in text for text in responses)
+
+
 async def test_connect_loads_costs_scans_and_recommends(
     client: AsyncClient,
     login: Any,
@@ -368,20 +402,7 @@ async def test_connect_loads_costs_scans_and_recommends(
     )
 
     # The token is nowhere but the ciphertext.
-    stored = owner_sql("SELECT external_id_enc FROM cloud_connection WHERE id = %s", cid)[0][0]
-    assert token.encode() not in bytes(stored)
-    everything = owner_sql(
-        "SELECT coalesce(string_agg(t::text, ''), '') FROM (SELECT row_to_json(a) t FROM "
-        "audit_log a WHERE tenant_id = %s UNION ALL SELECT row_to_json(s) FROM sync_run s "
-        "WHERE tenant_id = %s UNION ALL SELECT row_to_json(c) FROM cloud_connection c "
-        "WHERE tenant_id = %s) x",
-        tenant, tenant, tenant,
-    )[0][0]  # fmt: skip
-    assert token not in everything and token[7:] not in everything
-    assert token not in caplog.text and token[7:] not in caplog.text
-    for path in ("", f"/{cid}"):
-        got = await client.get(f"/v1/tenants/{tenant}/connections{path}", headers=headers)
-        assert token not in got.text
+    await assert_secrets_kept_secret(client, owner_sql, caplog, tenant, headers, cid, [token])
     actions = [r[0] for r in owner_sql(
         "SELECT action FROM audit_log WHERE tenant_id = %s ORDER BY id", tenant)]  # fmt: skip
     assert "connection.created" in actions

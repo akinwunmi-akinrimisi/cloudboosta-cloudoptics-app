@@ -192,3 +192,21 @@ def test_the_deleted_broker_users_key_is_taken_off_the_app(
     provision.apply_runtime_config(spec, current)
     for name in ("api", "worker"):
         assert not {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} & set(envs(spec, name))
+
+
+def test_digitalocean_oauth_client_is_plain_and_its_secret_masked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADR-021: the "Connect DigitalOcean" OAuth app's client ID and secret."""
+    for var in (*provision.RUNTIME_PLAIN.values(), *provision.RUNTIME_SECRET.values()):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("CLOUDOPTICS_DO_OAUTH_CLIENT_ID", "do-client")
+    monkeypatch.setenv("CLOUDOPTICS_DO_OAUTH_CLIENT_SECRET", "do-secret")
+    spec = app_spec()
+    provision.apply_runtime_config(spec, None)
+    for name in ("api", "worker"):
+        e = envs(spec, name)
+        assert e["CLOUDOPTICS_DO_OAUTH_CLIENT_ID"]["value"] == "do-client"
+        assert "type" not in e["CLOUDOPTICS_DO_OAUTH_CLIENT_ID"]
+        assert e["CLOUDOPTICS_DO_OAUTH_CLIENT_SECRET"]["type"] == "SECRET"
+    assert "CLOUDOPTICS_DO_OAUTH_CLIENT_SECRET" not in envs(spec, "migrate")

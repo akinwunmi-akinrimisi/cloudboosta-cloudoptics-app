@@ -408,8 +408,10 @@ async def test_api_responses_name_the_provider(client: AsyncClient, login, owner
     )
     listed = (await client.get(f"/v1/tenants/{tenant}/connections", headers=headers)).json()
     assert [(c["awsAccountId"], c["provider"]) for c in listed] == [(account, "aws")]
-    # The existing keys are untouched and keep their order; provider comes last.
-    assert list(listed[0])[-1] == "provider"
+    # The existing keys are untouched and keep their order; provider comes after them, then
+    # how the secret was obtained (ADR-021: "oauth" for a DigitalOcean sign-in).
+    assert list(listed[0])[-2:] == ["provider", "credentialType"]
+    assert listed[0]["credentialType"] == "static"
     one = (await client.get(f"/v1/tenants/{tenant}/connections/{conn}", headers=headers)).json()
     assert one["provider"] == "aws"
     accounts = (await client.get(f"/v1/tenants/{tenant}/accounts", headers=headers)).json()

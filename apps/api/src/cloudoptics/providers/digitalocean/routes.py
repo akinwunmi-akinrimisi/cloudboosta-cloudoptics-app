@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import Field, SecretStr
@@ -24,13 +25,18 @@ from starlette.concurrency import run_in_threadpool
 from cloudoptics.audit import log as audit
 from cloudoptics.connectors.crypto import get_encryptor
 from cloudoptics.connectors.routes import Connection, _to_model
-from cloudoptics.connectors.service import ConnectionNotFoundError, get_connection
+from cloudoptics.connectors.service import (
+    ConnectionNotFoundError,
+    get_connection,
+    read_external_id,
+)
 from cloudoptics.identity.deps import AdminAccess, Session
 from cloudoptics.platform.api import ApiModel, ApiProblem, user_actor
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.providers.digitalocean import connect
+from cloudoptics.providers.digitalocean import oauth as oauth_flow
 from cloudoptics.providers.digitalocean.client import valid_token
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/connections", tags=["connections"])
@@ -47,18 +53,30 @@ FIND_TEAM = text(
 )
 INSERT_CONNECTION = text(
     "INSERT INTO cloud_connection (id, tenant_id, provider, provider_account_id, account_type, "
-    "role_arn, external_id_enc, stack_name, create_cur_export) VALUES (:id, :t, "
-    "'digitalocean', :team, 'standalone', '', :enc, :stack, false)"
+    "role_arn, external_id_enc, stack_name, create_cur_export, credential_type, "
+    "token_expires_at) VALUES (:id, :t, 'digitalocean', :team, 'standalone', '', :enc, :stack, "
+    "false, :kind, :exp)"
 )
 RECONNECT = text(
     "UPDATE cloud_connection SET status = 'pending', health = NULL, external_id_enc = :enc, "
+    "credential_type = :kind, token_expires_at = :exp, "
     "permission_checks = '[]', last_error = NULL, last_validated_at = NULL, "
     "account_verified_at = NULL, created_by = NULL WHERE id = :id"
 )
 # In the request's own transaction: it holds the signed-in user's row (sign-in updates it),
 # which the connection's foreign key would otherwise wait for in the connect transaction.
 SET_CREATED_BY = text("UPDATE cloud_connection SET created_by = :by WHERE id = :id")
-SET_TOKEN = text("UPDATE cloud_connection SET external_id_enc = :enc WHERE id = :id")
+# A pasted token replaces a sign-in too (the old tokens are revoked).
+SET_TOKEN = text(
+    "UPDATE cloud_connection SET external_id_enc = :enc, credential_type = 'static', "
+    "token_expires_at = NULL WHERE id = :id"
+)
+
+OAUTH_RETRY = "Click Connect DigitalOcean and approve read-only access."
+OAUTH_WRITE_MESSAGE = (
+    "This sign-in gave Cloudoptics write access. Cloudoptics only reads: click Connect "
+    "DigitalOcean again and approve read access only. Nothing was kept."
+)
 
 
 class TokenBody(ApiModel):
@@ -119,20 +137,42 @@ async def connect_digitalocean(
     body: TokenBody, request: Request, access: AdminAccess, session: Session
 ) -> Connection:
     token, result = await _inspect(body)
+    return await _save(request, access, session, secret=token, result=result, oauth=None)
+
+
+async def _save(
+    request: Request,
+    access: AdminAccess,
+    session: Session,
+    *,
+    secret: str,
+    result: connect.Inspection,
+    oauth: oauth_flow.Tokens | None,
+) -> Connection:
+    """Store a checked secret as a new connection or a reconnected one. Signing in again to
+    a team this workspace already reads (``oauth``) gives the same connection new tokens; a
+    pasted token for such a team is refused (Replace token is the way)."""
     team = str(result.team_uuid)
     actor = user_actor(request, access.user.id)
+    kind = "oauth" if oauth else "static"
+    expires = oauth.expires_at if oauth else None
+    old_secret: str | None = None
     # Its own transaction, committed before the first loads run (in their own sessions).
     async with get_sessionmaker()() as s, s.begin():
         await scope(s, tenant_id=access.tenant_id, user_id=access.user.id)
         existing = (await s.execute(FIND_TEAM, {"team": team})).one_or_none()
         if existing is not None and existing.status != "disconnected":
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "This DigitalOcean team is already connected to this workspace. Use Replace "
-                "token on the Connections page to change its token.",
-            )
-        enc = get_encryptor().encrypt(token, access.tenant_id)
-        del token
+            if oauth is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "This DigitalOcean team is already connected to this workspace. Use "
+                    "Replace token on the Connections page to change its token.",
+                )
+            old = await get_connection(s, existing.id)
+            if old.credential_type == "oauth" and old.external_id_enc is not None:
+                old_secret = await read_external_id(s, old, access.tenant_id)
+        enc = get_encryptor().encrypt(secret, access.tenant_id)
+        del secret
         if existing is None:
             connection_id, action = uuid7(), "connection.created"
             await s.execute(
@@ -143,11 +183,15 @@ async def connect_digitalocean(
                     "team": team,
                     "enc": enc,
                     "stack": STACK_NAME,
+                    "kind": kind,
+                    "exp": expires,
                 },
             )
         else:
             connection_id, action = existing.id, "connection.reconnected"
-            await s.execute(RECONNECT, {"id": connection_id, "enc": enc})
+            await s.execute(
+                RECONNECT, {"id": connection_id, "enc": enc, "kind": kind, "exp": expires}
+            )
         conn = await get_connection(s, connection_id)
         stored = await connect.store(s, access.tenant_id, conn, result, actor, _now())
         if stored is not None and (stored.error or {}).get("code") == "AccountInUse":
@@ -156,9 +200,16 @@ async def connect_digitalocean(
                 "This DigitalOcean team is already connected to another Cloudoptics workspace. "
                 "Disconnect it there first, or ask that workspace's admin to invite you.",
             )
+    if old_secret is not None:
+        # The tokens just replaced are no longer needed by anyone.
+        await run_in_threadpool(oauth_flow.revoke, oauth_flow.access_token(old_secret))
+        del old_secret
     await _follow_up(access.tenant_id, connection_id)
     await session.execute(SET_CREATED_BY, {"id": connection_id, "by": access.user.id})
     # Written last: the inline loads append to the audit chain too (verification).
+    after: dict[str, Any] = {"provider": "digitalocean", "accountId": team, "status": result.status}
+    if oauth:
+        after |= {"method": "sign_in", "teamName": result.team_name, "scope": oauth.scope}
     await audit.record(
         session,
         tenant_id=access.tenant_id,
@@ -166,10 +217,103 @@ async def connect_digitalocean(
         action=action,
         target_type="cloud_connection",
         target_id=str(connection_id),
-        before={"status": "disconnected"} if action == "connection.reconnected" else None,
-        after={"provider": "digitalocean", "accountId": team, "status": result.status},
+        before={"status": existing.status} if existing is not None else None,
+        after=after,
     )
     return await _connection(access.tenant_id, connection_id)
+
+
+# --- signing in (OAuth) --------------------------------------------------------------------
+
+
+class OAuthConfig(ApiModel):
+    #: False until the OAuth app's client ID and secret are set: only the token paste is shown.
+    enabled: bool
+
+
+class OAuthStart(ApiModel):
+    authorize_url: str
+
+
+class OAuthCallback(ApiModel):
+    code: str = Field(min_length=1, max_length=512, pattern=r"^[A-Za-z0-9._~-]+$")
+    state: str = Field(min_length=20, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+
+
+def _not_configured() -> ApiProblem:
+    return ApiProblem(
+        status.HTTP_404_NOT_FOUND,
+        "oauth_not_configured",
+        "Signing in with DigitalOcean is not set up here. Use an API token instead.",
+    )
+
+
+@router.get("/digitalocean/oauth", response_model=OAuthConfig)
+async def oauth_config(access: AdminAccess) -> OAuthConfig:
+    return OAuthConfig(enabled=get_settings().do_oauth_enabled)
+
+
+@router.post(
+    "/digitalocean/oauth/start", response_model=OAuthStart, status_code=status.HTTP_201_CREATED
+)
+async def oauth_start(access: AdminAccess, session: Session) -> OAuthStart:
+    """A one-time sign-in link for this admin and workspace (10 minutes)."""
+    if not get_settings().do_oauth_enabled:
+        raise _not_configured()
+    url = await oauth_flow.start(session, access.tenant_id, access.user.id)
+    return OAuthStart(authorize_url=url)
+
+
+@router.post(
+    "/digitalocean/oauth/callback",
+    response_model=Connection,
+    status_code=status.HTTP_201_CREATED,
+)
+async def oauth_callback(
+    body: OAuthCallback, request: Request, access: AdminAccess, session: Session
+) -> Connection:
+    """DigitalOcean sent the browser back: check the state, trade the code for tokens, run
+    the same checks as a pasted token, then store the tokens encrypted."""
+    if not get_settings().do_oauth_enabled:
+        raise _not_configured()
+    try:
+        verifier = await oauth_flow.consume(access.tenant_id, access.user.id, body.state)
+    except oauth_flow.StateRefusedError:
+        raise ApiProblem(
+            status.HTTP_400_BAD_REQUEST,
+            "oauth_state",
+            "This sign-in has expired or was already used. Click Connect DigitalOcean again.",
+        ) from None
+    try:
+        tokens = await run_in_threadpool(oauth_flow.exchange, body.code, verifier)
+    except oauth_flow.OAuthError as exc:
+        raise _refuse(
+            "DigitalOcean did not complete the sign-in. Click Connect DigitalOcean again.",
+            "oauth_refused" if exc.refused else "oauth_unavailable",
+        ) from None
+    result = await run_in_threadpool(connect.inspect, tokens.access)
+    problem: ApiProblem | None = None
+    if result.can_write:
+        problem = _refuse(OAUTH_WRITE_MESSAGE, "token_can_write")
+    elif result.status == "failed":
+        failed = next((c for c in result.checks if c.status == "error"), None)
+        words = failed.message if failed else "DigitalOcean did not accept the sign-in."
+        problem = _refuse(f"{words} {OAUTH_RETRY}")
+    elif tokens.team_uuid and result.team_uuid != tokens.team_uuid:
+        problem = _refuse(f"DigitalOcean named two different teams. {OAUTH_RETRY}")
+    if problem is not None:
+        # Nothing is kept: give the access back at once.
+        await run_in_threadpool(oauth_flow.revoke, tokens.access)
+        raise problem
+    if tokens.team_name and not result.team_name:
+        result.team_name = tokens.team_name
+    try:
+        return await _save(
+            request, access, session, secret=oauth_flow.encode(tokens), result=result, oauth=tokens
+        )
+    except HTTPException:
+        await run_in_threadpool(oauth_flow.revoke, tokens.access)
+        raise
 
 
 @router.put("/{connection_id}/token", response_model=Connection)
@@ -200,6 +344,7 @@ async def replace_token(
             "connection reads, or connect the other team separately.",
         )
     actor = user_actor(request, access.user.id)
+    revoked = await oauth_flow.revoke_stored(session, access.tenant_id, conn)
     # Nothing runs in other sessions here, so the request's own transaction does it all.
     await session.execute(
         SET_TOKEN, {"id": connection_id, "enc": get_encryptor().encrypt(token, access.tenant_id)}
@@ -220,7 +365,8 @@ async def replace_token(
         action="connection.token_replaced",
         target_type="cloud_connection",
         target_id=str(connection_id),
-        after={"provider": "digitalocean", "status": result.status},
+        after={"provider": "digitalocean", "status": result.status}
+        | ({"signInRevoked": revoked} if revoked is not None else {}),
     )
     return _to_model(await get_connection(session, connection_id))
 

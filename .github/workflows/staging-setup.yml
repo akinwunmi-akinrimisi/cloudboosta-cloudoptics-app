@@ -157,6 +157,10 @@ jobs:
           # checks (WBS OPS-7). Each must be a member of the DigitalOcean team. A secret, so
           # the addresses are masked in this public repository's logs.
           ALERT_EMAILS: ${{ secrets.ALERT_EMAILS }}
+          # ADR-021: the "Connect DigitalOcean" OAuth app. The client ID may be a variable or a secret;
+          # the client secret must be a secret. Unset: onboarding offers only the token paste.
+          CLOUDOPTICS_DO_OAUTH_CLIENT_ID: ${{ vars.CLOUDOPTICS_DO_OAUTH_CLIENT_ID || secrets.CLOUDOPTICS_DO_OAUTH_CLIENT_ID }}
+          CLOUDOPTICS_DO_OAUTH_CLIENT_SECRET: ${{ secrets.CLOUDOPTICS_DO_OAUTH_CLIENT_SECRET }}
         run: uv run python infra/digitalocean/provision.py app
       - name: Wait for the deployment
         env:

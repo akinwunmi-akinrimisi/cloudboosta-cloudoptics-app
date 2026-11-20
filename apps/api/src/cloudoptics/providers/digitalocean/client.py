@@ -49,6 +49,11 @@ def set_transport(transport: httpx.BaseTransport | None) -> None:
     _transport = transport
 
 
+def get_transport() -> httpx.BaseTransport | None:
+    """The transport ``set_transport`` installed (the OAuth endpoints use it too)."""
+    return _transport
+
+
 def valid_token(token: str) -> bool:
     return TOKEN_PATTERN.fullmatch(token) is not None
 

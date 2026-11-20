@@ -31,14 +31,15 @@ SELECT_CONNECTION = text(
     "role_arn, stack_name, "
     "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
     "permission_checks, last_error, last_validated_at, created_at, external_id_enc, health, "
-    "stack_version, pending_stack FROM cloud_connection WHERE id = :c"
+    "stack_version, pending_stack, credential_type, token_expires_at FROM cloud_connection "
+    "WHERE id = :c"
 )
 LIST_CONNECTIONS = text(
     "SELECT id, tenant_id, provider, provider_account_id AS aws_account_id, account_type, "
     "role_arn, stack_name, "
     "create_cur_export, cur_bucket, cur_prefix, cur_region, cur_export_arn, status, "
-    "permission_checks, last_error, last_validated_at, created_at, stack_version "
-    "FROM cloud_connection ORDER BY created_at"
+    "permission_checks, last_error, last_validated_at, created_at, stack_version, "
+    "credential_type FROM cloud_connection ORDER BY created_at"
 )
 
 _session_factory: SessionFactory | None = None

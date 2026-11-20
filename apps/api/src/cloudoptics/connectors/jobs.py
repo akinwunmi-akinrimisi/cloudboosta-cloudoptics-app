@@ -191,6 +191,46 @@ async def health_check(timestamp: int) -> int:
     return len(rows)
 
 
+REFRESH_TASK = "connectors:connection.refresh_token"
+
+
+@blueprint.task(name="connection.refresh_token", queue="connections", retry=3)
+async def refresh_token(tenant_id: str, connection_id: str) -> str:
+    """Renew a DigitalOcean sign-in's tokens (ADR-021). Safe to run twice at once: the
+    connection row is locked for the exchange, and the second run finds it fresh."""
+    from cloudoptics.providers.digitalocean.oauth import refresh_connection
+
+    return await refresh_connection(uuid.UUID(tenant_id), uuid.UUID(connection_id))
+
+
+@blueprint.periodic(cron="29 * * * *")
+@blueprint.task(
+    name="connections.refresh_tokens", queue="connections", queueing_lock="connections.refresh"
+)
+async def refresh_tokens(timestamp: int) -> int:
+    """Hourly: queue a renewal for each signed-in connection whose access token expires
+    within ``do_oauth_refresh_days`` (30-day tokens, so about once every 23 days each)."""
+    from cloudoptics.platform.jobs import get_job_app
+    from cloudoptics.platform.settings import get_settings
+    from cloudoptics.providers.digitalocean.oauth import DUE_CONNECTIONS
+
+    async with get_sessionmaker()() as session, session.begin():
+        await scheduler_scope(session)
+        rows = (
+            await session.execute(DUE_CONNECTIONS, {"d": get_settings().do_oauth_refresh_days})
+        ).all()
+    app = get_job_app()
+    for tenant_id, connection_id in rows:
+        await defer_once(
+            app,
+            REFRESH_TASK,
+            f"refresh:{connection_id}",
+            tenant_id=str(tenant_id),
+            connection_id=str(connection_id),
+        )
+    return len(rows)
+
+
 @blueprint.task(name="accounts.discover", queue="connections", retry=2)
 async def discover(tenant_id: str, connection_id: str) -> str:
     accounts = await capability_for(tenant_id, connection_id, "accounts")

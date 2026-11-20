@@ -16,6 +16,7 @@ import type {
   CreditBalanceInput,
   CreditsRunway,
   DigestPreview,
+  DigitalOceanOAuthConfig,
   ExportJob,
   ExportRequest,
   MonthlyReport,
@@ -158,6 +159,8 @@ interface State {
   azure?: Record<string, { tenantId: string; conn: AzureConnection; code: string }>
   /** deletionId -> the deleted connection's provider (its audit entry names it, as the API's). */
   deletionProviders?: Record<string, Provider>
+  /** "Connect DigitalOcean" sign-ins in progress: state -> the workspace that started it. */
+  doSignIns?: Record<string, { tenantId: string }>
 }
 
 const DEMO_GRACE_DAYS = 7
@@ -1362,6 +1365,48 @@ export class DemoApi implements Api {
     if (!/^(do[po]_v1_)?[a-f0-9]{64}$/.test(token)) {
       throw new ApiError(422, 'This does not look like a DigitalOcean token. Copy the whole token: it starts with dop_v1_.')
     }
+    return this.addDigitalOceanTeam(tenantId, 'static')
+  }
+
+  /** The demo signs in for you: DigitalOcean's consent page is skipped. */
+  async digitalOceanOAuth(tenantId: string): Promise<DigitalOceanOAuthConfig> {
+    await this.tick()
+    this.tenant(tenantId)
+    return { enabled: true }
+  }
+
+  /** Returns the callback page's address, as DigitalOcean would redirect to it after approval. */
+  async startDigitalOceanOAuth(tenantId: string): Promise<{ authorizeUrl: string }> {
+    await this.tick()
+    this.tenant(tenantId)
+    const state = `demo${randomId().replace(/-/g, '')}`
+    ;(this.state.doSignIns ??= {})[state] = { tenantId }
+    this.save()
+    return { authorizeUrl: `#/connect/digitalocean/callback?code=demo&state=${state}` }
+  }
+
+  /** As the API: a state works once, in its own workspace; signing in again reconnects the team. */
+  async finishDigitalOceanOAuth(tenantId: string, code: string, state: string): Promise<Connection> {
+    await delay(this.latencyMs * 4)
+    const pending = this.state.doSignIns?.[state]
+    if (!code || pending?.tenantId !== tenantId) {
+      throw new ApiError(400, 'This sign-in has expired or was already used. Click Connect DigitalOcean again.')
+    }
+    delete this.state.doSignIns?.[state]
+    const existing = (this.state.connections[tenantId] ?? []).find(
+      (c) => c.provider === 'digitalocean' && c.credentialType === 'oauth' && c.status !== 'disconnected',
+    )
+    if (existing) {
+      existing.status = 'healthy'
+      existing.permissionChecks = DEMO_DO_CHECKS.map((c) => ({ ...c }))
+      existing.lastValidatedAt = new Date().toISOString()
+      this.save()
+      return structuredClone(existing)
+    }
+    return this.addDigitalOceanTeam(tenantId, 'oauth')
+  }
+
+  private addDigitalOceanTeam(tenantId: string, credentialType: 'static' | 'oauth'): Connection {
     const team = randomId()
     const conn: Connection = {
       id: randomId(),
@@ -1380,6 +1425,7 @@ export class DemoApi implements Api {
       createdAt: new Date().toISOString(),
       stackName: 'digitalocean-token',
       stackVersion: null,
+      credentialType,
     }
     ;(this.state.connections[tenantId] ??= []).push(conn)
     this.save()
@@ -1393,6 +1439,7 @@ export class DemoApi implements Api {
       throw new ApiError(422, 'This does not look like a DigitalOcean token. Copy the whole token: it starts with dop_v1_.')
     }
     conn.lastValidatedAt = new Date().toISOString()
+    conn.credentialType = 'static'
     this.save()
     return structuredClone(conn)
   }
