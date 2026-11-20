@@ -495,17 +495,30 @@ async def test_a_staff_rate_wins_and_no_rate_blocks_the_month(
     ready(azure, setup["ownershipCode"], months=())
     await validate(client, tenant, headers, cid)
     staff = owner_sql("SELECT id FROM app_user LIMIT 1")[0][0]
-    # A staff rate for every day of the month: 0.8 GBP per USD.
+    # A staff rate for every day of the month: 0.8 GBP per USD. fx_rate is shared by every
+    # workspace, so these rows are removed at the end or later tests read this rate.
+    rate_ids: list[uuid.UUID] = []
     day = LAST_MONTH
     while day < THIS_MONTH:
+        rate_ids.append(uuid.uuid4())
         owner_sql(
             "INSERT INTO fx_rate (id, currency, rate_date, basis, rate, source, entered_by) "
             "VALUES (%s, 'GBP', %s, 'official', 0.8, 'manual', %s)",
-            uuid.uuid4(),
+            rate_ids[-1],
             day,
             staff,
         )
         day += timedelta(days=1)
+    try:
+        await _staff_rate_then_blocked(client, tenant, headers, cid, owner_sql, azure)
+    finally:
+        for rid in rate_ids:
+            owner_sql("DELETE FROM fx_rate WHERE id = %s", rid)
+
+
+async def _staff_rate_then_blocked(
+    client: AsyncClient, tenant: str, headers: dict[str, str], cid: str, owner_sql: Sql, azure
+) -> None:
     gbp = [
         dict(r, BillingCurrency="GBP")
         for r in focus_rows(LAST_MONTH, LAST_MONTH + timedelta(days=4), sub=azure.subscription)
