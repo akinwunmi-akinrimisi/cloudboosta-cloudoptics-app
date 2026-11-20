@@ -13,13 +13,13 @@
   account again reuses the row, so its cost history stays, and gives it its own account.
 
 Revision ID: 0049
-Revises: 0047
+Revises: 0048
 """
 
 from cloudoptics.platform.migration_sql import run_sql
 
 revision = "0049"
-down_revision = "0047"
+down_revision = "0048"
 branch_labels = None
 depends_on = None
 
