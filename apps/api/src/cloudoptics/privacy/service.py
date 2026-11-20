@@ -25,6 +25,8 @@ from cloudoptics.notifications.email import Email, EmailError, get_mailer
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.privacy.deletion import delete_connection_data, delete_tenant_data
+from cloudoptics.privacy.removal import Removal, removal_lines, removal_steps
+from cloudoptics.providers.naming import connection_label, provider_label
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +71,8 @@ STACK_ACCOUNTS = text(
     "FROM cloud_connection WHERE provider = 'aws' ORDER BY provider_account_id"
 )
 CONNECTION_FOR_DELETE = text(
-    "SELECT id, provider_account_id AS aws_account_id, status FROM cloud_connection "
+    "SELECT id, provider_account_id AS aws_account_id, provider, account_type, status "
+    "FROM cloud_connection "
     "WHERE id = :c FOR UPDATE"
 )
 RECORD_NOTIFICATION = text(
@@ -141,8 +144,14 @@ def _email(to: list[str], subject: str, lines: list[str], tag: str) -> Email:
 
 
 def scheduled_email(
-    to: list[str], workspace: str, when: datetime, by: str, steps: list[StackSteps]
+    to: list[str],
+    workspace: str,
+    when: datetime,
+    by: str,
+    steps: list[StackSteps],
+    removals: list[Removal] | None = None,
 ) -> Email:
+    """``steps``: the AWS stacks; ``removals``: what to remove in the other clouds."""
     link = f"{get_settings().app_url.rstrip('/')}/settings?section=workspace"
     lines = [
         f"{by} asked to delete the Cloudoptics workspace {workspace} and all of its data.",
@@ -151,6 +160,7 @@ def scheduled_email(
         f"cancel it in Settings, Workspace: {link}",
         "",
         *stack_lines(steps),
+        *_then(removal_lines(removals or [])),
         "",
         "If you did not expect this, cancel the deletion and check who has the admin role.",
     ]
@@ -168,7 +178,11 @@ def cancelled_email(to: list[str], workspace: str, by: str) -> Email:
 
 
 def tenant_deleted_email(
-    to: list[str], workspace: str, verification: dict[str, Any], steps: list[StackSteps]
+    to: list[str],
+    workspace: str,
+    verification: dict[str, Any],
+    steps: list[StackSteps],
+    removals: list[Removal] | None = None,
 ) -> Email:
     lines = [
         f"The Cloudoptics workspace {workspace} has been deleted: "
@@ -179,20 +193,39 @@ def tenant_deleted_email(
         "retention period as a security record.",
         "",
         *stack_lines(steps),
+        *_then(removal_lines(removals or [])),
     ]
     return _email(to, f"Workspace {workspace} deleted", lines, "deletion")
 
 
-def connection_deleted_email(to: list[str], account: str, verification: dict[str, Any]) -> Email:
+def _then(lines: list[str]) -> list[str]:
+    """A blank line before a block that is there."""
+    return ["", *lines] if lines else []
+
+
+def connection_deleted_email(
+    to: list[str],
+    account: str,
+    verification: dict[str, Any],
+    provider: str | None = None,
+    account_type: str | None = None,
+) -> Email:
+    """``provider`` and ``account_type`` name the account ("Azure subscription …"); a
+    missing provider is AWS."""
+    label = connection_label(provider, account, account_type)
+    again = (
+        "Reconnecting the account starts again from the bills in your S3 bucket."
+        if (provider or "aws") == "aws"
+        else f"Connecting it again loads its bills again from {provider_label(provider)}."
+    )
     lines = [
-        f"Cloudoptics deleted the data it held for AWS account {account}: "
+        f"Cloudoptics deleted the data it held for {label}: "
         f"{verification['rowsDeleted']:,} records (bills, costs, resources, metrics, "
         "recommendations and anomalies), each table checked to be empty afterwards.",
         "",
-        "The audit log keeps the record of the deletion. Reconnecting the account starts "
-        "again from the bills in your S3 bucket.",
+        f"The audit log keeps the record of the deletion. {again}",
     ]
-    return _email(to, f"Data for AWS account {account} deleted", lines, "deletion")
+    return _email(to, f"Data for {label} deleted", lines, "deletion")
 
 
 async def admin_emails(session: AsyncSession, tenant_id: uuid.UUID) -> list[str]:
@@ -342,10 +375,16 @@ async def run_due(
             action="connection.data_deleted",
             target_type="cloud_connection",
             target_id=str(row.connection_id),
-            after=verification,
+            # The provider names the account in the audit log ("Deleted an Azure subscription's
+            # data"); the connection itself is gone now.
+            after={**verification, "provider": conn.provider if conn is not None else "aws"},
         )
         email = connection_deleted_email(
-            await admin_emails(session, tenant_id), row.target_label, verification
+            await admin_emails(session, tenant_id),
+            row.target_label,
+            verification,
+            provider=conn.provider if conn is not None else None,
+            account_type=conn.account_type if conn is not None else None,
         )
         return Outcome("completed", email)
 
@@ -353,6 +392,7 @@ async def run_due(
     name = tenant.name if tenant is not None else row.target_label
     recipients = await admin_emails(session, tenant_id)
     steps = await stack_steps(session)
+    removals = await removal_steps(session, tenant_id)
     verification = await delete_tenant_data(session, tenant_id)
     await _complete(session, deletion_id, verification)
     await audit.record(
@@ -364,4 +404,5 @@ async def run_due(
         target_id=str(tenant_id),
         after=verification,
     )
-    return Outcome("completed", tenant_deleted_email(recipients, name, verification, steps), False)
+    email = tenant_deleted_email(recipients, name, verification, steps, removals)
+    return Outcome("completed", email, False)

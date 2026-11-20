@@ -28,14 +28,20 @@ export function demoAzureConnection(id: string, body: AzureConnectionCreate): Az
   }
 }
 
-export function demoAzureSetup(conn: AzureConnection): AzureConnectionSetup {
+/** A new ownership code, as the API makes one for each connect and reconnect. */
+export function demoOwnershipCode(): string {
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('')
+  return `co-${hex}`
+}
+
+export function demoAzureSetup(conn: AzureConnection, code = 'co-demo0000000000000000'): AzureConnectionSetup {
   const storageScope = `/subscriptions/${conn.subscriptionIds[0] ?? '<subscription-id>'}/resourceGroups/<resource-group>/providers/Microsoft.Storage/storageAccounts/${conn.storageAccount}`
   return {
     connection: structuredClone(conn),
     clientId: DEMO_CLIENT_ID,
     consentUrl: `https://login.microsoftonline.com/${conn.directoryId}/adminconsent?client_id=${DEMO_CLIENT_ID}`,
     ownershipTag: 'cloudoptics-verify',
-    ownershipCode: 'co-demo0000000000000000',
+    ownershipCode: code,
     roleAssignmentCommand: [
       `SP=$(az ad sp show --id ${DEMO_CLIENT_ID} --query id -o tsv)`,
       `az role assignment create --assignee-object-id "$SP" --assignee-principal-type ServicePrincipal \\`,
@@ -44,7 +50,7 @@ export function demoAzureSetup(conn: AzureConnection): AzureConnectionSetup {
       `  --role "Cost Management Reader" --scope "${conn.scope}"`,
       `az role assignment create --assignee-object-id "$SP" --assignee-principal-type ServicePrincipal \\`,
       `  --role "Storage Blob Data Reader" --scope "${storageScope}/blobServices/default/containers/${conn.container}"`,
-      `az tag update --resource-id "${storageScope}" --operation Merge --tags cloudoptics-verify=co-demo0000000000000000`,
+      `az tag update --resource-id "${storageScope}" --operation Merge --tags cloudoptics-verify=${code}`,
     ].join('\n'),
     portalRoleSteps: [
       'In the Azure portal, open the subscription and choose Access control (IAM).',

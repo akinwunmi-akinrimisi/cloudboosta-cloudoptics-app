@@ -49,7 +49,7 @@ export function SignIn() {
         <Card>
           <h1 className="text-2xl font-semibold">{signUp ? 'Create your account' : 'Sign in'}</h1>
           <p className="mt-1 text-sm text-secondary">
-            See your AWS spend in dollars and your local currency, and what is safe to cut.
+            See your cloud spend in dollars and your local currency, and what is safe to cut.
           </p>
           {pending && (
             <div className="mt-6">

@@ -747,6 +747,8 @@ Path: `norm/tenant={tenant_id}/billing_period=YYYY-MM/version={v}/part-*.parquet
 | GET | `/v1/tenants/{t}/exports/{id}` | Status + signed download URL | Viewer+ |
 | GET | `/v1/operations/{id}` | Async operation status | owner |
 
+CSV columns (multi-cloud, ADR-018): every export ends with the row's cloud, `provider` (`aws`, `gcp`, `azure` or `digitalocean`). The budgets export ends with `providers`, the clouds the budget covers, space-separated. These columns come last so the positions and names of the earlier columns stay as they were. A cost export also groups its rows by provider. The `accountId` filter takes any provider's account ID.
+
 ## 3.3 Example requests & responses (outline)
 
 **Start a connection**

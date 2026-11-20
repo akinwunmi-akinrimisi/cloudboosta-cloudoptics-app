@@ -5,7 +5,7 @@ import { useApi } from '../app/context'
 import type { CostChanges, CostContributor, CostForecast } from '../api/types'
 import { Card, cx } from '../components/ui'
 import { formatMoney } from '../lib/currency'
-import { rateTile, useMoney } from './Workspace'
+import { rateTile, useCloudWords, useMoney } from './Workspace'
 
 export const MAX_MOVE = 50
 
@@ -35,6 +35,7 @@ export function ForecastPanel({ tenantId }: { tenantId: string }) {
   const api = useApi()
   const { money } = useMoney()
   const [movement, setMovement] = useState(0)
+  const words = useCloudWords()
   const forecast = useQuery({ queryKey: ['cost-forecast', tenantId], queryFn: () => api.costForecast(tenantId) })
   const f = forecast.data
   if (!f || f.status === 'no_data' || !f.monthEnd) return null
@@ -57,7 +58,7 @@ export function ForecastPanel({ tenantId }: { tenantId: string }) {
           {fm.daysInMonth - fm.daysCovered} days left
           {fm.monthlyCharges > 0 && ` + ${money(fm.monthlyCharges)} of monthly charges still to be billed`}. Next months: the
           trend over the last {f.trendDays} days
-          {f.monthlyChargesUsd > 0 && `, with ${money(f.monthlyChargesUsd)} a month of once-a-month charges such as AWS Support`}
+          {f.monthlyChargesUsd > 0 && `, with ${money(f.monthlyChargesUsd)} a month of once-a-month charges such as ${words.awsOnly ? 'AWS Support' : 'support plans'}`}
           {f.taxShare > 0 && ` and tax at ${(f.taxShare * 100).toFixed(1)}%`}. Amortised, after credits.
         </p>
       </div>

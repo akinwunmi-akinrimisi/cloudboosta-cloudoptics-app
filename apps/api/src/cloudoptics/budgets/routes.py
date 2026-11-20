@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -31,8 +32,11 @@ SELECT_BUDGETS = text(
 )
 
 
+ACCOUNT_ID = re.compile(r"[0-9A-Za-z:_.-]{1,128}")
+
+
 class Scope(ApiModel):
-    """The whole workspace, or some of its AWS accounts."""
+    """The whole workspace, or some of its accounts (any provider)."""
 
     type: Literal["tenant", "accounts"] = "tenant"
     accounts: list[str] = Field(default_factory=list, max_length=200)
@@ -43,8 +47,10 @@ class Scope(ApiModel):
             self.accounts = []
         elif not self.accounts:
             raise ValueError("choose at least one account")
-        if any(len(a) != 12 or not a.isdigit() for a in self.accounts):
-            raise ValueError("account IDs have 12 digits")
+        # AWS account IDs, Google Cloud project IDs, Azure subscription GUIDs, DigitalOcean
+        # team IDs; the route then checks each is an account of this workspace.
+        if any(ACCOUNT_ID.fullmatch(a) is None for a in self.accounts):
+            raise ValueError("not an account ID")
         self.accounts = sorted(set(self.accounts))
         return self
 

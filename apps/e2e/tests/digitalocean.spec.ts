@@ -45,7 +45,7 @@ test('an admin connects DigitalOcean with a read-only token and sees its costs',
     await page.getByLabel('DigitalOcean token').fill(good)
     await page.getByRole('button', { name: 'Connect' }).click()
     await expect(page.getByRole('heading', { name: 'Connected' })).toBeVisible({ timeout: 30_000 })
-    await expect(page.getByText(/^DigitalOcean account [0-9a-f-]{36}\.$/)).toBeVisible()
+    await expect(page.getByText(/^DigitalOcean team [0-9a-f-]{36}\.$/)).toBeVisible()
     await expect(page.getByText('Token is read-only')).toBeVisible()
     await expect(page.getByText(good)).toHaveCount(0)
     await page.getByRole('button', { name: 'Go to my workspace' }).click()

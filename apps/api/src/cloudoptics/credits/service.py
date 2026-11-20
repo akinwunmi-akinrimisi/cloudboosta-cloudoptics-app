@@ -150,7 +150,7 @@ def describe(r: Runway, money: Callable[[float], str]) -> str | None:
     if r.status == "no_balance":
         return (
             f"{money(r.applied_month_usd)} of credits applied this month. Enter the remaining "
-            "balance from the AWS Billing console to see when they run out."
+            "balance from your provider's billing console (Costs page) to see when they run out."
         )
     if r.status == "used_up":
         return f"Credits are used up: {after}."

@@ -3,11 +3,11 @@ import { Link } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 
 import { useApi } from '../app/context'
-import type { Connection, DataDeletion, StackSteps, Tenant } from '../api/types'
+import type { Connection, DataDeletion, ProviderRemoval, StackSteps, Tenant } from '../api/types'
 import { ApiError } from '../api/types'
 import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card } from '../components/ui'
-import { accountLabel, accountNoun } from '../lib/providers'
+import { accountLabel, asProvider, connectionKind, connectionLabel, providerOf } from '../lib/providers'
 
 // Deleting data (PRD US-8.3): a disconnected connection's data straight away, the whole
 // workspace after a grace period. Cloudoptics cannot touch the customer's AWS accounts, so
@@ -74,16 +74,18 @@ export function DeleteConnectionData({
       }}
     >
       <p>
-        Delete everything Cloudoptics holds for {accountLabel(c.provider, c.awsAccountId)}: its bills, costs, resources, usage metrics,
+        Delete everything Cloudoptics holds for {connectionLabel(c)}: its bills, costs, resources, usage metrics,
         recommendations and anomalies. This cannot be undone. The audit log keeps a record of the deletion, and you can
-        connect the account again later.
+        connect the {connectionKind(c)} again later.
       </p>
       <label className="flex flex-col gap-1">
-        <span className="font-medium">Type the {accountNoun(c.provider)} ID {c.awsAccountId} to confirm</span>
+        <span className="font-medium">
+          Type the {connectionKind(c)} ID <span className="break-all">{c.awsAccountId}</span> to confirm
+        </span>
         <input
           className={inputClass}
           value={typed}
-          inputMode="numeric"
+          inputMode={providerOf(c.provider) === 'aws' ? 'numeric' : 'text'}
           autoComplete="off"
           onChange={(e) => setTyped(e.target.value)}
         />
@@ -126,6 +128,41 @@ export function StackStepsList({ steps, consoleUrl }: { steps: StackSteps[]; con
         AWS keeps the S3 bucket with your billing export when the stack is deleted. Empty and delete it in the S3
         console if you no longer need the files.
       </p>
+    </div>
+  )
+}
+
+/** What to remove in Google Cloud, Azure or DigitalOcean (Cloudoptics can only read there too). */
+export function ProviderRemovalsList({ removals }: { removals: ProviderRemoval[] }) {
+  if (removals.length === 0) return null
+  return (
+    <div className="flex min-w-0 flex-col gap-3 text-sm">
+      <h3 className="font-medium">Remove Cloudoptics from your other clouds</h3>
+      <p className="text-secondary">
+        Cloudoptics cannot remove what you set up there either. For each connection:
+      </p>
+      <ul className="flex flex-col divide-y divide-border rounded-sm border border-border">
+        {removals.map((r) => (
+          <li key={r.label} className="flex min-w-0 flex-col gap-2 px-3 py-2">
+            <span className="font-medium break-words">{r.label}</span>
+            <ul className="list-disc space-y-1 pl-5 break-words text-secondary">
+              {r.steps.map((s) => (
+                <li key={s}>{s}</li>
+              ))}
+            </ul>
+            {r.commands.length > 0 && (
+              <div
+                role="region"
+                tabIndex={0}
+                aria-label={`Commands for ${r.label}`}
+                className="max-h-72 overflow-y-auto rounded-sm bg-surface-2 px-3 py-2"
+              >
+                <pre className="font-mono text-xs break-all whitespace-pre-wrap">{r.commands.join('\n')}</pre>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
@@ -212,6 +249,7 @@ export function DangerZone({ tenant }: { tenant: Tenant }) {
       )}
       {error && <Alert tone="error">{errorText(error)}</Alert>}
       {view.data && <StackStepsList steps={view.data.stacks} consoleUrl={view.data.stacksConsoleUrl} />}
+      {view.data && <ProviderRemovalsList removals={view.data.removals ?? []} />}
     </Card>
   )
 }
@@ -227,6 +265,22 @@ const STATUS: Record<DataDeletion['status'], string> = {
 export function DeletionHistory({ tenantId }: { tenantId: string }) {
   const api = useApi()
   const list = useQuery({ queryKey: ['deletions', tenantId], queryFn: () => api.listDeletions(tenantId) })
+  // A connection whose data was deleted is gone; its audit entry says which provider it was.
+  const audit = useQuery({
+    queryKey: ['audit-log', tenantId, 'deletions'],
+    queryFn: () => api.auditLog(tenantId),
+    enabled: (list.data ?? []).some((d) => d.kind === 'connection'),
+  })
+  const connections = useQuery({ queryKey: ['connections', tenantId], queryFn: () => api.listConnections(tenantId) })
+  const label = (d: DataDeletion): string => {
+    const conn = connections.data?.find((c) => c.id === d.connectionId)
+    if (conn) return connectionLabel(conn)
+    const entry = audit.data?.entries.find((e) => e.targetId === d.connectionId && e.action.startsWith('connection.'))
+    // AWS entries from before ADR-018 carry only the account ID.
+    const provider =
+      asProvider(entry?.after?.provider) ?? (typeof entry?.after?.awsAccountId === 'string' ? 'aws' : undefined)
+    return provider ? accountLabel(provider, d.targetLabel) : `Account ${d.targetLabel}`
+  }
   return (
     <Card className="flex flex-col gap-3">
       <div>
@@ -241,7 +295,7 @@ export function DeletionHistory({ tenantId }: { tenantId: string }) {
           <li key={d.id} className="flex flex-col gap-1 py-2 text-sm">
             <div className="flex flex-wrap justify-between gap-2">
               <span className="font-medium">
-                {d.kind === 'connection' ? `AWS account ${d.targetLabel}` : `Workspace ${d.targetLabel}`}
+                {d.kind === 'connection' ? label(d) : `Workspace ${d.targetLabel}`}
               </span>
               <span className="text-secondary">
                 {STATUS[d.status]} ·{' '}

@@ -166,7 +166,7 @@ def granted_email(
         f"Reason: {justification}",
         f"Support ticket: {ticket}",
         f"The access ends automatically at {until}. Support can view your workspace but "
-        "cannot change anything in it or in your AWS accounts.",
+        "cannot change anything in it or in your cloud accounts.",
         f"Every use is in your workspace's audit log: {link}",
         "If you did not expect this, reply to this email or contact Cloudoptics support.",
     ]

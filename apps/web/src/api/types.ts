@@ -835,6 +835,8 @@ export interface NotificationChoices {
 export interface MonthlyReport {
   month: string
   workspace: string
+  /** The workspace's providers when the report was made; absent from older reports (AWS). */
+  providers?: Provider[]
   currency: string
   generatedAt: string
   spend: {
@@ -1003,10 +1005,22 @@ export interface StackSteps {
   stacks: string[]
 }
 
-/** The workspace's scheduled deletion (null when none), and what to delete in AWS. */
+/** What to remove in another cloud for one connection: steps, then commands to paste. */
+export interface ProviderRemoval {
+  provider: Provider
+  /** "Google Cloud billing account …", "Azure subscription …", "DigitalOcean team …". */
+  label: string
+  steps: string[]
+  commands: string[]
+}
+
+/** The workspace's scheduled deletion (null when none), what to delete in AWS, and what to
+ * remove in the other clouds it connected. */
 export interface TenantDeletion {
   deletion: DataDeletion | null
   stacks: StackSteps[]
+  /** Absent from older API versions. */
+  removals?: ProviderRemoval[]
   stacksConsoleUrl: string
   graceDays: number
 }
@@ -1261,6 +1275,8 @@ export interface Api {
   createAzureConnection(tenantId: string, body: AzureConnectionCreate): Promise<AzureConnectionSetup>
   /** Azure, admins only. */
   getAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup>
+  /** Azure, admins only, once disconnected: the same settings with a new ownership code (the steps in Azure again). */
+  reconnectAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup>
   /** Azure: checks access now (a few seconds); 409 if disconnected. */
   validateAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnection>
   /** Admins only, once disconnected: `confirm` is the connection's AWS account ID. */

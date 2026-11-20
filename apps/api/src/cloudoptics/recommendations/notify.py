@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cloudoptics.notifications.email import Email, EmailError, get_mailer
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.providers.naming import where
 
 log = logging.getLogger(__name__)
 
@@ -49,12 +50,17 @@ def assignment_email(by: str, recs: Sequence[Any], app_url: str) -> tuple[str, s
     if n > len(shown):
         lines.append(f"... and {n - len(shown)} more: {base}/recommendations")
         items.append(f"<li>and {n - len(shown)} more</li>")
-    lines += ["", "Mark each one done when the change is made; Cloudoptics then checks it in AWS."]
+    # "in AWS", "in Azure", or "in your cloud accounts" for recommendations across clouds.
+    cloud = where(getattr(r, "provider", None) for r in recs)
+    lines += [
+        "",
+        f"Mark each one done when the change is made; Cloudoptics then checks it in {cloud}.",
+    ]
     body = (
         f"<p>{html.escape(by)} assigned you "
         f"{'this recommendation' if n == 1 else 'these recommendations'} in Cloudoptics:</p>"
         f"<ul>{''.join(items)}</ul><p>Mark each one done when the change is made; Cloudoptics "
-        "then checks it in AWS.</p>"
+        f"then checks it in {html.escape(cloud)}.</p>"
     )
     return subject, "\n".join(lines), body
 
@@ -92,7 +98,8 @@ async def send_assignment_email(
     recs = (
         await session.execute(
             text(
-                "SELECT id, title, savings_usd_month FROM recommendation WHERE id = ANY(:ids) "
+                "SELECT id, title, savings_usd_month, provider FROM recommendation "
+                "WHERE id = ANY(:ids) "
                 "AND assignee_id = :a ORDER BY priority_score DESC, id"
             ),
             {"ids": recommendation_ids, "a": assignee_id},

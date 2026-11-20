@@ -38,6 +38,7 @@ from cloudoptics.notifications.email import Email, EmailError, get_mailer
 from cloudoptics.platform.api import ApiModel
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.providers import naming
 from cloudoptics.recommendations import queries as recommendations
 from cloudoptics.reporting.digest import BUDGET_STATUS, zone
 from cloudoptics.trends import changes as what_changed
@@ -160,6 +161,9 @@ class MonthlyReport(ApiModel):
     #: The credits runway at the end of the month, when there are credits.
     credits: str | None = None
     accuracy: Accuracy
+    #: The workspace's providers when the report was made; reports stored before this
+    #: field were all AWS.
+    providers: list[str] = Field(default_factory=lambda: ["aws"])
 
 
 def _round(value: float | None) -> float | None:
@@ -217,16 +221,23 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, month: date) -> Mon
     found = await anomalies.period(session, month, end)
     check = await costs.month_reconciliation(session, month)
     through = min(span[1], end)
-    notes = [f"From the AWS bills (CUR 2.0), amortised, after credits, up to {through:%d %b %Y}."]
+    clouds = await naming.workspace_providers(session)
+    notes = [
+        f"From {naming.bills_source(clouds)}, amortised, after credits, up to {through:%d %b %Y}."
+    ]
     if through < end:
-        notes.append("The last days of the month may still change as AWS finalises the bill.")
+        notes.append(
+            "The last days of the month may still change as "
+            f"{naming.clouds(clouds, 'each provider')} finalises the bill."
+        )
     if check is not None and check.status == "mismatch":
         notes.append(
-            f"The bills differ from Cost Explorer by {check.difference_pct or 0:.1f}% for this "
+            f"The bills differ from {naming.provider_total(clouds)} by "
+            f"{check.difference_pct or 0:.1f}% for this "
             "month; Cloudoptics will report again once they agree."
         )
     elif check is not None and check.status == "ok":
-        notes.append("The bills agree with Cost Explorer (within 1%).")
+        notes.append(f"The bills agree with {naming.provider_total(clouds)} (within 1%).")
     if now_local is None and currency != "USD":
         notes.append(f"No {currency} exchange rate for every day of the month: USD only.")
     elif now_local is not None and currency != "USD":
@@ -239,6 +250,7 @@ async def build(session: AsyncSession, tenant_id: uuid.UUID, month: date) -> Mon
         workspace=tenant.name,
         currency=currency,
         generated_at=datetime.now(UTC),
+        providers=clouds,
         spend=Spend(
             usd=this.total,
             local=now_local.local if now_local else None,
@@ -344,7 +356,7 @@ def render(r: MonthlyReport, app_url: str) -> tuple[str, str, str]:
     s = r.spend
     total = _money(s.usd, s.local, r.currency)
     trend = "" if s.change_percent is None else f" ({s.change_percent:+.0f}% on the month before)"
-    subject = f"{r.workspace}: AWS spend for {label} was {total}{trend}"
+    subject = f"{r.workspace}: {naming.clouds(r.providers)} spend for {label} was {total}{trend}"
     link = f"{app_url.rstrip('/')}/reports?month={r.month}"
     sections: list[tuple[str, list[str]]] = []
     lines = [
@@ -356,7 +368,7 @@ def render(r: MonthlyReport, app_url: str) -> tuple[str, str, str]:
             "from the exchange rate."
         )
     if s.credits_usd:
-        lines.append(f"AWS credits applied: USD {-s.credits_usd:,.2f}.")
+        lines.append(f"{naming.credits_title(r.providers)} applied: USD {-s.credits_usd:,.2f}.")
     sections.append(("Spend", lines))
     if r.drivers:
         sections.append(
@@ -389,7 +401,8 @@ def render(r: MonthlyReport, app_url: str) -> tuple[str, str, str]:
         f"Marked done this month: {sv.done_count}, saving USD {sv.done_usd_month:,.2f} a month.",
         *(
             [
-                f"Verified in AWS this month: {sv.verified_count}, saving USD "
+                f"Verified in {naming.where(r.providers)} this month: {sv.verified_count}, "
+                "saving USD "
                 f"{sv.realised_usd_month:,.2f} a month."
             ]
             if sv.verified_count
@@ -414,7 +427,7 @@ def render(r: MonthlyReport, app_url: str) -> tuple[str, str, str]:
             )
         )
     if r.credits:
-        sections.append(("AWS credits", [r.credits]))
+        sections.append((naming.credits_title(r.providers), [r.credits]))
     sections.append(("About these figures", [r.accuracy.note]))
     body_text = "\n".join(
         [f"{r.workspace}: {label}", ""]

@@ -293,6 +293,10 @@ export class HttpApi implements Api {
     return this.request('GET', `/v1/tenants/${tenantId}/providers/azure/connections/${connectionId}`)
   }
 
+  reconnectAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup> {
+    return this.request('POST', `/v1/tenants/${tenantId}/providers/azure/connections/${connectionId}/reconnect`)
+  }
+
   validateAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnection> {
     return this.request('POST', `/v1/tenants/${tenantId}/providers/azure/connections/${connectionId}/validate`)
   }

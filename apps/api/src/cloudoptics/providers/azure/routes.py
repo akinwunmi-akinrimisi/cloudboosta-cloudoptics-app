@@ -1,7 +1,7 @@
 """/v1/tenants/{t}/providers/azure/connections: connect an Azure subscription or billing
 account (ADR-020). The generic ``/connections`` list, detail and disconnect cover Azure rows
 too; this router adds what is Azure's own: create (with the set-up steps), the steps again,
-and validation.
+reconnect (a disconnected connection, with a new ownership code) and validation.
 
 ``/v1/azure/consent`` is where Entra sends the admin back after consenting: a small page
 that says to close the tab. It reads and writes nothing; the next validation sees the
@@ -256,6 +256,59 @@ async def get_setup(
         )
     code = get_encryptor().decrypt(bytes(row.external_id_enc), access.tenant_id)
     return _setup(row, code)
+
+
+RESET_DETAIL = text(
+    "UPDATE azure_connection SET storage_account_id = NULL, export_name = NULL "
+    "WHERE connection_id = :id"
+)
+
+
+@router.post("/{connection_id}/reconnect", response_model=AzureConnectionSetup)
+async def reconnect(
+    connection_id: uuid.UUID, request: Request, access: AdminAccess, session: Session
+) -> AzureConnectionSetup:
+    """Connect a disconnected subscription or billing account again with the settings it
+    had. Disconnecting deleted its ownership code, so it gets a new one: the role script and
+    the storage account tag change, and the steps in Azure are done again."""
+    row = await _load(session, connection_id)
+    if row.status != "disconnected":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This connection is still connected. Use Set up again to see its steps.",
+        )
+    s = azconn.from_row(row)
+    code = azconn.new_ownership_code()
+    try:
+        async with session.begin_nested():
+            await session.execute(
+                RESET_CONNECTION,
+                {
+                    "id": connection_id,
+                    "type": row.account_type,
+                    "code": get_encryptor().encrypt(code, access.tenant_id),
+                    "bucket": f"{s.storage_account}/{s.container}",
+                    "prefix": s.export_path or None,
+                    "by": access.user.id,
+                },
+            )
+            await session.execute(RESET_DETAIL, {"id": connection_id})
+    except IntegrityError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This Azure subscription or billing account is connected to another workspace.",
+        ) from exc
+    await audit.record(
+        session,
+        tenant_id=access.tenant_id,
+        actor=user_actor(request, access.user.id),
+        action="connection.reconnected",
+        target_type="cloud_connection",
+        target_id=str(connection_id),
+        before={"status": "disconnected"},
+        after={"provider": "azure", "accountId": s.account_id, "scopeType": s.scope_type},
+    )
+    return _setup(await _load(session, connection_id), code)
 
 
 @router.post("/{connection_id}/validate", response_model=AzureConnection)

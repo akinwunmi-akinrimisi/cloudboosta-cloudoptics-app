@@ -15,7 +15,7 @@ import type {
 } from '../api/types'
 import { ApiError } from '../api/types'
 import { Alert, Button, Card } from '../components/ui'
-import { accountLabel, asProvider } from '../lib/providers'
+import { PROVIDER_LABEL, accountLabel, asProvider } from '../lib/providers'
 import { RULES } from '../lib/rules'
 import { DangerZone, DeletionHistory } from './DataDeletion'
 import { SECTIONS, SettingsLayout, type SettingsSection } from './SettingsNav'
@@ -154,14 +154,14 @@ function WorkspaceIdentity({ tenant }: { tenant: Tenant }) {
   )
 }
 
-/** Another company gets its own workspace: members, AWS accounts and data stay apart. */
+/** Another company gets its own workspace: members, cloud accounts and data stay apart. */
 function NewWorkspaceCard() {
   return (
     <Card className="flex flex-col gap-3">
       <div>
         <h2 className="text-base font-semibold">Another company</h2>
         <p className="mt-1 text-sm text-secondary">
-          Each company gets its own workspace, with its own members, AWS accounts and data. Switch between them in
+          Each company gets its own workspace, with its own members, cloud accounts and data. Switch between them in
           the header.
         </p>
       </div>
@@ -215,7 +215,7 @@ function RuleSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canEd
       <div>
         <h2 className="text-base font-semibold">Recommendation rules</h2>
         <p className="mt-1 text-sm text-secondary">
-          Choose what Cloudoptics looks for. Changes apply straight away to every AWS account in this workspace.
+          Choose what Cloudoptics looks for. Changes apply straight away to every cloud account in this workspace.
         </p>
       </div>
       <fieldset className="grid grid-cols-1 gap-2 sm:grid-cols-2" disabled={!canEdit}>
@@ -271,7 +271,7 @@ function RuleSettingsForm({ tenantId, canEdit, view }: { tenantId: string; canEd
         </label>
       </fieldset>
       <p className="text-xs text-muted">
-        Add the tag above to any AWS resource (with any value) and Cloudoptics will never suggest changing it.
+        Add the tag above to any resource (with any value) and Cloudoptics will never suggest changing it.
       </p>
       <fieldset className="grid grid-cols-1 gap-4 sm:grid-cols-2" disabled={!canEdit}>
         <legend className="mb-1 text-sm font-medium">Non-production servers and databases (office-hours schedule)</legend>
@@ -505,8 +505,6 @@ function MembersCard({ tenantId, meId, isAdmin }: { tenantId: string; meId: stri
 const ACTIONS: Record<string, string> = {
   'tenant.created': 'Created the workspace',
   'tenant.updated': 'Changed workspace settings',
-  'connection.created': 'Connected an AWS account',
-  'connection.disconnected': 'Disconnected an AWS account',
   'connection.status_changed': 'Connection status changed',
   'connection.delete_ignored': 'Ignored a stack deletion report (the role still works)',
   'connection.stack_change_rejected': 'Kept the connection settings (the reported role did not work)',
@@ -516,21 +514,48 @@ const ACTIONS: Record<string, string> = {
   'recommendation.assigned': 'Recommendation assigned',
   'recommendation.savings_measured': 'Realised savings measured',
   'rule_settings.updated': 'Changed recommendation rules',
-  'ingestion.reload_requested': 'Reloaded bills from the S3 bucket',
+  'ingestion.reload_requested': 'Reloaded bills',
   'fx_rate.set': 'Exchange rate set',
   'invite.created': 'Invited someone',
   'invite.revoked': 'Cancelled an invite',
   'member.joined': 'Joined from an invite',
   'member.role_changed': 'Changed a member\'s role',
   'member.removed': 'Removed a member',
-  'connection.reconnected': 'Reconnected an AWS account',
-  'connection.data_deletion_requested': 'Asked to delete an AWS account’s data',
-  'connection.data_deleted': 'Deleted an AWS account’s data',
   'tenant.deletion_scheduled': 'Scheduled the workspace for deletion',
   'tenant.deletion_cancelled': 'Cancelled the workspace deletion',
   'tenant.data_deleted': 'Deleted the workspace’s data',
   'support_access.granted': 'Opened read-only support access to this workspace',
   'support_access.ended': 'Ended support access',
+}
+
+/** Connection entries name the provider's account when the entry says which provider. */
+const CONNECTION_ACTIONS: Record<string, (what: string) => string> = {
+  'connection.created': (what) => `Connected ${what}`,
+  'connection.disconnected': (what) => `Disconnected ${what}`,
+  'connection.reconnected': (what) => `Reconnected ${what}`,
+  'connection.data_deletion_requested': (what) => `Asked to delete ${what}’s data`,
+  'connection.data_deleted': (what) => `Deleted ${what}’s data`,
+}
+
+function actionLabel(entry: AuditEntry): string {
+  const connection = CONNECTION_ACTIONS[entry.action]
+  if (!connection) return ACTIONS[entry.action] ?? entry.action
+  const after = entry.after ?? {}
+  // AWS entries carry awsAccountId and, before ADR-018, no provider.
+  const provider = asProvider(after.provider) ?? (typeof after.awsAccountId === 'string' ? 'aws' : undefined)
+  const what =
+    provider === 'aws'
+      ? 'an AWS account'
+      : provider === 'gcp'
+        ? 'a Google Cloud billing account'
+        : provider === 'azure'
+          ? after.scopeType === 'billing_account'
+            ? 'an Azure billing account'
+            : 'an Azure subscription'
+          : provider === 'digitalocean'
+            ? `a ${PROVIDER_LABEL.digitalocean} team`
+            : 'a cloud account'
+  return connection(what)
 }
 
 function who(entry: AuditEntry): string {
@@ -607,7 +632,7 @@ function AuditLog({ tenantId }: { tenantId: string }) {
           <li key={e.id} className="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3">
             <div className="min-w-0">
               <p className="text-sm">
-                <span className="font-medium">{who(e)}</span> · {ACTIONS[e.action] ?? e.action}
+                <span className="font-medium">{who(e)}</span> · {actionLabel(e)}
               </p>
               <p className="truncate text-xs text-muted">{change(e)}</p>
             </div>
@@ -743,7 +768,7 @@ function NotificationsCard({ tenantId, role }: { tenantId: string; role: Role })
         <h2 className="text-base font-semibold">Email notifications</h2>
         <p className="mt-1 text-sm text-secondary">
           Choose the optional emails you get from this workspace.
-          {role === 'admin' && ' Admins always get an email when a connected AWS account stops working.'} Budget
+          {role === 'admin' && ' Admins always get an email when a cloud connection stops working.'} Budget
           alerts go to the people each budget names.
         </p>
       </div>

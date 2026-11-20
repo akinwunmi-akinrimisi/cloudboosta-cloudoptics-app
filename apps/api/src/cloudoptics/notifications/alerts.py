@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cloudoptics.notifications.email import Email, EmailError, get_mailer
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
+from cloudoptics.providers.naming import connection_label, provider_label
 
 log = logging.getLogger(__name__)
 
@@ -35,13 +36,16 @@ def should_alert(previous: str | None, current: str) -> bool:
 
 def connection_email(conn: Any, checks: list[dict[str, Any]], app_url: str) -> tuple[str, str, str]:
     """Subject, text and HTML for a connection that stopped working."""
-    account = conn.aws_account_id
+    provider = getattr(conn, "provider", None)
+    account = conn.aws_account_id.strip()
+    # "AWS account 123456789012", "Azure subscription …", "DigitalOcean team …".
+    what = connection_label(provider, account, getattr(conn, "account_type", None))
     worse = "has stopped working" if conn.health == "failed" else "needs attention"
-    subject = f"Action needed: your AWS connection {account} {worse}"
+    subject = f"Action needed: your {provider_label(provider)} connection {account} {worse}"
     problems = [c for c in checks if c.get("status") in ("error", "warning", "failed")]
     link = f"{app_url.rstrip('/')}/settings/connections"
     lines = [
-        f"Cloudoptics can no longer fully read AWS account {account}.",
+        f"Cloudoptics can no longer fully read {what}.",
         "",
         *[f"- {c.get('label')}: {c.get('hint') or c.get('message')}" for c in problems],
         "",
@@ -54,8 +58,8 @@ def connection_email(conn: Any, checks: list[dict[str, Any]], app_url: str) -> t
         for c in problems
     )
     body = (
-        f"<p>Cloudoptics can no longer fully read AWS account <strong>{html.escape(account)}"
-        f"</strong>.</p>{f'<ul>{items}</ul>' if items else ''}"
+        f"<p>Cloudoptics can no longer fully read {html.escape(what.removesuffix(account))}"
+        f"<strong>{html.escape(account)}</strong>.</p>{f'<ul>{items}</ul>' if items else ''}"
         "<p>Until this is fixed, costs and recommendations for this account may be out of "
         f'date.</p><p><a href="{html.escape(link)}">Review the connection</a> and run the '
         "check again.</p>"
@@ -70,8 +74,8 @@ async def send_connection_alert(
     conn = (
         await session.execute(
             text(
-                "SELECT provider_account_id AS aws_account_id, health, permission_checks "
-                "FROM cloud_connection "
+                "SELECT provider_account_id AS aws_account_id, provider, account_type, health, "
+                "permission_checks FROM cloud_connection "
                 "WHERE id = :c"
             ),
             {"c": connection_id},

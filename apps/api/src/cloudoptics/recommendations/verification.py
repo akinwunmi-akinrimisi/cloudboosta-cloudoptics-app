@@ -43,6 +43,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cloudoptics.analysis.settings import RuleSettings, load_rule_settings
 from cloudoptics.audit import log as audit
 from cloudoptics.platform.ids import uuid7
+from cloudoptics.providers.naming import provider_label
 
 OPEN = ("new", "assigned", "in_progress")
 CHECKED = ("done", "not_verified")
@@ -93,6 +94,8 @@ class Item:
     # Found from the bill alone (R6b, R10) or not tied to one resource (R8): there is no
     # inventory resource to watch, so only the rule no longer finding it shows the fix.
     bill_only: bool = False
+    # The recommendation's cloud, for the note ("Checked in Azure.").
+    provider: str = "aws"
 
     @property
     def gone(self) -> bool:
@@ -268,7 +271,7 @@ def _note(item: Item, result: Check, to_status: str) -> str:
     if to_status == "verified":
         if item.status in OPEN:
             return f"Cloudoptics found the change was made without being marked done. {said}"
-        return f"Checked in AWS. {said}"
+        return f"Checked in {provider_label(item.provider)}. {said}"
     if to_status == "not_verified":
         return (
             "Marked done more than 72 hours ago, but the latest scan still shows no change. "
@@ -288,7 +291,7 @@ def _changed_at(item: Item, result: Check, now: datetime) -> datetime:
 
 LOAD = text(
     "SELECT r.id, r.rule_id, r.status, r.provider_account_id AS account_id, r.resource_id, "
-    "r.current_config, "
+    "r.provider, r.current_config, "
     "r.recommended_config, r.cost_now_usd_month, r.savings_usd_month, r.fix, r.baseline, "
     "r.done_at, r.generation_id, r.resource_ref, s.id AS sid, s.resource_type, s.state, "
     "s.config, s.tags, s.arn, s.state_since, s.last_seen_at, s.deleted_at FROM recommendation r "
@@ -331,6 +334,7 @@ def _item(row: Any, generation: int | None, settings: RuleSettings) -> Item:
         resource=resource,
         baseline=baseline,
         bill_only=row.resource_ref is None,
+        provider=getattr(row, "provider", None) or "aws",
     )
 
 

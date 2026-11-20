@@ -8,6 +8,7 @@ import { ApiError, type MonthlyReport } from '../api/types'
 import { ExportButton, ExportList } from '../components/exports'
 import { Alert, Button, Card, cx } from '../components/ui'
 import { monthEnd } from './Costs'
+import { cloudWords } from '../lib/providers'
 import { useWorkspace } from './Workspace'
 
 const BUDGET_STATUS: Record<string, string> = {
@@ -234,7 +235,11 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
             </tbody>
           </table>
           </div>
-          {s.creditsUsd !== 0 && <p className="text-xs text-secondary">AWS credits applied this month: {usd(-s.creditsUsd)}.</p>}
+          {s.creditsUsd !== 0 && (
+            <p className="text-xs text-secondary">
+              {cloudWords(r.providers ?? ['aws']).credits} applied this month: {usd(-s.creditsUsd)}.
+            </p>
+          )}
         </Section>
       )}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
@@ -260,8 +265,8 @@ export function ReportDocument({ report: r }: { report: MonthlyReport }) {
             </li>
             {(r.savings.verifiedCount ?? 0) > 0 && (
               <li>
-                Verified in AWS this month: {r.savings.verifiedCount}, saving {usd(r.savings.realisedUsdMonth ?? 0)} a
-                month.
+                Verified in {cloudWords(r.providers ?? ['aws']).single ?? 'your cloud accounts'} this month:{' '}
+                {r.savings.verifiedCount}, saving {usd(r.savings.realisedUsdMonth ?? 0)} a month.
               </li>
             )}
             <li>

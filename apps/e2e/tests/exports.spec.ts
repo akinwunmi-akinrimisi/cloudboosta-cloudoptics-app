@@ -20,6 +20,9 @@ test('Cost Explorer exports spend by service as a CSV download', async ({ page, 
   expect(lines.length).toBeGreaterThan(1)
   expect(lines[0].toLowerCase()).toContain('service')
   expect(lines.some((l) => l.includes('AmazonEC2'))).toBeTruthy()
+  // The cloud is the last column, so the earlier columns keep their positions (ADR-018).
+  expect(lines[0].split(',').at(-1)).toBe('provider')
+  expect(lines.filter((l) => l.includes('AmazonEC2')).every((l) => l.endsWith(',aws'))).toBeTruthy()
   // Formula guard (docs/11f J2): no cell starts with a character a spreadsheet would run.
   for (const line of lines) {
     for (const cell of line.split(',')) expect(cell.replace(/^"/, '')).not.toMatch(/^[=+@]/)
