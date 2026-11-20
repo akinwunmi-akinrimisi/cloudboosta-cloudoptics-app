@@ -217,7 +217,11 @@ async def refresh(
     ids = list(
         (
             await session.execute(
-                text("SELECT id FROM cloud_connection WHERE status = ANY(:ok) ORDER BY created_at"),
+                # Commitments are read from AWS only (Savings Plans and reservations).
+                text(
+                    "SELECT id FROM cloud_connection WHERE status = ANY(:ok) "
+                    "AND provider = 'aws' ORDER BY created_at"
+                ),
                 {"ok": list(service.USABLE)},
             )
         ).scalars()

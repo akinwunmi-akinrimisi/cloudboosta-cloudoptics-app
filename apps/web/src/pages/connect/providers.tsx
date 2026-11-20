@@ -7,6 +7,7 @@ import { PROVIDER_LABEL } from '../../lib/providers'
 import { ConnectNew } from '../Onboarding'
 import type { ConnectProps } from './GcpConnect'
 import { GcpConnect } from './GcpConnect'
+import { DigitalOceanConnect } from './DigitalOceanConnect'
 
 export type { ConnectProps }
 
@@ -38,5 +39,11 @@ export const CONNECT_PROVIDERS: ConnectProvider[] = [
     label: PROVIDER_LABEL.gcp,
     description: 'Your billing export in BigQuery.',
     Component: GcpConnect,
+  },
+  {
+    id: 'digitalocean',
+    label: PROVIDER_LABEL.digitalocean,
+    description: 'A read-only API token you paste once.',
+    Component: DigitalOceanConnect,
   },
 ]

@@ -120,6 +120,7 @@ def get_job_app() -> procrastinate.App:
     from cloudoptics.metrics.jobs import blueprint as metrics_jobs
     from cloudoptics.notifications.jobs import blueprint as notification_jobs
     from cloudoptics.privacy.jobs import blueprint as privacy_jobs
+    from cloudoptics.providers.digitalocean.jobs import blueprint as digitalocean_jobs
     from cloudoptics.recommendations.jobs import blueprint as recommendation_jobs
     from cloudoptics.reporting.jobs import blueprint as reporting_jobs
 
@@ -140,6 +141,7 @@ def get_job_app() -> procrastinate.App:
     app.add_tasks_from(reporting_jobs, namespace="reporting")
     app.add_tasks_from(recommendation_jobs, namespace="recommendations")
     app.add_tasks_from(commitment_jobs, namespace="commitments")
+    app.add_tasks_from(digitalocean_jobs, namespace="digitalocean")
     app.add_tasks_from(privacy_jobs, namespace="privacy")
     app.add_tasks_from(export_jobs, namespace="exports")
     app.add_tasks_from(blueprint, namespace="platform")

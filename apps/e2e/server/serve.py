@@ -17,7 +17,8 @@ What it does, in order:
    (apps/api/tests/fake_gcp.py) with two months of synthetic FOCUS rows. Two test-only routes
    stand in for what the customer does in Google Cloud: ``POST /__e2e/gcp/billing-account``
    (a fresh billing account for the test's export) and ``POST /__e2e/gcp/label`` (the
-   ``bq update --set_label`` command). Then it serves the app with uvicorn on 127.0.0.1.
+   ``bq update --set_label`` command). The DigitalOcean API is the fake in
+   ``apps/api/tests/fake_digitalocean.py``. Then it serves the app with uvicorn on 127.0.0.1.
 
 Every workspace's connection reads the same bills; the stack callback, validation, the
 resource scan, metrics and analysis all run for real against the fakes.
@@ -152,6 +153,14 @@ def install_fakes(bills: Path, totals: dict[str, dict[str, float]]) -> None:
 
     connectors.set_session_factory(FakeSessionFactory(totals))
     ingestion.set_source_factory(lambda conn, tenant_id: BucketFolder(bills))
+    # DigitalOcean (ADR-021): any well-formed token reads a team of its own with the same
+    # synthetic invoices and resources (apps/api/tests/fake_digitalocean.py).
+    sys.path.insert(0, str(REPO / "apps" / "api" / "tests"))
+    from fake_digitalocean import FakeDigitalOcean
+
+    from cloudoptics.providers.digitalocean import client as digitalocean
+
+    digitalocean.set_transport(FakeDigitalOcean(accept_any=True).transport())
 
 
 def install_gcp(app: object) -> None:

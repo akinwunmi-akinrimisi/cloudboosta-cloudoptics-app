@@ -25,6 +25,7 @@ import { ReloadBills } from './ReloadBills'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
 import { accountLabel, connectionLabel, providerOf, workspaceProviders } from '../lib/providers'
+import { ReplaceDigitalOceanToken } from './connect/DigitalOceanConnect'
 import { ProviderBadge } from '../components/providers'
 
 export function useWorkspace() {
@@ -348,7 +349,7 @@ export function Connections() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Connections</h1>
-          <p className="text-sm text-secondary">AWS accounts Cloudoptics can read. Read-only, always.</p>
+          <p className="text-sm text-secondary">Cloud accounts Cloudoptics can read. Read-only, always.</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {tenantId !== null && <RefreshConnections tenantId={tenantId} updatedAt={connections.dataUpdatedAt} />}
@@ -379,7 +380,9 @@ export function Connections() {
                 <ProviderBadge provider={c.provider} show={multiProvider} />
               </p>
               <p className="text-xs text-muted">
-                {providerOf(c.provider) === 'gcp'
+                {providerOf(c.provider) === 'digitalocean'
+                  ? 'DigitalOcean team, read-only token'
+                  : providerOf(c.provider) === 'gcp'
                   ? 'Billing account, with every project billed to it'
                   : c.accountType === 'management'
                     ? 'Management (payer) account'
@@ -507,6 +510,53 @@ function ConnectionActions({
   })
   const error = check.error ?? disconnect.error ?? reconnect.error
   const busy = check.isPending || disconnect.isPending || reconnect.isPending
+
+  if (providerOf(c.provider) === 'digitalocean') {
+    if (c.status === 'disconnected') {
+      return (
+        <div className="mt-4 flex flex-col gap-2">
+          <p className="text-sm text-secondary">
+            Disconnected and its token deleted from Cloudoptics. Past costs stay until you delete them. To connect again,
+            choose Connect an account and paste a new token.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <DeleteConnectionData connection={c} tenantId={tenantId} onDeleted={onDeleted} />
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div className="mt-4 flex flex-col gap-3">
+        {error && <Alert tone="error">{error.message}</Alert>}
+        {confirming ? (
+          <div ref={confirmPanel} className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
+            <p>
+              Disconnect {accountLabel(c.provider, c.awsAccountId)}? Cloudoptics deletes its copy of the token and stops
+              reading the team. Past costs stay. Delete the token in DigitalOcean too.
+            </p>
+            <div className="flex gap-2">
+              <Button disabled={busy} onClick={() => disconnect.mutate()}>
+                Disconnect
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirming(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-start gap-2">
+            <Button variant="secondary" disabled={busy || c.status === 'validating'} onClick={() => check.mutate()}>
+              {check.isPending || c.status === 'validating' ? 'Checking…' : 'Check again'}
+            </Button>
+            <ReplaceDigitalOceanToken tenantId={tenantId} connectionId={c.id} />
+            <Button ref={confirmButton} variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
+              Disconnect…
+            </Button>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (c.status === 'disconnected') {
     return (

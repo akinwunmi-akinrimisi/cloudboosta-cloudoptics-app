@@ -1202,6 +1202,10 @@ export interface Api {
   getGcpSetup(tenantId: string, connectionId: string): Promise<GcpSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
   disconnectConnection(tenantId: string, connectionId: string): Promise<void>
+  /** Admins only. Checks a DigitalOcean token (read-only, billing:read), then stores it encrypted; it is never returned. */
+  connectDigitalOcean(tenantId: string, token: string): Promise<Connection>
+  /** Admins only. The new token must read the same DigitalOcean team. */
+  replaceDigitalOceanToken(tenantId: string, connectionId: string, token: string): Promise<Connection>
   /** Admins only, once disconnected: `confirm` is the connection's AWS account ID. */
   deleteConnectionData(tenantId: string, connectionId: string, confirm: string): Promise<DataDeletion>
   /** Admins only: every deletion request, newest first, with its verification. */

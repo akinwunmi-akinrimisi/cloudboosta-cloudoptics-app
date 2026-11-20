@@ -2,8 +2,8 @@
 
 Jobs ask ``capability_for(tenant, connection, "billing_source")`` and call what comes back;
 ``None`` means the connection's provider has no plug-in yet, or a plug-in without that
-capability, and the job skips the connection. AWS and Google Cloud (ADR-019) are registered;
-``azure`` and ``digitalocean`` are accepted by the schema and get plug-ins in later phases.
+capability, and the job skips the connection. AWS, Google Cloud (ADR-019) and DigitalOcean
+(ADR-021) are registered; ``azure`` is accepted by the schema and gets a plug-in later.
 """
 
 from __future__ import annotations
@@ -55,7 +55,11 @@ def unregister(name: str) -> None:
 
 
 #: The built-in plug-ins, in registration order (module with a ``build()``).
-_BUILTINS = {"aws": "cloudoptics.providers.aws", "gcp": "cloudoptics.providers.gcp"}
+_BUILTINS = {
+    "aws": "cloudoptics.providers.aws",
+    "gcp": "cloudoptics.providers.gcp",
+    "digitalocean": "cloudoptics.providers.digitalocean",
+}
 
 
 def _build(name: str) -> CloudProvider:

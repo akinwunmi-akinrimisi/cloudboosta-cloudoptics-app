@@ -384,6 +384,14 @@ export class HttpApi implements Api {
     return this.request('GET', `/v1/tenants/${tenantId}/fx/current`)
   }
 
+  connectDigitalOcean(tenantId: string, token: string): Promise<Connection> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connections/digitalocean`, { token })
+  }
+
+  replaceDigitalOceanToken(tenantId: string, connectionId: string, token: string): Promise<Connection> {
+    return this.request('PUT', `/v1/tenants/${tenantId}/connections/${connectionId}/token`, { token })
+  }
+
   disconnectConnection(tenantId: string, connectionId: string): Promise<void> {
     return this.request('DELETE', `/v1/tenants/${tenantId}/connections/${connectionId}`)
   }
