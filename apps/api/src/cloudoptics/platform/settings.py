@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     roles_anywhere_role_arn: str = ""
     roles_anywhere_session_seconds: int = Field(default=3600, ge=900, le=3600)
 
+    # Azure (ADR-020): the multi-tenant Entra app customers consent to, and its certificate
+    # credential (no client secret). The certificate and key are rotated by Staging setup
+    # (infra/azure/entra_certificate.py); PEM or base64 of PEM, like Roles Anywhere's.
+    azure_client_id: str = ""
+    azure_certificate: str = ""
+    azure_private_key: SecretStr = SecretStr("")
+    azure_authority_url: str = "https://login.microsoftonline.com"
+    azure_arm_url: str = "https://management.azure.com"
+    # Blob endpoints are https://<account>.<suffix>; tests point this at the fake.
+    azure_blob_suffix: str = "blob.core.windows.net"
+    azure_blob_scheme: Literal["https", "http"] = "https"
+
     # AWS connection (PRD FR-CON-01/13). Templates must be served from S3 for quick-create.
     # The defaults are local placeholders; the API and worker refuse them in staging and
     # production (require_aws_connection_settings).

@@ -39,6 +39,12 @@ on:
         description: Days the Roles Anywhere certificate is valid (1-90); re-run before then.
         default: "30"
         required: true
+      azure_certificate:
+        description: >-
+          Rotate the Cloudoptics Entra app's certificate (ADR-020) and deploy it. Needs the
+          AZURE_* variables and the deployer app's federated credential (owner steps).
+        type: boolean
+        default: false
       delete_broker_user:
         description: >-
           With roles-anywhere: delete the IAM user and its key. Only once Roles Anywhere
@@ -48,6 +54,8 @@ on:
 
 permissions:
   contents: read
+  # ADR-020: the GitHub OIDC token signs the deployer in to Entra (no Azure secret).
+  id-token: write
 
 concurrency:
   group: staging-setup
@@ -120,6 +128,24 @@ jobs:
           CERTIFICATE_DAYS: ${{ inputs.certificate_days }}
           DELETE_BROKER_USER: ${{ inputs.delete_broker_user }}
         run: uv run python infra/aws/bootstrap.py
+      - name: Rotate the Azure app certificate
+        if: inputs.azure_certificate
+        # Not secret: IDs only. The private key it makes is masked and goes to GITHUB_ENV.
+        env:
+          AZURE_DIRECTORY_ID: ${{ vars.AZURE_DIRECTORY_ID }}
+          AZURE_DEPLOYER_CLIENT_ID: ${{ vars.AZURE_DEPLOYER_CLIENT_ID }}
+          AZURE_APP_OBJECT_ID: ${{ vars.AZURE_APP_OBJECT_ID }}
+          AZURE_APP_CLIENT_ID: ${{ vars.AZURE_APP_CLIENT_ID }}
+          AZURE_CERTIFICATE_DAYS: ${{ inputs.certificate_days }}
+          DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+        run: |
+          app=3294882e-35ce-45b0-bb33-e7ce55062f22
+          # The running app's certificate stays on the Entra app until the new one is live.
+          CURRENT_AZURE_CERTIFICATE=$(curl -sSf -H "Authorization: Bearer $DIGITALOCEAN_TOKEN" \
+            "https://api.digitalocean.com/v2/apps/$app" | jq -r '[.app.spec.services[]?.envs[]? |
+            select(.key == "CLOUDOPTICS_AZURE_CERTIFICATE") | .value][0] // ""')
+          export CURRENT_AZURE_CERTIFICATE
+          uv run python infra/azure/entra_certificate.py
       - name: Apply settings to App Platform and deploy
         # Also reads what bootstrap.py wrote to GITHUB_ENV: the broker key or Roles Anywhere
         # certificate (the private key masked), role ARN, KMS key and template URLs.

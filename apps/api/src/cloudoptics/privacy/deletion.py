@@ -86,6 +86,7 @@ TABLES: dict[str, TenantTable] = {
     "cloud_account": TenantTable("connection_id"),
     # Where a Google Cloud connection's bill is (migration 0044, ADR-019).
     "gcp_connection": TenantTable("connection_id"),
+    "azure_connection": TenantTable("connection_id"),  # ADR-020
     "connection_intent": TenantTable("connection_id"),
     "sync_run": TenantTable("connection_id"),
     "ingest_batch": TenantTable("connection_id"),

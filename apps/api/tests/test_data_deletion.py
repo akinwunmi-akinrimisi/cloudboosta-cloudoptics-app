@@ -176,6 +176,16 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
             conn,
         ),
         (
+            # ADR-020: Azure settings beside a connection (seeded on this one for the guards).
+            "INSERT INTO azure_connection (connection_id, tenant_id, directory_id, scope_type, "
+            "subscription_ids, storage_account, container) VALUES (%s, %s, %s, 'subscription', "
+            "ARRAY[%s], 'costexports', 'focus')",
+            conn,
+            tenant,
+            uuid.uuid4(),
+            str(uuid.uuid4()),
+        ),
+        (
             "INSERT INTO connection_intent (id, tenant_id, external_id_enc, connection_id) "
             "VALUES (%s, %s, '\\x00', %s)",
             uuid.uuid4(),
