@@ -138,7 +138,8 @@ describe('validateAzureForm', () => {
   })
 })
 
-describe('Connect Azure wizard', () => {
+// Whole journeys typed key by key: more than the 5 s default when the suite runs in parallel.
+describe('Connect Azure wizard', { timeout: 20_000 }, () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
@@ -193,7 +194,8 @@ describe('Connect Azure wizard', () => {
     expect(await screen.findByRole('heading', { name: 'Connected' })).toBeTruthy()
     for (const c of DEMO_AZURE_CHECKS) expect(screen.getByText(c.label)).toBeTruthy()
     expect(screen.getByText('Access checked. Connected.')).toBeTruthy()
-    expect(screen.getByText("Your first Azure costs appear after the export's first run (up to a day).")).toBeTruthy()
+    expect(screen.getByText('First Azure costs')).toBeTruthy()
+    expect(screen.getByText("after the export's first run (up to a day)")).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Go to my workspace' }))
     expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
   })

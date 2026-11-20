@@ -5,7 +5,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-import { appPath, openSignedIn, seedSupportGrant, seedWorkspace, signInApi, uniqueEmail } from './support'
+import { API_URL, appPath, openSignedIn, seedSupportGrant, seedWorkspace, signInApi, uniqueEmail } from './support'
 
 // axe-core on each main page with real layout (docs/11f §1.1 "Accessibility"), on a few
 // opened states (inline confirmations, the mobile menu) and at a phone width. Any violation
@@ -132,6 +132,28 @@ test('axe on each main page', async ({ page, browser, request }) => {
     'href',
     '/how-it-works#what-the-stack-creates',
   )
+  // The other clouds' connect steps, from the same picker.
+  for (const [cloud, heading] of [
+    ['Google Cloud', 'Connect Google Cloud'],
+    ['Azure', 'Connect your Azure subscription'],
+    ['DigitalOcean', 'Connect DigitalOcean'],
+  ]) {
+    await anon.getByRole('radio', { name: new RegExp(`^${cloud}`) }).check()
+    await expect(anon.getByRole('heading', { level: 1, name: heading })).toBeVisible()
+    await anon.waitForLoadState('networkidle')
+    results.push(await audit(anon, `Onboarding: connect ${cloud}`, `/onboarding (step 2, ${cloud})`))
+  }
+  // Google Cloud's second page: the commands to run (a fake billing account of its own).
+  const fake = await request.post(`${API_URL}/__e2e/gcp/billing-account`)
+  expect(fake.ok()).toBeTruthy()
+  const gcp = (await fake.json()) as { billingAccountId: string; project: string; dataset: string }
+  await anon.getByRole('radio', { name: /^Google Cloud/ }).check()
+  await anon.getByLabel(/Billing account ID/).fill(gcp.billingAccountId)
+  await anon.getByLabel(/Project that holds the export/).fill(gcp.project)
+  await anon.getByLabel(/^Dataset/).first().fill(gcp.dataset)
+  await anon.getByRole('button', { name: 'Continue' }).click()
+  await expect(anon.getByRole('heading', { level: 1, name: 'Give Cloudoptics read access' })).toBeVisible()
+  results.push(await audit(anon, 'Onboarding: Google Cloud commands', '/onboarding (step 2, Google Cloud commands)'))
   await fresh.close()
 
   // The internal staff console (break-glass access), with a grant listed.

@@ -95,7 +95,8 @@ describe('Cloudoptics web app', () => {
     expect(screen.queryByLabelText('AWS account ID')).toBeNull()
     // One click is the way in; deploying the template by hand is the alternative underneath.
     const oneClick = await screen.findByRole('link', { name: /Open AWS and connect/ })
-    expect(screen.getByText('Press the button below. AWS opens with everything filled in.')).toBeTruthy()
+    expect(screen.getByText('Press the button')).toBeTruthy()
+    expect(screen.getByText('AWS opens with everything filled in')).toBeTruthy()
     const alternative = screen.getByText('Prefer to deploy the template yourself?')
     await user.click(alternative)
     const download = screen.getByRole('link', { name: /Download template/ })
@@ -106,7 +107,7 @@ describe('Cloudoptics web app', () => {
     expect(await screen.findByRole('heading', { name: 'Connected' })).toBeTruthy()
     expect(screen.getByText('Healthy')).toBeTruthy()
     expect(screen.getByText('Find the CUR 2.0 export')).toBeTruthy()
-    expect(screen.getByText(/Your first costs appear within a day/)).toBeTruthy()
+    expect(screen.getByText('within a day, when AWS delivers the first bill')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Go to my workspace' }))
     expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
     await waitFor(() => expect(screen.getByText(/Lagos Ledger · KES · Africa\/Nairobi/)).toBeTruthy())
@@ -902,7 +903,7 @@ describe('Cloudoptics web app', () => {
 
     await user.click(screen.getByRole('button', { name: 'Set up again' }))
     expect(await screen.findByRole('heading', { name: 'Move to the single CloudOptics stack' })).toBeTruthy()
-    expect(screen.getByText(/sign in to AWS account 343434343434/)).toBeTruthy()
+    expect(screen.getByText('Sign in to AWS account 343434343434')).toBeTruthy()
     await user.click(screen.getByRole('link', { name: 'Back to Connections' }))
     await user.click(await screen.findByRole('link', { name: 'Connections' }))
     await user.click(await screen.findByRole('button', { name: 'Disconnect…' }))

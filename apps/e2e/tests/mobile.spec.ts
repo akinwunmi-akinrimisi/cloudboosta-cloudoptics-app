@@ -141,5 +141,16 @@ test('onboarding fits a phone: create the workspace, then connect AWS', async ({
   await page.setViewportSize({ width: 320, height: 640 })
   o = await overflow(page)
   expect(o.scrollWidth, `permissions at 320 px: ${o.wide.join(', ')}`).toBeLessThanOrEqual(o.width)
+  // The other clouds' connect steps fit too.
+  for (const [cloud, heading] of [
+    ['Google Cloud', 'Connect Google Cloud'],
+    ['Azure', 'Connect your Azure subscription'],
+    ['DigitalOcean', 'Connect DigitalOcean'],
+  ]) {
+    await page.getByRole('radio', { name: new RegExp(`^${cloud}`) }).check()
+    await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible()
+    o = await overflow(page)
+    expect(o.scrollWidth, `${cloud} at 320 px: ${o.wide.join(', ')}`).toBeLessThanOrEqual(o.width)
+  }
   await context.close()
 })
