@@ -28,6 +28,8 @@ import type {
   ConnectionCreate,
   ConnectionIntent,
   ConnectionSetup,
+  GcpConnectionCreate,
+  GcpSetup,
   IntentSetup,
   CostBreakdown,
   CostChanges,
@@ -282,6 +284,14 @@ export class HttpApi implements Api {
 
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup> {
     return this.request('GET', `/v1/tenants/${tenantId}/connections/${connectionId}/setup`)
+  }
+
+  createGcpConnection(tenantId: string, body: GcpConnectionCreate): Promise<GcpSetup> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connections/gcp`, body)
+  }
+
+  getGcpSetup(tenantId: string, connectionId: string): Promise<GcpSetup> {
+    return this.request('GET', `/v1/tenants/${tenantId}/connections/gcp/${connectionId}`)
   }
 
   costSummary(tenantId: string, month?: string | null): Promise<CostSummary> {

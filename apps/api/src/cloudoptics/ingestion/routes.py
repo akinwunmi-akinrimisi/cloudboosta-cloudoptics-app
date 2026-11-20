@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from cloudoptics import providers
 from cloudoptics.audit import log as audit
 from cloudoptics.connectors.service import ConnectionNotFoundError, get_connection
 from cloudoptics.identity.deps import AdminAccess, Session, ViewerAccess
@@ -243,12 +244,16 @@ async def ingest_now(
     connection_id: uuid.UUID, response: Response, access: AdminAccess, session: Session
 ) -> IngestOutcome:
     try:
-        await get_connection(session, connection_id)
+        conn = await get_connection(session, connection_id)
     except ConnectionNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Connection not found") from exc
 
     if get_settings().jobs_mode == "inline":
-        result = await ingest_connection(access.tenant_id, connection_id)
+        plugin = providers.find(conn.provider)
+        if conn.provider == "aws" or plugin is None or plugin.billing_source is None:
+            result: Any = await ingest_connection(access.tenant_id, connection_id)
+        else:
+            result = await plugin.billing_source.ingest(access.tenant_id, connection_id)
         return IngestOutcome(
             connection_id=connection_id,
             status=result.status,
@@ -353,7 +358,8 @@ async def reload_bills(
     reconciliation, budgets, anomalies and the analysis run again. Once an hour per
     connection."""
     conn = await _connection(session, connection_id)
-    if conn.status not in INGESTABLE or not conn.cur_bucket:
+    # AWS reads a CUR bucket; other providers keep their export settings in their plug-in.
+    if conn.status not in INGESTABLE or (conn.provider == "aws" and not conn.cur_bucket):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "Check the connection first: bills are reloaded for a working connection with an "
@@ -397,7 +403,16 @@ async def reload_bills(
 
     requested_at = datetime.now(UTC)
     if get_settings().jobs_mode == "inline":
-        result = await reload.reload_connection(access.tenant_id, connection_id, period)
+        source = providers.find(conn.provider)
+        if source is None or source.billing_source is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Bills cannot be reloaded for this cloud."
+            )
+        # Every plug-in answers with reload.ReloadResult (its periods and errors are shown).
+        result = cast(
+            reload.ReloadResult,
+            await source.billing_source.reload(access.tenant_id, connection_id, period),
+        )
         if result.reloaded:
             await reload.after_reload_inline(access.tenant_id, connection_id, result.reloaded)
         periods = [p.as_json() for p in result.periods]

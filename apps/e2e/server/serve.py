@@ -13,7 +13,11 @@ What it does, in order:
 3. Writes two months of synthetic Cost and Usage Report (tools/cur-fixture) into a folder
    laid out like the export bucket: last month and this month.
 4. Swaps the AWS session factory for ``fake_aws.FakeSessionFactory`` and the bill source for
-   that folder, then serves the app with uvicorn on 127.0.0.1.
+   that folder, and points the Google Cloud plug-in at the fake Google Cloud
+   (apps/api/tests/fake_gcp.py) with two months of synthetic FOCUS rows. Two test-only routes
+   stand in for what the customer does in Google Cloud: ``POST /__e2e/gcp/billing-account``
+   (a fresh billing account for the test's export) and ``POST /__e2e/gcp/label`` (the
+   ``bq update --set_label`` command). Then it serves the app with uvicorn on 127.0.0.1.
 
 Every workspace's connection reads the same bills; the stack callback, validation, the
 resource scan, metrics and analysis all run for real against the fakes.
@@ -150,6 +154,29 @@ def install_fakes(bills: Path, totals: dict[str, dict[str, float]]) -> None:
     ingestion.set_source_factory(lambda conn, tenant_id: BucketFolder(bills))
 
 
+def install_gcp(app: object) -> None:
+    """The fake Google Cloud, and the routes a test uses to act as the customer there."""
+    sys.path.insert(0, str(REPO / "apps" / "api" / "tests"))
+    from fake_gcp import DATASET, EXPORT_PROJECT, FakeGcp, install, new_billing_account
+    from fastapi import Body
+
+    fake = FakeGcp().bill().grant_all()
+    install(fake)
+
+    def billing_account() -> dict[str, str]:
+        fake.billing_account = new_billing_account()
+        fake.bill()
+        return {"billingAccountId": fake.billing_account, "project": EXPORT_PROJECT,
+                "dataset": DATASET}  # fmt: skip
+
+    def label(key: str = Body(), value: str = Body()) -> dict[str, str]:
+        fake.set_label(EXPORT_PROJECT, DATASET, key, value)
+        return {"status": "labelled"}
+
+    app.add_api_route("/__e2e/gcp/billing-account", billing_account, methods=["POST"])  # type: ignore[attr-defined]
+    app.add_api_route("/__e2e/gcp/label", label, methods=["POST"])  # type: ignore[attr-defined]
+
+
 def main() -> None:
     urls = configure()
     sys.path.insert(0, str(HERE))
@@ -166,7 +193,9 @@ def main() -> None:
     from cloudoptics.main import create_app
 
     port = int(os.environ.get("CLOUDOPTICS_E2E_PORT", "8000"))
-    config = uvicorn.Config(create_app(), host="127.0.0.1", port=port, log_level="warning")
+    app = create_app()
+    install_gcp(app)
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     # psycopg's async driver needs a selector event loop (Windows defaults to proactor).
     asyncio.run(uvicorn.Server(config).serve(), loop_factory=asyncio.SelectorEventLoop)
 

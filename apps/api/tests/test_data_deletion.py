@@ -205,6 +205,15 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
             rec,
         ),
         (
+            # A Google Cloud connection's settings row (0044); keyed by the connection.
+            "INSERT INTO gcp_connection (connection_id, tenant_id, billing_account_id, "
+            "export_project_id, export_dataset_id, export_table_id, export_kind, "
+            "query_project_id) VALUES (%s, %s, '01A2B3-C4D5E6-F7A8B9', 'acme-billing', "
+            "'billing_export', 'focus', 'focus_export', 'acme-billing')",
+            conn,
+            tenant,
+        ),
+        (
             "INSERT INTO anomaly (id, tenant_id, usage_date, provider_account_id, service_code, "
             "service_name, actual_usd, expected_usd, mad_usd, impact_usd, engine_version) "
             "VALUES (%s, %s, '2026-10-02', %s, 'AmazonEC2', 'EC2', 10, 1, 1, 9, 'test')",

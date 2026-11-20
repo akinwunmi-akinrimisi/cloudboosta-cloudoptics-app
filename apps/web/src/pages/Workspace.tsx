@@ -24,7 +24,7 @@ import { WhatChanged } from './Forecast'
 import { ReloadBills } from './ReloadBills'
 import type { FxRate } from '../lib/currency'
 import { formatDual, formatMoney } from '../lib/currency'
-import { accountLabel, workspaceProviders } from '../lib/providers'
+import { accountLabel, connectionLabel, providerOf, workspaceProviders } from '../lib/providers'
 import { ProviderBadge } from '../components/providers'
 
 export function useWorkspace() {
@@ -374,12 +374,16 @@ export function Connections() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="font-medium">
-                {accountLabel(c.provider, c.awsAccountId)}
+                {connectionLabel(c)}
                 {multiProvider && ' '}
                 <ProviderBadge provider={c.provider} show={multiProvider} />
               </p>
               <p className="text-xs text-muted">
-                {c.accountType === 'management' ? 'Management (payer) account' : 'Standalone account'}
+                {providerOf(c.provider) === 'gcp'
+                  ? 'Billing account, with every project billed to it'
+                  : c.accountType === 'management'
+                    ? 'Management (payer) account'
+                    : 'Standalone account'}
                 {c.lastValidatedAt && ` · checked ${new Date(c.lastValidatedAt).toLocaleString()}`}
               </p>
             </div>
@@ -401,7 +405,11 @@ export function Connections() {
               ))}
             </ul>
           )}
-          {isAdmin && tenantId !== null && c.status !== 'disconnected' && c.stackName !== ACCESS_STACK_NAME && (
+          {isAdmin &&
+            tenantId !== null &&
+            providerOf(c.provider) === 'aws' &&
+            c.status !== 'disconnected' &&
+            c.stackName !== ACCESS_STACK_NAME && (
             <MoveToSingleStack connection={c} />
           )}
           {isAdmin && tenantId !== null && c.stackName === ACCESS_STACK_NAME && c.status !== 'disconnected' && (
@@ -411,7 +419,11 @@ export function Connections() {
             tenantId !== null &&
             c.stackName === ACCESS_STACK_NAME &&
             (c.status === 'healthy' || c.status === 'degraded') && <ResourceAccess connection={c} tenantId={tenantId} />}
-          {isAdmin && tenantId !== null && c.curBucket && (c.status === 'healthy' || c.status === 'degraded') && (
+          {isAdmin &&
+            tenantId !== null &&
+            // AWS needs its CUR bucket; other clouds keep their export settings server-side.
+            (c.curBucket || providerOf(c.provider) !== 'aws') &&
+            (c.status === 'healthy' || c.status === 'degraded') && (
             <ReloadBills connection={c} tenantId={tenantId} />
           )}
         </Card>
@@ -478,13 +490,16 @@ function ConnectionActions({
     onSuccess: () => setConfirming(false),
     onSettled: refresh,
   })
+  const gcp = providerOf(c.provider) === 'gcp'
   const reconnect = useMutation({
-    mutationFn: () =>
-      api.createConnection(tenantId, {
-        awsAccountId: c.awsAccountId,
-        accountType: c.accountType,
-        createCurExport: c.createCurExport,
-      }),
+    mutationFn: async () =>
+      gcp
+        ? api.createGcpConnection(tenantId, (await api.getGcpSetup(tenantId, c.id)).settings)
+        : api.createConnection(tenantId, {
+            awsAccountId: c.awsAccountId,
+            accountType: c.accountType,
+            createCurExport: c.createCurExport,
+          }),
     onSuccess: (setup) => {
       refresh()
       void navigate({ to: '/onboarding', search: { connection: setup.connection.id } })
@@ -514,6 +529,12 @@ function ConnectionActions({
       {error && <Alert tone="error">{error.message}</Alert>}
       {confirming ? (
         <div ref={confirmPanel} className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
+          {gcp ? (
+            <p>
+              Disconnect {connectionLabel(c)}? Cloudoptics stops reading it and its open recommendations close. Past
+              costs stay. To remove our access completely, also remove the roles you gave {c.roleArn} in Google Cloud.
+            </p>
+          ) : (
           <p>
             Disconnect {accountLabel(c.provider, c.awsAccountId)}? Cloudoptics stops reading it and its open recommendations close.
             Past costs stay. To remove our access completely, also delete the{' '}
@@ -523,6 +544,7 @@ function ConnectionActions({
             </a>
             . AWS keeps the S3 bucket with your bills, and Cloudoptics reuses it if you connect again.
           </p>
+          )}
           <div className="flex gap-2">
             <Button disabled={busy} onClick={() => disconnect.mutate()}>
               Disconnect

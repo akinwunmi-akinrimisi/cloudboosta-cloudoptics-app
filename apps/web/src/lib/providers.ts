@@ -47,3 +47,12 @@ export function workspaceProviders(items: readonly { provider?: Provider | null 
 export function asProvider(value: unknown): Provider | undefined {
   return typeof value === 'string' && (PROVIDERS as readonly string[]).includes(value) ? (value as Provider) : undefined
 }
+
+/**
+ * What a connection reads, for its card and messages: "AWS account 123456789012", or
+ * "Google Cloud billing account 012345-6789AB-CDEF01" (a Google Cloud connection is one billing
+ * account; its ID is in awsAccountId).
+ */
+export function connectionLabel(c: { provider?: Provider | null; awsAccountId: string }): string {
+  return providerOf(c.provider) === 'gcp' ? `Google Cloud billing account ${c.awsAccountId}` : accountLabel(c.provider, c.awsAccountId)
+}
