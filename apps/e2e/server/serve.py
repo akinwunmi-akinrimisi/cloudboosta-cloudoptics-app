@@ -271,6 +271,31 @@ def add_azure_routes(app: Any, fake: Any) -> None:
         return {"status": "tagged"}
 
 
+def add_outbox(app: Any) -> None:
+    """Emails are kept here instead of being sent; ``GET /__e2e/emails?to=`` reads them, as a
+    person would read their inbox (the connect-invite spec opens the link from its email)."""
+    from fastapi import Query
+
+    from cloudoptics.notifications.email import Email, set_mailer
+
+    sent: list[Email] = []
+
+    class Outbox:
+        async def send(self, email: Email) -> None:
+            sent.append(email)
+
+    set_mailer(Outbox())
+
+    def emails(to: str = Query()) -> list[dict[str, str]]:
+        return [
+            {"subject": e.subject, "text": e.text, "tag": e.tag}
+            for e in sent
+            if any(to.lower() in a.lower() for a in e.to)
+        ]
+
+    app.add_api_route("/__e2e/emails", emails, methods=["GET"])
+
+
 def main() -> None:
     urls = configure()
     sys.path.insert(0, str(HERE))
@@ -292,6 +317,7 @@ def main() -> None:
     install_gcp(app)
     add_azure_routes(app, azure)
     add_digitalocean_routes(app, digitalocean)
+    add_outbox(app)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     # psycopg's async driver needs a selector event loop (Windows defaults to proactor).
     asyncio.run(uvicorn.Server(config).serve(), loop_factory=asyncio.SelectorEventLoop)

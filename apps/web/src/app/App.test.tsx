@@ -139,10 +139,10 @@ describe('Cloudoptics web app', () => {
     expect(every.getAttribute('target')).toBe('_blank')
   })
 
-  it('copies the one-click link with a short note for a colleague', async () => {
+  it('still copies the one-click link with a short note, as the secondary hand-off', async () => {
     const user = await reachConnectStep()
     const oneClick = await screen.findByRole('link', { name: /Open AWS and connect/ })
-    await user.click(screen.getByRole('button', { name: 'Copy link for a colleague' }))
+    await user.click(screen.getByRole('button', { name: 'Or copy the AWS link' }))
     expect(await screen.findByText('Copied')).toBeTruthy()
     const text = await navigator.clipboard.readText()
     expect(text).toContain(oneClick.getAttribute('href'))
@@ -153,6 +153,43 @@ describe('Cloudoptics web app', () => {
     expect(text).not.toContain('CloudopticsPrincipalArn')
     // The page starts watching, so a stack the colleague creates moves it on (the demo connects at once).
     expect(await screen.findByRole('heading', { name: /Checking access|Connected/ })).toBeTruthy()
+  })
+
+  it('sends the AWS step to the cloud admin, who connects it without joining (demo)', async () => {
+    const user = await reachConnectStep()
+    // The role pre-check, then the hand-off.
+    expect(await screen.findByText(/can create IAM roles and CloudFormation stacks/)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Not you? Send this to your admin' }))
+    await user.type(screen.getByLabelText("Your admin's email"), 'ops@example.com')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    const status = await screen.findByText('ops@example.com')
+    expect(within(status.closest('[role="status"]') as HTMLElement).getByText('Sent')).toBeTruthy()
+    const link = screen.getByRole('link', { name: 'Open the link your admin gets' })
+    const token = (link.getAttribute('href') ?? '').split('/').pop() as string
+    cleanup()
+
+    // The admin's page: who asked, the one step, then done. No workspace navigation.
+    const api = new DemoApi(0)
+    renderWith(api, `/connect-invite/${token}`)
+    expect(await screen.findByText('For Lagos Ledger')).toBeTruthy()
+    expect(screen.getByText(/asked you to connect AWS\. Read-only/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Not you? Send this to your admin' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Or copy the AWS link' })).toBeNull()
+    expect(screen.queryByRole('navigation')).toBeNull()
+    await user.click(await screen.findByRole('link', { name: /Open AWS and connect/ }))
+    expect(await screen.findByRole('heading', { name: 'Done, you can close this page' }, { timeout: 8000 })).toBeTruthy()
+    cleanup()
+
+    // The sender sees it connected.
+    renderWith(new DemoApi(0), '/settings/connections')
+    const sent = await screen.findByRole('region', { name: 'Sent to cloud admins' })
+    expect(await within(sent).findByText('Connected')).toBeTruthy()
+    expect(within(sent).getByText('ops@example.com connected AWS.')).toBeTruthy()
+  })
+
+  it('refuses a link that does not work', async () => {
+    renderApp('/connect-invite/nottherealtokenatall')
+    expect(await screen.findByRole('heading', { name: 'This link does not work' })).toBeTruthy()
   })
 
   it('uses the same step names and times as the public site', async () => {

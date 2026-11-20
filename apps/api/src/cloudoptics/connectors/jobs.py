@@ -281,3 +281,15 @@ async def reencrypt_secrets(timestamp: int) -> str:
         return "kms not configured"
     report = await reencrypt_all()
     return f"{report.connections} connections, {report.links} links, {report.failed} failed"
+
+
+@blueprint.periodic(cron="*/15 * * * *")
+@blueprint.task(
+    name="connect_invites.sweep", queue="connections", queueing_lock="connect_invites.sweep"
+)
+async def sweep_connect_invites(timestamp: int) -> int:
+    """Every 15 minutes: tell senders when their cloud admin connected, or when a "send to my
+    cloud admin" link expired unused (ADR-022)."""
+    from cloudoptics.connectors.handoff import sweep
+
+    return await sweep()

@@ -35,6 +35,9 @@ import type {
   ConnectionCreate,
   ConnectionIntent,
   ConnectionSetup,
+  ConnectInvite,
+  ConnectInviteView,
+  InviteSessionApi,
   GcpConnectionCreate,
   GcpSettings,
   GcpSetup,
@@ -83,6 +86,7 @@ import { ApiError } from './types'
 import { demoAdvisory, demoCommitments, demoR8 } from './demoCommitments'
 import { demoCsv } from './demoExports'
 import { DEMO_AZURE_CHECKS, demoAzureConnection, demoAzureSetup, demoOwnershipCode } from './demoAzure'
+import { GRANTS, WHO_CAN } from '../lib/handoff'
 
 // In-browser stand-in for the API, used by the public GitHub Pages build. Nothing leaves
 // the browser and no AWS call is made; state lives in this viewer's localStorage only.
@@ -112,6 +116,8 @@ const COUNTRY: Record<string, [string, string]> = {
   TZ: ['TZS', 'Africa/Dar_es_Salaam'],
   GB: ['GBP', 'Europe/London'],
 }
+
+type DemoInvite = ConnectInvite & { token: string; intentId: string | null }
 
 interface State {
   me: Me | null
@@ -151,6 +157,8 @@ interface State {
   reloads?: Record<string, { requestedAt: string; period: string | null }>
   /** Deletion requests per tenant, newest first. A workspace deletion never comes due in the demo. */
   deletions?: Record<string, DataDeletion[]>
+  /** "Send to my cloud admin" requests per tenant; the demo's link opens in this browser. */
+  connectInvites?: Record<string, DemoInvite[]>
   /** One-click links waiting for the (simulated) stack to report back. */
   intents?: Record<string, { tenantId: string; createdAt: number; connectionId: string | null }>
   /** Google Cloud connections: where the export is, and the connection's own Cloudoptics account. */
@@ -1237,6 +1245,193 @@ export class DemoApi implements Api {
     throw new ApiError(404, 'Member not found')
   }
 
+  async sendConnectInvite(tenantId: string, email: string, provider: Provider): Promise<ConnectInvite> {
+    await this.tick()
+    const me = this.requireMe()
+    this.tenant(tenantId)
+    const address = email.trim().toLowerCase()
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
+      throw new ApiError(422, 'Request validation failed', [{ field: 'email', message: 'Enter an email address.' }])
+    }
+    const all = ((this.state.connectInvites ??= {})[tenantId] ??= [])
+    for (const old of all) {
+      if (old.provider === provider && old.email === address && !old.connectedAt && !old.revokedAt) {
+        old.revokedAt = new Date().toISOString()
+        old.status = 'revoked'
+      }
+    }
+    const now = new Date()
+    const token = `demo${randomId().replace(/-/g, '')}`
+    const invite: DemoInvite = {
+      id: randomId(),
+      provider,
+      email: address,
+      status: 'sent',
+      invitedByEmail: me.email,
+      createdAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 7 * DAY_MS).toISOString(),
+      openedAt: null,
+      connectedAt: null,
+      revokedAt: null,
+      connectionId: null,
+      // Nothing leaves the browser: the demo shows the admin's link instead of emailing it.
+      emailSent: false,
+      demoLink: `#/connect-invite/${token}`,
+      token,
+      intentId: null,
+    }
+    all.unshift(invite)
+    this.save()
+    return publicInvite(invite)
+  }
+
+  /** As the API's settle: connected once its connection works, expired after 7 days. */
+  private settleInvite(tenantId: string, i: DemoInvite): void {
+    if (i.revokedAt || i.connectedAt) return
+    if (!i.connectionId && i.intentId) i.connectionId = this.state.intents?.[i.intentId]?.connectionId ?? null
+    const conn = (this.state.connections[tenantId] ?? []).find((c) => c.id === i.connectionId)
+    if (conn && (conn.status === 'healthy' || conn.status === 'degraded')) {
+      i.connectedAt = new Date().toISOString()
+      i.status = 'connected'
+    } else if (new Date(i.expiresAt).getTime() <= Date.now()) {
+      i.status = 'expired'
+    } else {
+      i.status = i.openedAt ? 'opened' : 'sent'
+    }
+  }
+
+  async listConnectInvites(tenantId: string): Promise<ConnectInvite[]> {
+    await this.tick()
+    this.tenant(tenantId)
+    const all = this.state.connectInvites?.[tenantId] ?? []
+    all.forEach((i) => this.settleInvite(tenantId, i))
+    this.save()
+    return all.map(publicInvite)
+  }
+
+  async revokeConnectInvite(tenantId: string, inviteId: string): Promise<void> {
+    await this.tick()
+    const invite = (this.state.connectInvites?.[tenantId] ?? []).find((i) => i.id === inviteId)
+    if (!invite) throw new ApiError(404, 'Request not found')
+    if (invite.connectedAt) {
+      throw new ApiError(409, 'This request already connected an account. Disconnect the connection instead.')
+    }
+    invite.revokedAt ??= new Date().toISOString()
+    invite.status = 'revoked'
+    this.save()
+  }
+
+  private findInvite(token: string): [string, DemoInvite] {
+    for (const [tenantId, list] of Object.entries(this.state.connectInvites ?? {})) {
+      const invite = list.find((i) => i.token === token)
+      if (invite) return [tenantId, invite]
+    }
+    throw new ApiError(404, 'This link is not valid. Open the newest link from your email, or ask for a new one.')
+  }
+
+  private inviteView(tenantId: string, i: DemoInvite): ConnectInviteView {
+    return {
+      provider: i.provider,
+      email: i.email,
+      status: i.status,
+      requestedBy: { name: this.state.me?.displayName ?? null, email: i.invitedByEmail },
+      workspaceName: this.state.tenants.find((t) => t.id === tenantId)?.name ?? 'Your workspace',
+      expiresAt: i.expiresAt,
+      grants: GRANTS[i.provider],
+      whoCan: WHO_CAN[i.provider],
+      connection: structuredClone((this.state.connections[tenantId] ?? []).find((c) => c.id === i.connectionId) ?? null),
+    }
+  }
+
+  async openConnectInvite(token: string): Promise<{ sessionToken: string; invite: ConnectInviteView }> {
+    await this.tick()
+    const [tenantId, invite] = this.findInvite(token)
+    this.settleInvite(tenantId, invite)
+    if (invite.revokedAt) throw new ApiError(410, 'This link was withdrawn. Ask the person who sent it for a new one.')
+    if (invite.connectedAt) throw new ApiError(410, 'This link already connected an account. You can close this page.')
+    if (invite.status === 'expired') throw new ApiError(410, 'This link has expired. Ask the person who sent it for a new one.')
+    invite.openedAt ??= new Date().toISOString()
+    invite.status = 'opened'
+    this.save()
+    return { sessionToken: token, invite: this.inviteView(tenantId, invite) }
+  }
+
+  /** The demo's session runs the demo's own connect steps for the invite's workspace. */
+  inviteSession(sessionToken: string): InviteSessionApi {
+    const current = () => {
+      const [tenantId, invite] = this.findInvite(sessionToken)
+      if (invite.revokedAt) throw new ApiError(410, 'This link was withdrawn. Ask the person who sent it for a new one.')
+      return { tenantId, invite }
+    }
+    const link = (connectionId: string) => {
+      current().invite.connectionId = connectionId
+      this.save()
+    }
+    const own = () => {
+      const { tenantId, invite } = current()
+      if (!invite.connectionId) throw new ApiError(404, 'Nothing is connected through this link yet')
+      return { tenantId, connectionId: invite.connectionId }
+    }
+    return {
+      view: async () => {
+        await this.tick()
+        const { tenantId, invite } = current()
+        this.settleInvite(tenantId, invite)
+        this.save()
+        return this.inviteView(tenantId, invite)
+      },
+      check: async () => {
+        const { tenantId, connectionId } = own()
+        const conn = await this.validateConnection(tenantId, connectionId)
+        this.settleInvite(tenantId, current().invite)
+        this.save()
+        return conn
+      },
+      createIntent: async () => {
+        const { tenantId, invite } = current()
+        const setup = await this.createIntent(tenantId)
+        invite.intentId = setup.intent.id
+        this.save()
+        return setup
+      },
+      getIntent: async (id) => {
+        const intent = await this.getIntent(current().tenantId, id)
+        if (intent.connectionId) link(intent.connectionId)
+        return intent
+      },
+      createGcpConnection: async (body) => {
+        const setup = await this.createGcpConnection(current().tenantId, body)
+        link(setup.connection.id)
+        return setup
+      },
+      getGcpSetup: () => {
+        const { tenantId, connectionId } = own()
+        return this.getGcpSetup(tenantId, connectionId)
+      },
+      createAzureConnection: async (body) => {
+        const setup = await this.createAzureConnection(current().tenantId, body)
+        link(setup.connection.id)
+        return setup
+      },
+      getAzureConnection: () => {
+        const { tenantId, connectionId } = own()
+        return this.getAzureConnection(tenantId, connectionId)
+      },
+      connectDigitalOcean: async (token) => {
+        const conn = await this.connectDigitalOcean(current().tenantId, token)
+        link(conn.id)
+        return conn
+      },
+      digitalOceanOAuth: () => this.digitalOceanOAuth(current().tenantId),
+      startDigitalOceanOAuth: () => this.startDigitalOceanOAuth(current().tenantId),
+      finishDigitalOceanOAuth: async (code, state) => {
+        const conn = await this.finishDigitalOceanOAuth(current().tenantId, code, state)
+        link(conn.id)
+        return conn
+      },
+    }
+  }
+
   async listConnections(tenantId: string): Promise<Connection[]> {
     await this.tick()
     this.tenant(tenantId)
@@ -1328,6 +1523,7 @@ export class DemoApi implements Api {
       callbackUrl: 'https://cloudoptics.example/api/v1/cfn/callback',
       connectionRef: `i:${id}`,
       stackRegion: 'us-east-1',
+      tenantId,
     }
   }
 
@@ -3204,4 +3400,12 @@ export class DemoApi implements Api {
         encodeURIComponent(`${base}/cloudoptics-access.yaml`),
     }
   }
+}
+
+/** A demo request as the API returns it: no token. */
+function publicInvite(i: DemoInvite): ConnectInvite {
+  const copy: Partial<DemoInvite> = structuredClone(i)
+  delete copy.token
+  delete copy.intentId
+  return copy as ConnectInvite
 }

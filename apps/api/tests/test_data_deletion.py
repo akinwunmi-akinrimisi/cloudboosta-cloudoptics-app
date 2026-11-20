@@ -195,6 +195,17 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
             uuid.uuid4().bytes * 2,
         ),
         (
+            # ADR-022: a "send to my cloud admin" request that set up this connection.
+            "INSERT INTO connect_invite (id, tenant_id, provider, email, token_hash, "
+            "connection_id, expires_at) VALUES (%s, %s, 'aws', %s, %s, %s, "
+            "now() + interval '7 days')",
+            uuid.uuid4(),
+            tenant,
+            f"cloud-admin-{secrets.token_hex(3)}@example.com",
+            secrets.token_bytes(32),
+            conn,
+        ),
+        (
             "INSERT INTO connection_intent (id, tenant_id, external_id_enc, connection_id) "
             "VALUES (%s, %s, '\\x00', %s)",
             uuid.uuid4(),

@@ -14,6 +14,7 @@ import type {
   RecommendationSummary,
 } from '../api/types'
 import { DailySpendChart, ShareList } from '../components/charts'
+import { ConnectInvites } from '../components/handoff'
 import { useEscapeToClose } from '../components/overlay'
 import { Alert, Button, Card, StatusPill, cx } from '../components/ui'
 import { ACCESS_STACK_NAME } from '../api/types'
@@ -467,6 +468,7 @@ export function Connections() {
           )}
         </Card>
       ))}
+      {isAdmin && tenantId !== null && <ConnectInvites tenantId={tenantId} />}
       {tenantId !== null && connections.data && connections.data.length > 0 && (
         <Accounts tenantId={tenantId} showProvider={multiProvider} providers={providers} />
       )}

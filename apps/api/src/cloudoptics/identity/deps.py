@@ -150,6 +150,14 @@ class TenantAccess:
     role: Role
     # Set when a Cloudoptics staff member is here under a break-glass grant (read-only).
     support_grant_id: uuid.UUID | None = None
+    # Set inside a connect-invite session (ADR-022): ``user`` is then the admin who sent the
+    # invite (connections record them as ``created_by``), and the person acting is the invite.
+    connect_invite_id: uuid.UUID | None = None
+
+    @property
+    def binding_id(self) -> uuid.UUID:
+        """What a sign-in state is bound to: the invite in an invite session, else the user."""
+        return self.connect_invite_id or self.user.id
 
 
 SUPPORT_READ_ONLY_TITLE = "Cloudoptics support access is read-only"
