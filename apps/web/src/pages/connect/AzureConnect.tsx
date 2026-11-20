@@ -7,7 +7,7 @@ import type { AzureConnection, AzureConnectionCreate, AzureConnectionSetup, Azur
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
 import { Checks, Chips, Disclosure, Flow, NewTab, Next, Todo, TodoItem } from '../../components/onboarding'
-import { Alert, Field, StatusPill, cx } from '../../components/ui'
+import { Alert, Button, Field, StatusPill, cx } from '../../components/ui'
 import { accountLabel } from '../../lib/providers'
 
 export interface WizardProps {
@@ -315,7 +315,17 @@ const FLOW = {
 const ROLES = ['Reader', 'Cost Management Reader', 'Storage Blob Data Reader']
 
 /** A value to paste somewhere else, wrapped (never scrolled sideways), with a Copy button. */
-export function CopyBlock({ label, value }: { label: string; value: string }) {
+export function CopyBlock({
+  label,
+  value,
+  paper = false,
+}: {
+  label: string
+  value: string
+  /** The onboarding's paper look (pages/onboarding.css). Off for the Connections page, which
+   * does not load that stylesheet. */
+  paper?: boolean
+}) {
   const id = useId()
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const copy = () => {
@@ -325,21 +335,50 @@ export function CopyBlock({ label, value }: { label: string; value: string }) {
       () => setState('failed'),
     )
   }
+  const status = state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Select the text and copy it.' : ''
+  const icon = state === 'copied' ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />
+  if (paper) {
+    return (
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="ed-copyhead">
+          <span id={id}>{label}</span>
+          <span className="flex flex-wrap items-center gap-2">
+            <span role="status" className="ed-copied">
+              {status}
+            </span>
+            <button type="button" className="ed-btn ghost sm" onClick={copy} aria-label={`Copy ${label}`}>
+              {icon}
+              Copy
+            </button>
+          </span>
+        </div>
+        <pre aria-labelledby={id} tabIndex={0} className="ed-term scroll">
+          {value}
+        </pre>
+      </div>
+    )
+  }
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <div className="ed-copyhead">
-        <span id={id}>{label}</span>
-        <span className="flex flex-wrap items-center gap-2">
-          <span role="status" className="ed-copied">
-            {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Select the text and copy it.' : ''}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span id={id} className="text-xs font-medium text-secondary">
+          {label}
+        </span>
+        <span className="flex items-center gap-2">
+          <span role="status" className="text-xs text-secondary">
+            {status}
           </span>
-          <button type="button" className="ed-btn ghost sm" onClick={copy} aria-label={`Copy ${label}`}>
-            {state === 'copied' ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+          <Button variant="secondary" onClick={copy} aria-label={`Copy ${label}`}>
+            {icon}
             Copy
-          </button>
+          </Button>
         </span>
       </div>
-      <pre aria-labelledby={id} tabIndex={0} className="ed-term scroll">
+      <pre
+        aria-labelledby={id}
+        tabIndex={0}
+        className="max-h-72 overflow-y-auto rounded-sm bg-surface-2 px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap"
+      >
         {value}
       </pre>
     </div>
@@ -437,12 +476,12 @@ function AzureSetupView({ tenantId, setup }: { tenantId: string; setup: AzureCon
               <Tag size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
               Also tags your storage account, as proof it is yours.
             </p>
-            <CopyBlock label="Azure CLI command" value={setup.roleAssignmentCommand} />
+            <CopyBlock paper label="Azure CLI command" value={setup.roleAssignmentCommand} />
             <Disclosure summary="Prefer the Azure portal?" className="mt-0">
               <Steps items={setup.portalRoleSteps} />
               <div className="mt-3 flex flex-col gap-3">
-                <CopyBlock label="Cloudoptics application (client) ID" value={setup.clientId} />
-                <CopyBlock label={`Tag ${setup.ownershipTag}`} value={setup.ownershipCode} />
+                <CopyBlock paper label="Cloudoptics application (client) ID" value={setup.clientId} />
+                <CopyBlock paper label={`Tag ${setup.ownershipTag}`} value={setup.ownershipCode} />
               </div>
             </Disclosure>
           </TodoItem>
