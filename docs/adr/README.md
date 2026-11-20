@@ -23,3 +23,4 @@ Format: context, decision, consequences, alternatives. Source of truth for the d
 | [ADR-017](017-customer-companies-only-and-self-serve-sign-up.md) | Customer companies only, self-serve sign-up, one verified workspace per cloud account | Decided 19 Nov 2026 |
 | [ADR-018](018-provider-neutral-core.md) | Provider-neutral core: provider on every fact table, neutral account IDs, native currency, provider plug-ins | Decided 19 Nov 2026 |
 | [ADR-019](019-google-cloud-provider.md) | Google Cloud provider: Workload Identity Federation from the AWS broker, dataset-label ownership proof, FOCUS from BigQuery, Recommender | Decided 20 Nov 2026 |
+| [ADR-021](021-digitalocean-provider.md) | DigitalOcean provider: a customer-made read-only token, stored encrypted; invoices and month to date into the shared cost tables | Decided 20 Nov 2026 |

@@ -791,6 +791,21 @@ function randomId(): string {
   return crypto.randomUUID()
 }
 
+/** What a working read-only DigitalOcean token shows on the Connections page. */
+const DEMO_DO_CHECKS: PermissionCheck[] = [
+  { id: 'account', label: 'Read the team', status: 'ok', message: 'Team Sample Team.', hint: null },
+  { id: 'billing', label: 'Read the balance', status: 'ok', message: 'Works (billing:read).', hint: null },
+  { id: 'invoices', label: 'Read invoices', status: 'ok', message: 'Works (billing:read).', hint: null },
+  { id: 'droplets', label: 'List Droplets', status: 'ok', message: 'Works (droplet:read).', hint: null },
+  {
+    id: 'read_only',
+    label: 'Token is read-only',
+    status: 'ok',
+    message: 'DigitalOcean refuses changes with this token.',
+    hint: null,
+  },
+]
+
 function externalId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   return btoa(String.fromCharCode(...bytes))
@@ -1329,6 +1344,48 @@ export class DemoApi implements Api {
     }
   }
 
+  /** The demo keeps no token: it checks the shape and adds a working DigitalOcean team. */
+  async connectDigitalOcean(tenantId: string, token: string): Promise<Connection> {
+    await delay(this.latencyMs * 4)
+    this.tenant(tenantId)
+    if (!/^(do[po]_v1_)?[a-f0-9]{64}$/.test(token)) {
+      throw new ApiError(422, 'This does not look like a DigitalOcean token. Copy the whole token: it starts with dop_v1_.')
+    }
+    const team = randomId()
+    const conn: Connection = {
+      id: randomId(),
+      provider: 'digitalocean',
+      awsAccountId: team,
+      accountType: 'standalone',
+      roleArn: '',
+      status: 'healthy',
+      createCurExport: false,
+      curBucket: null,
+      curPrefix: null,
+      curExportArn: null,
+      permissionChecks: DEMO_DO_CHECKS.map((c) => ({ ...c })),
+      lastError: null,
+      lastValidatedAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      stackName: 'digitalocean-token',
+      stackVersion: null,
+    }
+    ;(this.state.connections[tenantId] ??= []).push(conn)
+    this.save()
+    return structuredClone(conn)
+  }
+
+  async replaceDigitalOceanToken(tenantId: string, connectionId: string, token: string): Promise<Connection> {
+    await delay(this.latencyMs * 2)
+    const conn = this.connection(tenantId, connectionId)
+    if (!/^(do[po]_v1_)?[a-f0-9]{64}$/.test(token)) {
+      throw new ApiError(422, 'This does not look like a DigitalOcean token. Copy the whole token: it starts with dop_v1_.')
+    }
+    conn.lastValidatedAt = new Date().toISOString()
+    this.save()
+    return structuredClone(conn)
+  }
+
   async disconnectConnection(tenantId: string, connectionId: string): Promise<void> {
     await this.tick()
     this.connection(tenantId, connectionId).status = 'disconnected'
@@ -1650,6 +1707,12 @@ export class DemoApi implements Api {
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {
     await delay(this.latencyMs * 4)
     const conn = this.connection(tenantId, connectionId)
+    if (conn.provider === 'digitalocean') {
+      conn.status = 'healthy'
+      conn.lastValidatedAt = new Date().toISOString()
+      this.save()
+      return structuredClone(conn)
+    }
     const gcp = this.state.gcp?.[conn.id]
     if (conn.provider === 'gcp' && gcp) {
       Object.assign(conn, {

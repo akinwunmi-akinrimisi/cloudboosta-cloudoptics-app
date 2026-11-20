@@ -9,7 +9,7 @@ import { ACCESS_STACK_NAME, ApiError } from '../api/types'
 import { rememberTenant, useApi, useCurrentTenantId, useMe } from '../app/context'
 import { PermissionPanel, SiteLinks } from '../components/permissions'
 import { Alert, Button, Card, Field, Logo, StatusPill, cx } from '../components/ui'
-import { connectionLabel } from '../lib/providers'
+import { connectionLabel, providerOf } from '../lib/providers'
 import { DEMO_URL, HOW_IT_WORKS_STACK, absoluteSiteUrl } from '../lib/site'
 import { GcpConnect } from './connect/GcpConnect'
 import { CONNECT_PROVIDERS, DEFAULT_CONNECT } from './connect/providers'
@@ -349,7 +349,7 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
       </h1>
       {conn && (
         <p className="mt-1 text-sm text-secondary">
-          {conn.provider === 'gcp' ? (
+          {providerOf(conn.provider) !== 'aws' ? (
             connectionLabel(conn)
           ) : (
             <>
@@ -387,7 +387,9 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
             <p className="mt-4 text-sm text-secondary">
               {conn.provider === 'gcp'
                 ? 'Your first costs appear in a few minutes, once Cloudoptics has read the export.'
-                : 'Your first costs appear within a day, when AWS delivers the first bill. Recommendations follow the first resource scan, a few minutes from now.'}
+                : conn.provider === 'digitalocean'
+                  ? "Your invoices are loaded and this month's spend shows as provisional. Recommendations follow the first resource scan."
+                  : 'Your first costs appear within a day, when AWS delivers the first bill. Recommendations follow the first resource scan, a few minutes from now.'}
             </p>
           )}
           <div className="mt-6 flex justify-end gap-2">

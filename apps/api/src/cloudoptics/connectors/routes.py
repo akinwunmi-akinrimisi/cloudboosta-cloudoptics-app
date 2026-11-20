@@ -342,6 +342,10 @@ async def get_setup(
     connection_id: uuid.UUID, access: AdminAccess, session: Session
 ) -> ConnectionSetup:
     row = await _load(session, connection_id)
+    if row.provider != "aws":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Only AWS connections are set up with a stack."
+        )
     return _setup(row, await read_external_id(session, row, access.tenant_id))
 
 

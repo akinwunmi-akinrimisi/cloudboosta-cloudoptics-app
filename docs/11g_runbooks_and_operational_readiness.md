@@ -643,6 +643,11 @@ The full owner steps, in order, with costs, are in the ADR-007 amendment. In sho
 
 Who pays: queries run in the customer's query project at BigQuery on-demand prices; `sync_run.scope.bytesBilled` and `est_customer_api_cost_usd` show each run's share.
 
+
+### RB-22: DigitalOcean connections (ADR-021)
+
+Symptoms, fixes and owner steps are in `apps/api/src/cloudoptics/providers/digitalocean/README.md`. In short: a `failed` connection whose "Read the team" check says the token was not accepted means the customer deleted the token or it expired, and they use **Replace token…**; a `degraded` one is missing a read scope (costs still load). Never ask a customer for their token or print one: the checks say what it can do.
+
 ### RB-19: Security-audit follow-ups
 
 The Sprint 6 audit (security-audit run 1, report kept outside the repository) had no confirmed findings: every candidate was left as "needs validation" because no target code could be run in a sandbox. Fixes have shipped for the leads in #76 (deploy guards: owned template URLs, push-only staging deploys, secrets-only setup, no public dev-auth port), #77 (MFA policy enforced), #78 (stack callback cannot act on the External ID alone; links expire) and #83 (bounded worker work per tenant, leads 11 to 17).

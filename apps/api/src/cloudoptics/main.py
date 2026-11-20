@@ -30,6 +30,7 @@ from cloudoptics.platform.conditional import NotModified
 from cloudoptics.platform.db import get_engine
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.privacy import routes as privacy_routes
+from cloudoptics.providers.digitalocean import routes as digitalocean_routes
 from cloudoptics.providers.gcp import routes as gcp_routes
 from cloudoptics.recommendations import routes as recommendation_routes
 from cloudoptics.reporting import routes as reporting_routes
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(connector_access.callback_router)
     # Before the shared connection routes: /connections/gcp is not a connection ID.
     app.include_router(gcp_routes.router)
+    app.include_router(digitalocean_routes.router)
     app.include_router(connector_routes.router)
     app.include_router(connector_routes.accounts_router)
     app.include_router(ingestion_routes.router)

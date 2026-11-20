@@ -15,4 +15,9 @@ export const RULES: Record<string, string> = {
   R6b_extended_support: 'Extended Support charge',
   R10_idle_nat: 'Idle NAT gateway',
   R8_savings_plan: 'Savings Plan',
+  DO1_unattached_volume: 'Unattached volume (DigitalOcean)',
+  DO2_unassigned_reserved_ip: 'Unassigned reserved IP (DigitalOcean)',
+  DO3_old_snapshot: 'Old snapshot (DigitalOcean)',
+  DO4_idle_droplet: 'Idle Droplet (DigitalOcean)',
+  DO5_idle_load_balancer: 'Idle load balancer (DigitalOcean)',
 }

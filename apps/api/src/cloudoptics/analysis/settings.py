@@ -133,6 +133,12 @@ RULE_IDS = [
     "R6b_extended_support",
     "R10_idle_nat",
     "R8_savings_plan",
+    # DigitalOcean (providers/digitalocean/rules.py, ADR-021).
+    "DO1_unattached_volume",
+    "DO2_unassigned_reserved_ip",
+    "DO3_old_snapshot",
+    "DO4_idle_droplet",
+    "DO5_idle_load_balancer",
 ]
 
 

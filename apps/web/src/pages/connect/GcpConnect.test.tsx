@@ -35,7 +35,7 @@ describe('Connect Google Cloud', () => {
   beforeEach(() => localStorage.clear())
 
   it('lists the registered clouds with AWS first and selected', async () => {
-    expect(CONNECT_PROVIDERS.map((p) => p.id)).toEqual(['aws', 'gcp'])
+    expect(CONNECT_PROVIDERS.map((p) => p.id)).toEqual(['aws', 'gcp', 'digitalocean'])
     await onboarding()
     expect(await screen.findByRole('heading', { name: 'Connect your AWS account' })).toBeTruthy()
     const picker = screen.getByRole('group', { name: 'Which cloud?' })

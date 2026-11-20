@@ -46,7 +46,7 @@ def test_aws_is_registered_with_every_capability_but_native_recs() -> None:
         assert aws.capability(name) is not None, name
     assert aws.native_recs is None
     assert "nat_gateway" in aws.resource_types
-    assert [p.name for p in providers.registered()] == ["aws", "gcp"]
+    assert [p.name for p in providers.registered()] == ["aws", "gcp", "digitalocean"]
 
 
 def test_unknown_and_unregistered_providers() -> None:
@@ -337,7 +337,7 @@ def test_the_rule_registry_keeps_the_engines_order_and_metadata() -> None:
     assert registry.spec_for("R6_graviton") is registry.spec_for("R6_newer_generation")
     assert registry.spec_for(R8_RULE) is not None and registry.spec_for("R9_gone") is None
     # Every rule a workspace can switch off is in the registry.
-    assert set(RULE_IDS) <= {r for s in specs for r in s.rule_ids}
+    assert set(RULE_IDS) <= {r for s in registry.all_rules() for r in s.rule_ids}
     spec = specs[0]
     with pytest.raises(DuplicateRuleError):
         check_unique((spec, RuleSpec("X", "aws", spec.rule_ids, frozenset(), 1)))

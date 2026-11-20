@@ -302,10 +302,13 @@ async def mark_disconnected(
 ) -> None:
     # The account is no longer reserved for this workspace (migration 0017): connecting it
     # again needs a fresh assume_role with the new External ID (audit run 1, lead 10).
+    # A stored API token (DigitalOcean, ADR-021) is wiped: nothing can use it again. AWS keeps
+    # its External ID, which only works with the customer's role.
     await session.execute(
         text(
             "UPDATE cloud_connection SET status = 'disconnected', health = NULL, "
-            "account_verified_at = NULL, pending_stack = NULL WHERE id = :c"
+            "account_verified_at = NULL, pending_stack = NULL, external_id_enc = CASE WHEN "
+            "provider = 'aws' THEN external_id_enc END WHERE id = :c"
         ),
         {"c": connection_id},
     )
