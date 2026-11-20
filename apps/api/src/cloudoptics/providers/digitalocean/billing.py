@@ -285,6 +285,12 @@ def map_invoice(data: InvoiceData, account_id: str, team_name: str | None) -> Lo
     period_last = month_end(inv.period) - timedelta(days=1)
     taxes = _summary_amount(data.summary, "taxes")
     credits = _summary_amount(data.summary, "credits_and_adjustments")
+    # The summary also has ``overages``. Whether the CSV lists them as lines is not documented,
+    # so they are added only when they account for what the lines, taxes and credits miss.
+    overages = _summary_amount(data.summary, "overages")
+    if overages and (inv.amount - (line_total + taxes + credits) - overages).copy_abs() < CENT:
+        sums[(period_last, "Overages", "Overages", "Usage", None)][0] += overages
+        line_total += overages
     if taxes:
         sums[(period_last, "Taxes", "Tax", "Tax", None)][0] += taxes
     if credits:
@@ -354,6 +360,13 @@ def list_invoices(client: Client) -> list[Invoice]:
             continue
     out.sort(key=lambda i: i.period, reverse=True)
     return out
+
+
+def safe_id(value: str) -> str:
+    """A team ID that is safe in a path (see ``TEAM_ID``)."""
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", value):
+        raise ValueError("not a DigitalOcean team ID")
+    return value
 
 
 def _safe_uuid(value: str) -> str:
@@ -522,7 +535,7 @@ def fetch_month_to_date(token: str, team_uuid: str, today: date) -> MonthToDate:
         balance = client.get("/v2/customers/my/balance") or {}
         total = parse_usd(str(balance.get("month_to_date_usage") or "0")) or Decimal(0)
         snap = MonthToDate(start, today, total)
-        path = f"/v2/billing/do:team:{_safe_uuid(team_uuid)}/insights/{start}/{today}"
+        path = f"/v2/billing/do:team:{safe_id(team_uuid)}/insights/{start}/{today}"
         page, pages = 1, 1
         try:
             while page <= min(pages, 50):

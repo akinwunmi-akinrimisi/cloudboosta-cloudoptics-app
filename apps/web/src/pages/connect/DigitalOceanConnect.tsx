@@ -9,7 +9,8 @@ import { useApi } from '../../app/context'
 import { Alert, Button, Card, Field } from '../../components/ui'
 
 /** DigitalOcean's page for a new personal access token. */
-export const DO_TOKEN_PAGE = 'https://cloud.digitalocean.com/account/api/tokens/new'
+/** Account → API in DigitalOcean's control panel: the Tokens tab, with Generate New Token. */
+export const DO_TOKEN_PAGE = 'https://cloud.digitalocean.com/account/api/tokens'
 /** Needed for costs. */
 export const DO_REQUIRED_SCOPES = ['account:read', 'billing:read']
 /** Turn on the resource scan and its recommendations. */
@@ -21,6 +22,7 @@ export const DO_RESOURCE_SCOPES = [
   'load_balancer:read',
   'database:read',
   'monitoring:read',
+  'tag:read',
 ]
 // Same shape as the API's check (providers/digitalocean/client.py TOKEN_PATTERN).
 const TOKEN = /^(do[po]_v1_)?[a-f0-9]{64}$/
@@ -57,11 +59,11 @@ export function TokenSteps() {
   return (
     <ol className="mt-4 flex flex-col gap-3">
       <Step icon={<ExternalLink size={16} />}>
-        In DigitalOcean, open{' '}
+        In DigitalOcean, switch to the team that gets the bill, open{' '}
         <a className="text-accent underline" href={DO_TOKEN_PAGE} target="_blank" rel="noreferrer">
-          API → Generate New Token
+          Account → API
         </a>{' '}
-        in the team that gets the bill.
+        and choose <strong>Generate New Token</strong>.
       </Step>
       <Step icon={<ListChecks size={16} />}>
         Choose <strong>Custom Scopes</strong> and tick only these:
@@ -70,7 +72,7 @@ export function TokenSteps() {
         <Scopes names={DO_RESOURCE_SCOPES} />
       </Step>
       <Step icon={<KeyRound size={16} />}>
-        Choose <strong>Generate Token</strong>, copy it and paste it below.
+        Pick an expiry, choose <strong>Generate Token</strong>, copy the token (it is shown once) and paste it below.
       </Step>
     </ol>
   )

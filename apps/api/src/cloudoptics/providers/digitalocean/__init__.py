@@ -23,7 +23,9 @@ if TYPE_CHECKING:
 
 #: DigitalOcean bills in US dollars.
 BILLING_CURRENCIES = frozenset({"USD"})
-TEAM_UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+#: The teams ``uuid`` from ``GET /v2/account``. The API reference types it as a string and its
+#: example is 40 hex digits, not a UUID, so any short ID of letters, digits and hyphens is taken.
+TEAM_ID = r"[A-Za-z0-9-]{1,64}"
 
 
 class Connect:
@@ -80,7 +82,7 @@ def build() -> CloudProvider:
         name="digitalocean",
         label="DigitalOcean",
         account_noun="account",
-        account_id_pattern=TEAM_UUID,
+        account_id_pattern=TEAM_ID,
         billing_currencies=BILLING_CURRENCIES,
         connect=Connect(),
         billing_source=BillingSource(),

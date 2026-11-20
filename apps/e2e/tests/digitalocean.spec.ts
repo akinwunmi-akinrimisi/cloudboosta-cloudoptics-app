@@ -27,9 +27,9 @@ test('an admin connects DigitalOcean with a read-only token and sees its costs',
   await test.step('choose DigitalOcean: the steps name the read scopes', async () => {
     await page.getByText('DigitalOcean', { exact: true }).click()
     await expect(page.getByRole('heading', { name: 'Connect DigitalOcean' })).toBeVisible()
-    await expect(page.getByRole('link', { name: /Generate New Token/ })).toHaveAttribute(
+    await expect(page.getByRole('link', { name: 'Account → API' })).toHaveAttribute(
       'href',
-      'https://cloud.digitalocean.com/account/api/tokens/new',
+      'https://cloud.digitalocean.com/account/api/tokens',
     )
     await expect(page.getByText('billing:read', { exact: true })).toBeVisible()
   })

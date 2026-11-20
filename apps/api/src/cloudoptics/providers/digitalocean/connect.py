@@ -14,6 +14,7 @@ and a stored write token would be a much larger secret to hold.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
@@ -35,7 +36,7 @@ from cloudoptics.providers.digitalocean.client import Client, DigitalOceanError
 CheckStatus = Literal["ok", "warning", "error", "skipped"]
 Status = Literal["healthy", "degraded", "failed"]
 
-TOKEN_PAGE = "https://cloud.digitalocean.com/account/api/tokens/new"  # noqa: S105 - a URL
+TOKEN_PAGE = "https://cloud.digitalocean.com/account/api/tokens"  # noqa: S105 - a URL
 #: The scopes the customer ticks (Custom scopes). ``billing:read`` and ``account:read`` are
 #: required; the others turn on the resource scan and its rules.
 REQUIRED_SCOPES = ("account:read", "billing:read")
@@ -47,6 +48,7 @@ RESOURCE_SCOPES = (
     "load_balancer:read",
     "database:read",
     "monitoring:read",
+    "tag:read",
 )
 WRITE_PROBES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("/v2/droplets", {}),
@@ -91,6 +93,7 @@ SCOPE_CHECKS: tuple[tuple[str, str, str, str, bool], ...] = (
     ("load_balancers", "List load balancers", "load_balancer:read", "/v2/load_balancers", False),
     ("databases", "List managed databases", "database:read", "/v2/databases", False),
     ("monitoring", "Read Droplet CPU", "monitoring:read", "/v2/monitoring/alerts", False),
+    ("tags", "Read tags", "tag:read", "/v2/tags", False),
 )
 
 
@@ -153,7 +156,7 @@ def inspect_token(client: Client, today: date | None = None) -> Inspection:
     team = account.get("team") or {}
     team_uuid = str(team.get("uuid") or account.get("uuid") or "")
     team_name = team.get("name") or None
-    if not team_uuid:
+    if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", team_uuid):
         checks.append(
             Check(
                 "account",

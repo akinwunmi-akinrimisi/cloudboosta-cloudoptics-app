@@ -63,7 +63,8 @@ def test_registered_with_costs_first_capabilities() -> None:
     do = providers.get("digitalocean")
     assert do.label == "DigitalOcean" and do.account_noun == "account"
     assert do.billing_currencies == frozenset({"USD"})
-    assert do.valid_account_id(str(uuid.uuid4())) and not do.valid_account_id("123456789012")
+    assert do.valid_account_id(str(uuid.uuid4())) and do.valid_account_id("5df3e3004a17e242b7c2")
+    assert not do.valid_account_id("team/../x") and not do.valid_account_id("")
     for name in ("connect", "billing_source", "reconcile", "inventory"):
         assert do.capability(name) is not None, name
     for name in ("credentials", "accounts", "metrics", "prices", "commitments", "native_recs"):
@@ -129,6 +130,22 @@ def test_map_invoice_checks() -> None:
     assert off.ok and {c.id: c.status for c in off.checks}["invoice_total"] == "warning"
     unreadable = body.replace("$4", "four")
     assert not billing.map_invoice(billing.InvoiceData(inv, unreadable), "t", None).ok
+
+
+def test_overages_are_added_only_when_the_lines_miss_them() -> None:
+    team = Team(str(uuid.uuid4()), "Acme", TODAY)
+    period = prev_month(TODAY)
+    summary = {**team.summary(period), "overages": {"name": "Overages", "amount": "4.00"}}
+    with_overage = billing.Invoice(team.invoice_uuid(period), period,
+                                   team.invoice_amount() + Decimal("4.00"))  # fmt: skip
+    loaded = billing.map_invoice(billing.InvoiceData(with_overage, team.csv(period), summary),
+                                 team.uuid, None)  # fmt: skip
+    assert sum(r.billed_cost for r in loaded.rows) == with_overage.amount
+    assert "Overages" in {r.service_name for r in loaded.rows}
+    # Already in the lines (the invoice equals lines + taxes + credits): not added twice.
+    plain = billing.Invoice(team.invoice_uuid(period), period, team.invoice_amount())
+    again = billing.map_invoice(billing.InvoiceData(plain, team.csv(period), summary), "t", None)
+    assert "Overages" not in {r.service_name for r in again.rows}
 
 
 def test_sku_and_category_maps() -> None:
@@ -373,6 +390,33 @@ async def test_connect_loads_costs_scans_and_recommends(
     again = await billing.ingest_connection(uuid.UUID(tenant), uuid.UUID(cid))
     assert again.status == "up_to_date"
     assert owner_sql("SELECT count(*) FROM ingest_batch WHERE connection_id = %s", cid)[0][0] == 2
+
+
+async def test_a_team_id_that_is_not_a_uuid_and_no_credentials_kept(
+    client: AsyncClient, login: Any, owner_sql: Sql, fake_do: FakeDigitalOcean
+) -> None:
+    """The API reference's example team ``uuid`` is 40 hex digits; the database list carries a
+    password; tags need tag:read."""
+    tenant, headers = await workspace(client, login)
+    token = fake_do.add_token(
+        team="5df3e3004a17e242b7c20ca6c9fc25b701a47ece", scopes=READ_SCOPES - {"tag:read"}
+    )
+    r = await _connect(client, tenant, headers, token)
+    assert r.status_code == 201, r.text
+    assert r.json()["awsAccountId"] == "5df3e3004a17e242b7c20ca6c9fc25b701a47ece"
+    assert r.json()["status"] == "degraded"
+    cid = r.json()["id"]
+    assert owner_sql("SELECT count(*) FROM cost_snapshot_ce WHERE connection_id = %s", cid) == [
+        (1,)
+    ]
+    configs = owner_sql(
+        "SELECT string_agg(config::text || tags::text, '') FROM resource WHERE connection_id = %s",
+        cid,
+    )[0][0]
+    assert "fake-db-password" not in configs and "doadmin" not in configs
+    assert owner_sql(
+        "SELECT tags FROM resource WHERE connection_id = %s AND resource_type = 'do_droplet'", cid
+    ) == [({},), ({},)]
 
 
 async def test_refused_tokens_are_not_stored(

@@ -28,8 +28,8 @@ describe('Connect DigitalOcean', () => {
     for (const scope of [...DO_REQUIRED_SCOPES, ...DO_RESOURCE_SCOPES]) {
       expect(screen.getByText(scope)).toBeTruthy()
     }
-    expect(screen.getByRole('link', { name: /Generate New Token/ }).getAttribute('href')).toBe(
-      'https://cloud.digitalocean.com/account/api/tokens/new',
+    expect(screen.getByRole('link', { name: 'Account → API' }).getAttribute('href')).toBe(
+      'https://cloud.digitalocean.com/account/api/tokens',
     )
     expect(screen.getByLabelText('DigitalOcean token').getAttribute('type')).toBe('password')
   })

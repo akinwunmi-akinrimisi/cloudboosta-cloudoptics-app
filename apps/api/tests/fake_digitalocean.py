@@ -41,6 +41,7 @@ READ_SCOPES = frozenset(
         "load_balancer:read",
         "database:read",
         "monitoring:read",
+        "tag:read",
     }
 )
 WRITE_SCOPES = frozenset({"droplet:create", "tag:create"})
@@ -106,7 +107,7 @@ class Team:
         return [last, prev_month(last)]
 
     def invoice_uuid(self, period: date) -> str:
-        return str(uuid.uuid5(uuid.UUID(self.uuid), f"invoice:{period:%Y-%m}"))
+        return str(uuid.uuid5(NAMESPACE, f"invoice:{self.uuid}:{period:%Y-%m}"))
 
     def products_total(self) -> Decimal:
         return sum((Decimal(line[2]) for line in LINES), Decimal(0))
@@ -145,11 +146,24 @@ class Team:
             "user_name": "Ada Customer",
             "user_email": "billing@customer.example",
             "user_company": "Customer Ltd",
-            "user_billing_address": {"address_line1": "1 Example Street", "city": "Lagos"},
+            "user_billing_address": {
+                "address_line1": "1 Example Street",
+                "city": "Lagos",
+                "country_iso2_code": "NG",
+                "postal_code": "100001",
+                "region": "Lagos",
+                "created_at": "2019-09-03T16:34:46.000+00:00",
+                "updated_at": "2019-09-03T16:34:46.000+00:00",
+            },
             "product_charges": {
                 "name": "Product usage charges",
                 "amount": f"{self.products_total():.2f}",
+                "items": [
+                    {"amount": f"{Decimal(line[2]):.2f}", "name": line[0], "count": "1"}
+                    for line in LINES
+                ],
             },
+            "overages": {"name": "Overages", "amount": "0"},
             "taxes": {"name": "Taxes", "amount": f"{TAXES:.2f}"},
             "credits_and_adjustments": {
                 "name": "Credits & adjustments",
@@ -293,6 +307,14 @@ class Team:
                 "status": "online",
                 "created_at": "2025-01-01T00:00:00Z",
                 "tags": [],
+                # The list carries connection details with a password (API reference,
+                # Databases); the scan must never store them.
+                "connection": {
+                    "uri": "postgresql://doadmin:fake-db-password@db.example:25060/defaultdb",
+                    "user": "doadmin",
+                    "password": "fake-db-password",
+                },
+                "users": [{"name": "doadmin", "role": "primary", "password": "fake-db-password"}],
             }
         ]
 
@@ -423,9 +445,14 @@ class FakeDigitalOcean:
                 200,
                 json={
                     "account": {
-                        "uuid": str(uuid.uuid5(NAMESPACE, "user:" + team.uuid)),
+                        "droplet_limit": 25,
+                        "floating_ip_limit": 5,
                         "email": "a@b.example",
+                        "name": "Ada",
+                        "uuid": str(uuid.uuid5(NAMESPACE, "user:" + team.uuid)),
+                        "email_verified": True,
                         "status": "active",
+                        "status_message": " ",
                         "team": {"uuid": team.uuid, "name": team.name},
                     }
                 },
@@ -443,10 +470,14 @@ class FakeDigitalOcean:
             "/v2/load_balancers": ("load_balancer:read", "load_balancers", team.load_balancers),
             "/v2/databases": ("database:read", "databases", team.databases),
             "/v2/monitoring/alerts": ("monitoring:read", "policies", lambda: []),
+            "/v2/tags": ("tag:read", "tags", lambda: [{"name": "env:prod"}]),
         }
         if path in lists:
             scope, key, items = lists[path]
-            return need(scope) or _paged(path, key, items(), query)
+            listed = items()
+            if "tag:read" not in scopes:  # fields gated by tag:read are left out
+                listed = [{k: v for k, v in i.items() if k != "tags"} for i in listed]
+            return need(scope) or _paged(path, key, listed, query)
         if path == "/v2/monitoring/metrics/droplet/cpu":
             return need("monitoring:read") or httpx.Response(
                 200, json=team.cpu(query.get("host_id", ""), int(query["start"]), int(query["end"]))
