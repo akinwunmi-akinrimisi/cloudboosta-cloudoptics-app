@@ -31,6 +31,7 @@ import { ACCESS_STACK_NAME, ApiError } from '../api/types'
 import { rememberTenant, useApi, useCurrentTenantId, useMe } from '../app/context'
 import type { NextStep } from '../components/onboarding'
 import { AccessPanel, Checks, CopyRow, Disclosure, Flow, Kicker, Lede, Next, Todo, TodoItem } from '../components/onboarding'
+import { RoleCheck, useInviteGuest } from '../components/handoff'
 import { PermissionPanel, SiteLinks } from '../components/permissions'
 import { Alert, Button, Field, Logo, StatusPill, cx } from '../components/ui'
 import { PROVIDER_LABEL, connectionLabel, providerOf } from '../lib/providers'
@@ -224,7 +225,7 @@ function ConnectOptions({
   accountId?: string
   opened: boolean
   onOpened: () => void
-  /** Offers "Copy link for a colleague" with this text (docs/14 §6.2). */
+  /** Offers "Or copy the AWS link" with this text (docs/14 §6.2). */
   colleagueMessage?: string
   /** The "Waiting for AWS" line, shown under the steps once the link is used. */
   waiting?: ReactNode
@@ -270,9 +271,10 @@ function ConnectOptions({
 }
 
 /**
- * For someone without rights in the billing account: copies the one-click link with a short
- * note. The link carries only what AWS shows on its page anyway (the workspace's ExternalId and
- * ids), works for this workspace only and expires with the intent.
+ * The secondary hand-off, under "Not you? Send this to your admin": copies the one-click link
+ * with a short note, for teams that would rather pass it on in their own chat. The link carries
+ * only what AWS shows on its page anyway (the workspace's ExternalId and ids), works for this
+ * workspace only and expires with the intent.
  */
 function ForColleague({ message, onCopied }: { message: string; onCopied: () => void }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -290,7 +292,7 @@ function ForColleague({ message, onCopied }: { message: string; onCopied: () => 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
         <button type="button" className="ed-linkbtn" onClick={copy}>
           {state === 'copied' ? <Check size={18} aria-hidden="true" /> : <Link2 size={18} aria-hidden="true" />}
-          Copy link for a colleague
+          Or copy the AWS link
         </button>
         <span role="status" className="ed-copied">
           {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Copy the text below.' : ''}
@@ -489,6 +491,8 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
 /** New account: one link, no form; the stack tells CloudOptics which account it is in. */
 export function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConnected: (connectionId: string) => void }) {
   const api = useApi()
+  // Opened from a "send to my cloud admin" link: this person is the admin; no copy link.
+  const guest = useInviteGuest()
   const [attempt, setAttempt] = useState(0)
   const [openedAt, setOpenedAt] = useState<number | null>(null)
   // One link per attempt; "Start again" makes a fresh one.
@@ -540,11 +544,11 @@ export function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConn
           <ConnectOptions
             quickCreateUrl={setup.quickCreateUrl}
             templateUrl={setup.templateDownloadUrl}
-            values={handValues({ ...setup, tenantId })}
+            values={handValues({ ...setup, tenantId: setup.tenantId ?? tenantId })}
             opened={openedAt !== null}
             onOpened={() => setOpenedAt((t) => t ?? Date.now())}
             colleagueMessage={
-              setup.quickCreateUrl ? colleagueMessage(setup.quickCreateUrl, setup.intent.expiresAt) : undefined
+              setup.quickCreateUrl && !guest ? colleagueMessage(setup.quickCreateUrl, setup.intent.expiresAt) : undefined
             }
             waiting={
               openedAt !== null && <Waiting since={openedAt} onRetry={start} error={intent.data?.error ?? null} />
@@ -691,6 +695,8 @@ function ConnectStep({
           ))}
         </div>
       </fieldset>
+      {/* Who can do this step, and "Not you? Send this to your admin" (ADR-022). */}
+      <RoleCheck key={providerId} tenantId={tenantId} provider={providerId} onConnected={onConnected} />
       <Selected tenantId={tenantId} onConnected={onConnected} />
     </>
   )

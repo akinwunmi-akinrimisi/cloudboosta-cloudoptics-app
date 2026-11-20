@@ -63,6 +63,7 @@ CROSS_TENANT_POLICIES: dict[tuple[str, str], str] = {
     ("invite", "addressed_to_me"): "a user sees invites addressed to their own email",
     ("cloud_connection", "scheduler_read"): "scheduled fan-out lists connections (0003)",
     ("data_deletion", "scheduler_read"): "the deletion job finds due workspaces",
+    ("connect_invite", "scheduler_read"): "the sweep job finds connected or expired invites",
     ("export_job", "scheduler_expire_read"): "the cleanup job finds expired exports",
     ("export_job", "scheduler_expire_delete"): "the cleanup job deletes expired exports",
     ("support_access_grant", "staff_own_read"): "staff see their own break-glass grants",

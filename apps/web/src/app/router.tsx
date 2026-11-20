@@ -16,12 +16,14 @@ import { SignIn } from '../pages/SignIn'
 import { isSection, type SettingsSection } from '../pages/SettingsNav'
 import { Connections, Overview } from '../pages/Workspace'
 import { AppShell } from './AppShell'
+import { invitedSignIn } from './inviteSignIn'
 import { routerBasepath } from './paths'
 
 // Route-level code splitting (FR-UI-10 / NFR-PERF-03): sign-in, Overview and Connections are
 // in the first download; every other page is its own chunk, fetched when its route loads (or
 // on hover/focus of a link to it, defaultPreload 'intent').
 const Onboarding = lazyRouteComponent(() => import('../pages/Onboarding'), 'Onboarding')
+const ConnectInvitePage = lazyRouteComponent(() => import('../pages/ConnectInvite'), 'ConnectInvitePage')
 const Costs = lazyRouteComponent(() => import('../pages/Costs'), 'Costs')
 const Recommendations = lazyRouteComponent(() => import('../pages/Recommendations'), 'Recommendations')
 const RecommendationDetail = lazyRouteComponent(() => import('../pages/Recommendations'), 'RecommendationDetail')
@@ -134,13 +136,30 @@ const doCallback = createRoute({
     return out
   },
   beforeLoad: async ({ context }) => {
+    // Started from a "send to my cloud admin" link: no account, the invite's session.
+    if (invitedSignIn()) return
     const me = await loadMe(context)
     if (!me.memberships.length) throw redirect({ to: '/onboarding' })
   },
-  loader: preload(Onboarding),
+  loader: async () => {
+    await (invitedSignIn() ? ConnectInvitePage.preload?.() : Onboarding.preload?.())
+  },
   component: function DigitalOceanCallbackRoute() {
     const search = doCallback.useSearch()
+    if (invitedSignIn()) return <ConnectInvitePage token="session" signIn={search} />
     return <Onboarding signIn={search} />
+  },
+})
+
+// The page a cloud admin opens from a "send to my cloud admin" email (ADR-022). Not signed in:
+// the link's token opens a connect-invite session that reaches only that cloud's connect step.
+const connectInvite = createRoute({
+  getParentRoute: () => root,
+  path: '/connect-invite/$token',
+  loader: preload(ConnectInvitePage),
+  component: function ConnectInviteRoute() {
+    const { token } = connectInvite.useParams()
+    return <ConnectInvitePage token={token} />
   },
 })
 
@@ -219,6 +238,7 @@ const routeTree = root.addChildren([
   staff,
   onboarding,
   doCallback,
+  connectInvite,
   app.addChildren([
     overview,
     connections,

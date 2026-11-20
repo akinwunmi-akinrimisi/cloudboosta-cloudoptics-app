@@ -90,6 +90,9 @@ TABLES: dict[str, TenantTable] = {
     # Short-lived DigitalOcean sign-in states (ADR-021, migration 0048): workspace-wide.
     "oauth_state": TenantTable(None),
     "connection_intent": TenantTable("connection_id"),
+    # "Send to my cloud admin" requests (ADR-022): go with the connection they set up
+    # (ON DELETE CASCADE); unused ones are workspace-wide.
+    "connect_invite": TenantTable("connection_id"),
     "sync_run": TenantTable("connection_id"),
     "ingest_batch": TenantTable("connection_id"),
     "billing_file": TenantTable("connection_id"),

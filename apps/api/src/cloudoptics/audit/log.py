@@ -29,7 +29,8 @@ from typing import Any, Literal
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-ActorType = Literal["user", "system", "staff"]
+# ``connect_invite``: a step taken through a connect invite (ADR-022); ``id`` is the invite.
+ActorType = Literal["user", "system", "staff", "connect_invite"]
 
 TENANT_HEAD = text("SELECT row_hash FROM audit_log WHERE tenant_id = :t ORDER BY id DESC LIMIT 1")
 PLATFORM_HEAD = text("SELECT audit_platform_head()")

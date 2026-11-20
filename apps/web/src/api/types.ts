@@ -169,6 +169,8 @@ export interface IntentSetup {
   callbackUrl: string
   connectionRef: string
   stackRegion: string
+  /** The stack's TenantId parameter (a connect-invite page does not know its workspace otherwise). */
+  tenantId?: string | null
 }
 
 /** Azure: what a connection reads, a list of subscriptions or a whole billing account. */
@@ -964,6 +966,62 @@ export interface Invite {
   emailSent: boolean | null
 }
 
+/** "Send this to my cloud admin" (ADR-022): one cloud's connect step, sent by email. */
+export type ConnectInviteStatus = 'sent' | 'opened' | 'connected' | 'expired' | 'revoked'
+
+export interface ConnectInvite {
+  id: string
+  provider: Provider
+  email: string
+  status: ConnectInviteStatus
+  invitedByEmail: string | null
+  createdAt: string
+  expiresAt: string
+  openedAt: string | null
+  connectedAt: string | null
+  revokedAt: string | null
+  connectionId: string | null
+  /** Whether the email went out (false: Postmark is not set up or refused it). */
+  emailSent: boolean
+  /** The demo only: the admin's link, opened in this browser (nothing is emailed). */
+  demoLink?: string
+}
+
+/** What the person holding the link sees: who asked, which cloud, and their connection. */
+export interface ConnectInviteView {
+  provider: Provider
+  email: string
+  status: ConnectInviteStatus
+  requestedBy: { name: string | null; email: string | null }
+  workspaceName: string
+  expiresAt: string
+  /** What the cloud admin grants, in one phrase. */
+  grants: string
+  /** Who can do it, in one phrase. */
+  whoCan: string
+  connection: Connection | null
+}
+
+/**
+ * A connect-invite session: only that cloud's connect actions and Check access. Every
+ * other API call is refused by the server (and by `scopedApi` in the browser).
+ */
+export interface InviteSessionApi {
+  view(): Promise<ConnectInviteView>
+  /** Check access on the connection this link set up; resolves when the check is done. */
+  check(): Promise<Connection>
+  createIntent(): Promise<IntentSetup>
+  getIntent(intentId: string): Promise<ConnectionIntent>
+  createGcpConnection(body: GcpConnectionCreate): Promise<GcpSetup>
+  getGcpSetup(): Promise<GcpSetup>
+  createAzureConnection(body: AzureConnectionCreate): Promise<AzureConnectionSetup>
+  getAzureConnection(): Promise<AzureConnectionSetup>
+  connectDigitalOcean(token: string): Promise<Connection>
+  digitalOceanOAuth(): Promise<DigitalOceanOAuthConfig>
+  startDigitalOceanOAuth(): Promise<{ authorizeUrl: string }>
+  finishDigitalOceanOAuth(code: string, state: string): Promise<Connection>
+}
+
 export interface RuleSettings {
   disabledRules: string[]
   /** Resources with this tag key are left out of every rule. */
@@ -1281,6 +1339,15 @@ export interface Api {
   revokeInvite(tenantId: string, inviteId: string): Promise<void>
   changeRole(tenantId: string, userId: string, role: Role): Promise<void>
   removeMember(tenantId: string, userId: string): Promise<void>
+  /** Admins only: email one cloud's connect step to the person who can do it. 429 after 10 a day. */
+  sendConnectInvite(tenantId: string, email: string, provider: Provider): Promise<ConnectInvite>
+  /** Admins only: newest first, with their status. */
+  listConnectInvites(tenantId: string): Promise<ConnectInvite[]>
+  revokeConnectInvite(tenantId: string, inviteId: string): Promise<void>
+  /** Not signed in: the link from the email starts a narrow session (the previous one ends). */
+  openConnectInvite(token: string): Promise<{ sessionToken: string; invite: ConnectInviteView }>
+  /** The calls a connect-invite session may make. */
+  inviteSession(sessionToken: string): InviteSessionApi
   listConnections(tenantId: string): Promise<Connection[]>
   createConnection(tenantId: string, body: ConnectionCreate): Promise<ConnectionSetup>
   createIntent(tenantId: string): Promise<IntentSetup>

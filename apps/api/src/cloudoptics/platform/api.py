@@ -41,6 +41,17 @@ def client_ip(request: Request) -> str | None:
 
 
 def user_actor(request: Request, user_id: uuid.UUID) -> Actor:
+    """The person behind this request. Inside a connect-invite session (ADR-022) that is the
+    invite, never the admin who sent it: every audit row the shared connect handlers write
+    names the invite."""
+    invite = getattr(request.state, "connect_invite_id", None)
+    if invite is not None:
+        return Actor(
+            type="connect_invite",
+            id=invite,
+            ip=client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
     return Actor(
         type="user",
         id=user_id,

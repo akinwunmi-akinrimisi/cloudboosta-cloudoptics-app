@@ -31,6 +31,10 @@ import type {
   ConnectionCreate,
   ConnectionIntent,
   ConnectionSetup,
+  ConnectInvite,
+  ConnectInviteView,
+  InviteSessionApi,
+  Provider,
   GcpConnectionCreate,
   GcpSetup,
   IntentSetup,
@@ -270,6 +274,52 @@ export class HttpApi implements Api {
     return this.request('DELETE', `/v1/tenants/${tenantId}/members/${userId}`)
   }
 
+  sendConnectInvite(tenantId: string, email: string, provider: Provider): Promise<ConnectInvite> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connect-invites`, { email, provider })
+  }
+
+  listConnectInvites(tenantId: string): Promise<ConnectInvite[]> {
+    return this.request('GET', `/v1/tenants/${tenantId}/connect-invites`)
+  }
+
+  revokeConnectInvite(tenantId: string, inviteId: string): Promise<void> {
+    return this.request('DELETE', `/v1/tenants/${tenantId}/connect-invites/${inviteId}`)
+  }
+
+  openConnectInvite(token: string): Promise<{ sessionToken: string; invite: ConnectInviteView }> {
+    return this.request('POST', '/v1/connect-invite/open', { token }, false)
+  }
+
+  inviteSession(sessionToken: string): InviteSessionApi {
+    const auth = `ConnectInvite ${sessionToken}`
+    const base = '/v1/connect-invite/session'
+    const call = <T>(method: string, path: string, body?: unknown) => this.request<T>(method, `${base}${path}`, body, auth)
+    return {
+      view: () => call('GET', ''),
+      check: async () => {
+        const result = await call<Connection | { status: 'validating' }>('POST', '/check')
+        if ('id' in result) return result
+        // Queued (staging and production): follow the session until the check is done.
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 2000))
+          const view = await call<ConnectInviteView>('GET', '')
+          if (view.connection && view.connection.status !== 'validating') return view.connection
+        }
+        throw new ApiError(504, 'Checking is taking longer than expected. Try again in a minute.')
+      },
+      createIntent: () => call('POST', '/aws/link'),
+      getIntent: (id) => call('GET', `/aws/link/${id}`),
+      createGcpConnection: (body) => call('POST', '/gcp', body),
+      getGcpSetup: () => call('GET', '/gcp'),
+      createAzureConnection: (body) => call('POST', '/azure', body),
+      getAzureConnection: () => call('GET', '/azure'),
+      connectDigitalOcean: (token) => call('POST', '/digitalocean', { token }),
+      digitalOceanOAuth: () => call('GET', '/digitalocean/oauth'),
+      startDigitalOceanOAuth: () => call('POST', '/digitalocean/oauth/start'),
+      finishDigitalOceanOAuth: (code, state) => call('POST', '/digitalocean/oauth/callback', { code, state }),
+    }
+  }
+
   listConnections(tenantId: string): Promise<Connection[]> {
     return this.request('GET', `/v1/tenants/${tenantId}/connections`)
   }
@@ -481,17 +531,28 @@ export class HttpApi implements Api {
     throw new ApiError(504, 'Validation is taking longer than expected. Check back in a minute.')
   }
 
-  private async request<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
+  /** `auth`: the signed-in session (true), none (false), or this Authorization header. */
+  private async request<T>(method: string, path: string, body?: unknown, auth: boolean | string = true): Promise<T> {
     const res = await this.send(method, path, body, auth)
     return (res.status === 204 ? undefined : await res.json()) as T
   }
 
   /** Sends a request with the session token; throws `ApiError` unless it succeeds. */
-  private async send(method: string, path: string, body?: unknown, auth = true, accept = 'application/json'): Promise<Response> {
+  private async send(
+    method: string,
+    path: string,
+    body?: unknown,
+    auth: boolean | string = true,
+    accept = 'application/json',
+  ): Promise<Response> {
     const headers: Record<string, string> = { accept }
     if (body !== undefined) headers['content-type'] = 'application/json'
-    const token = auth ? (this.provider ? await this.provider.getToken() : read('session', TOKEN_KEY)) : null
-    if (token) headers.authorization = `Bearer ${token}`
+    if (typeof auth === 'string') {
+      headers.authorization = auth
+    } else {
+      const token = auth ? (this.provider ? await this.provider.getToken() : read('session', TOKEN_KEY)) : null
+      if (token) headers.authorization = `Bearer ${token}`
+    }
     let res: Response
     try {
       // The default cache mode lets the browser revalidate GETs with the API's ETags: a 304
@@ -519,7 +580,7 @@ export class HttpApi implements Api {
         const retryAfter = parseRetryAfter(res.headers.get('retry-after'))
         throw new ApiError(429, rateLimitedMessage(retryAfter), [], problem.code ?? 'rate_limited', retryAfter)
       }
-      if (res.status === 401 && !this.provider) this.signOut()
+      if (res.status === 401 && !this.provider && auth === true) this.signOut()
       throw new ApiError(res.status, problem.title ?? `Request failed (${res.status})`, problem.errors, problem.code)
     }
     return res

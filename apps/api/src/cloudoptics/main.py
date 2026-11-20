@@ -15,6 +15,7 @@ from cloudoptics.audit import routes as audit_routes
 from cloudoptics.budgets import routes as budget_routes
 from cloudoptics.commitments import routes as commitment_routes
 from cloudoptics.connectors import access as connector_access
+from cloudoptics.connectors import handoff as connector_handoff
 from cloudoptics.connectors import routes as connector_routes
 from cloudoptics.credits import routes as credit_routes
 from cloudoptics.exports import routes as export_routes
@@ -111,6 +112,8 @@ def create_app() -> FastAPI:
     app.include_router(invite_routes.router)
     app.include_router(connector_access.intents_router)
     app.include_router(connector_access.callback_router)
+    app.include_router(connector_handoff.router)
+    app.include_router(connector_handoff.invite_router)
     # Before the shared connection routes: /connections/gcp is not a connection ID.
     app.include_router(gcp_routes.router)
     app.include_router(digitalocean_routes.router)

@@ -16,7 +16,8 @@ router = APIRouter(prefix="/v1/tenants/{tenant_id}/audit-log", tags=["audit"])
 
 
 class AuditActor(ApiModel):
-    type: Literal["user", "system", "staff"]
+    # connect_invite: steps taken through a connect invite; name is "connect invite <email>".
+    type: Literal["user", "system", "staff", "connect_invite"]
     email: str | None
     name: str | None
 
@@ -51,9 +52,14 @@ async def audit_log(
     rows = (
         await session.execute(
             text(
-                "SELECT a.id, a.occurred_at, a.actor_type, u.email, u.display_name, a.action, "
+                "SELECT a.id, a.occurred_at, a.actor_type, "
+                "coalesce(u.email, ci.email::text) AS email, "
+                "CASE WHEN a.actor_type = 'connect_invite' THEN 'connect invite ' || ci.email "
+                "ELSE u.display_name END AS display_name, a.action, "
                 "a.target_type, a.target_id, a.before, a.after, host(a.ip) AS ip "
                 "FROM audit_log a LEFT JOIN app_user u ON u.id = a.actor_id "
+                "AND a.actor_type <> 'connect_invite' LEFT JOIN connect_invite ci "
+                "ON ci.id = a.actor_id AND a.actor_type = 'connect_invite' "
                 "WHERE a.tenant_id = :t AND (CAST(:before AS bigint) IS NULL OR a.id < :before) "
                 "ORDER BY a.id DESC LIMIT :n"
             ),

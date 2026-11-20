@@ -49,6 +49,7 @@ UNVERSIONED = {
     "funnel_event",  # first-time funnel steps for staff analytics (no cached read uses them)
     "gcp_connection",  # a Google Cloud connection's export settings (read by its setup page only)
     "azure_connection",  # Azure connection settings (ADR-020); only uncached admin routes read them
+    "connect_invite",  # "send to my cloud admin" requests (ADR-022); no cached read uses them
     "oauth_state",  # 10-minute DigitalOcean sign-in states (ADR-021); no cached read uses them
 }
 

@@ -260,7 +260,7 @@ async def oauth_start(access: AdminAccess, session: Session) -> OAuthStart:
     """A one-time sign-in link for this admin and workspace (10 minutes)."""
     if not get_settings().do_oauth_enabled:
         raise _not_configured()
-    url = await oauth_flow.start(session, access.tenant_id, access.user.id)
+    url = await oauth_flow.start(session, access.tenant_id, access.binding_id)
     return OAuthStart(authorize_url=url)
 
 
@@ -277,7 +277,7 @@ async def oauth_callback(
     if not get_settings().do_oauth_enabled:
         raise _not_configured()
     try:
-        verifier = await oauth_flow.consume(access.tenant_id, access.user.id, body.state)
+        verifier = await oauth_flow.consume(access.tenant_id, access.binding_id, body.state)
     except oauth_flow.StateRefusedError:
         raise ApiProblem(
             status.HTTP_400_BAD_REQUEST,

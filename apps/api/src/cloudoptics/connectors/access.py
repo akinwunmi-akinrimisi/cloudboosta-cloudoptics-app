@@ -91,6 +91,9 @@ class IntentSetup(ApiModel):
     callback_url: str
     connection_ref: str
     stack_region: str = aws.STACK_REGION
+    # The stack's TenantId parameter, for setting it up by hand (a connect-invite session's
+    # page does not know its workspace's ID otherwise, ADR-022).
+    tenant_id: uuid.UUID | None = None
 
 
 EXPIRED = "This link has expired. Open a new link from Cloudoptics."
@@ -185,6 +188,7 @@ async def create_intent(access: AdminAccess, session: Session) -> IntentSetup:
         resource_template_url=settings.cfn_resource_template_url,
         callback_url=f"{settings.public_api_url}/v1/cfn/callback",
         connection_ref=ref,
+        tenant_id=access.tenant_id,
     )
 
 

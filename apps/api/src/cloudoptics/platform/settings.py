@@ -183,6 +183,8 @@ class Settings(BaseSettings):
     rate_limit_callback_per_minute: int = 20
     # The public site's first-party beacon (SITE-15): page views and clicks per visitor address.
     rate_limit_site_per_minute: int = 120
+    # "Send to my cloud admin" emails a workspace may send in 24 hours (ADR-022).
+    connect_invites_per_day: int = 10
     # The request header that carries the client's address. App Platform sets
     # "do-connecting-ip" (its X-Forwarded-For names DigitalOcean's ingress, and clients can
     # send their own), so staging and production use that unless set; elsewhere the socket
