@@ -9,7 +9,10 @@ import { ACCESS_STACK_NAME, ApiError } from '../api/types'
 import { rememberTenant, useApi, useCurrentTenantId, useMe } from '../app/context'
 import { PermissionPanel, SiteLinks } from '../components/permissions'
 import { Alert, Button, Card, Field, Logo, StatusPill, cx } from '../components/ui'
+import { connectionLabel } from '../lib/providers'
 import { DEMO_URL, HOW_IT_WORKS_STACK, absoluteSiteUrl } from '../lib/site'
+import { GcpConnect } from './connect/GcpConnect'
+import { CONNECT_PROVIDERS, DEFAULT_CONNECT } from './connect/providers'
 
 export const COUNTRIES: [string, string][] = [
   ['NG', 'Nigeria'],
@@ -346,8 +349,15 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
       </h1>
       {conn && (
         <p className="mt-1 text-sm text-secondary">
-          AWS account {conn.awsAccountId}
-          {conn.accountType === 'management' ? ', with every account in your organization' : ''}.
+          {conn.provider === 'gcp' ? (
+            connectionLabel(conn)
+          ) : (
+            <>
+              AWS account {conn.awsAccountId}
+              {conn.accountType === 'management' ? ', with every account in your organization' : ''}
+            </>
+          )}
+          .
         </p>
       )}
       {running && <p className="mt-2 text-sm text-secondary">Testing each permission…</p>}
@@ -375,8 +385,9 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
           </ul>
           {conn.status === 'healthy' && (
             <p className="mt-4 text-sm text-secondary">
-              Your first costs appear within a day, when AWS delivers the first bill. Recommendations follow the first
-              resource scan, a few minutes from now.
+              {conn.provider === 'gcp'
+                ? 'Your first costs appear in a few minutes, once Cloudoptics has read the export.'
+                : 'Your first costs appear within a day, when AWS delivers the first bill. Recommendations follow the first resource scan, a few minutes from now.'}
             </p>
           )}
           <div className="mt-6 flex justify-end gap-2">
@@ -394,7 +405,7 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
 }
 
 /** New account: one link, no form; the stack tells CloudOptics which account it is in. */
-function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConnected: (connectionId: string) => void }) {
+export function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConnected: (connectionId: string) => void }) {
   const api = useApi()
   const [attempt, setAttempt] = useState(0)
   const [openedAt, setOpenedAt] = useState<number | null>(null)
@@ -560,6 +571,70 @@ function ConnectExisting({
   )
 }
 
+/** A new connection: "Which cloud?", then that provider's connect step (AWS by default). */
+function ConnectStep({ tenantId, onConnected }: { tenantId: string; onConnected: (connectionId: string) => void }) {
+  const [providerId, setProviderId] = useState<string>('aws')
+  const Selected = (CONNECT_PROVIDERS.find((p) => p.id === providerId) ?? DEFAULT_CONNECT).Component
+  return (
+    <>
+      <fieldset className="mb-4">
+        <legend className="mb-2 text-sm font-medium">Which cloud?</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {CONNECT_PROVIDERS.map((p) => (
+            <label
+              key={p.id}
+              className={cx(
+                'flex cursor-pointer items-start gap-2 rounded-sm border p-3 text-sm',
+                p.id === providerId ? 'border-accent bg-accent-soft' : 'border-border bg-surface-1',
+              )}
+            >
+              <input
+                type="radio"
+                name="connect-provider"
+                className="mt-0.5"
+                value={p.id}
+                checked={p.id === providerId}
+                onChange={() => setProviderId(p.id)}
+              />
+              <span>
+                <span className="block font-medium">{p.label}</span>
+                <span className="block text-xs text-secondary">{p.description}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <Selected tenantId={tenantId} onConnected={onConnected} />
+    </>
+  )
+}
+
+/** Set up an existing connection again: Google Cloud shows its commands, AWS its stack. */
+function ConnectAgain({
+  tenantId,
+  connectionId,
+  onConnected,
+}: {
+  tenantId: string
+  connectionId: string
+  onConnected: () => void
+}) {
+  const api = useApi()
+  const list = useQuery({ queryKey: ['connections', tenantId], queryFn: () => api.listConnections(tenantId) })
+  const conn = list.data?.find((c) => c.id === connectionId)
+  if (conn?.provider === 'gcp') {
+    return <GcpConnect tenantId={tenantId} connectionId={connectionId} onConnected={onConnected} />
+  }
+  if (list.isPending) {
+    return (
+      <Card>
+        <p className="text-sm text-secondary">Loading…</p>
+      </Card>
+    )
+  }
+  return <ConnectExisting tenantId={tenantId} connectionId={connectionId} onConnected={onConnected} />
+}
+
 /** ``connectionId`` opens the AWS step for an existing connection (move or set up again). */
 export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; connectionId?: string }) {
   const api = useApi()
@@ -670,9 +745,9 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
         </Card>
       )}
 
-      {step === 1 && tid && !connectionId && <ConnectNew tenantId={tid} onConnected={connected} />}
+      {step === 1 && tid && !connectionId && <ConnectStep tenantId={tid} onConnected={connected} />}
       {step === 1 && tid && connectionId && (
-        <ConnectExisting tenantId={tid} connectionId={connectionId} onConnected={() => connected(connectionId)} />
+        <ConnectAgain tenantId={tid} connectionId={connectionId} onConnected={() => connected(connectionId)} />
       )}
       {step === 2 && tid && checking && <CheckAccess tenantId={tid} connectionId={checking} />}
     </main>

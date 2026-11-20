@@ -29,6 +29,9 @@ import type {
   ConnectionCreate,
   ConnectionIntent,
   ConnectionSetup,
+  GcpConnectionCreate,
+  GcpSettings,
+  GcpSetup,
   CostBreakdown,
   CostChanges,
   CostContributor,
@@ -142,6 +145,8 @@ interface State {
   deletions?: Record<string, DataDeletion[]>
   /** One-click links waiting for the (simulated) stack to report back. */
   intents?: Record<string, { tenantId: string; createdAt: number; connectionId: string | null }>
+  /** Google Cloud connections: where the export is, and the dataset label that proves ownership. */
+  gcp?: Record<string, { settings: GcpSettings; labelValue: string }>
 }
 
 const DEMO_GRACE_DAYS = 7
@@ -794,6 +799,63 @@ function externalId(): string {
     .replace(/=+$/, '')
 }
 
+const DEMO_GCP_SERVICE_ACCOUNT = 'cloudoptics-reader@cloudoptics-demo.iam.gserviceaccount.com'
+const GCP_PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/
+
+/** The demo's checks of a Google Cloud connection: the same checks the API runs. */
+function demoGcpChecks(s: GcpSettings): PermissionCheck[] {
+  const ok = (id: string, label: string, message: string): PermissionCheck => ({ id, label, status: 'ok', message, hint: null })
+  return [
+    ok('federation', 'Sign in to Google Cloud as Cloudoptics', 'Signed in.'),
+    ok('dataset', 'Read the billing export dataset', `Dataset ${s.exportProjectId}:${s.exportDatasetId} is readable.`),
+    ok('ownership', 'Prove the dataset is yours', 'The label matches this workspace.'),
+    ok('export_table', 'Find the FOCUS table', `${s.exportTableId} has FOCUS rows.`),
+    ok('query_jobs', 'Run BigQuery queries', `Queries run in ${s.queryProjectId}, which pays for them.`),
+    ok('billing_account', 'Match the billing account', `The export is billing account ${s.billingAccountId}.`),
+    {
+      id: 'projects',
+      label: 'Read resources and recommendations',
+      status: 'skipped',
+      message: 'Checked once the first bill names your projects.',
+      hint: null,
+    },
+  ]
+}
+
+/** The same commands the API returns (providers/gcp/connect.py). */
+function demoGcpCommands(s: GcpSettings, serviceAccount: string, labelValue: string): GcpSetup['commands'] {
+  const member = `serviceAccount:${serviceAccount}`
+  const location = s.datasetLocation ? ` --location=${s.datasetLocation}` : ''
+  const grant = `GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`${s.exportProjectId}.${s.exportDatasetId}\` TO "${member}"`
+  const roles = 'roles/compute.viewer roles/monitoring.viewer roles/recommender.viewer roles/cloudsql.viewer'
+  return [
+    {
+      id: 'label',
+      title: 'Label the dataset (proves it is yours)',
+      command: `bq update --set_label cloudoptics:${labelValue} ${s.exportProjectId}:${s.exportDatasetId}`,
+      optional: false,
+    },
+    {
+      id: 'dataset',
+      title: 'Let Cloudoptics read the dataset',
+      command: `bq query --nouse_legacy_sql${location} '${grant}'`,
+      optional: false,
+    },
+    {
+      id: 'jobs',
+      title: `Let Cloudoptics run queries in ${s.queryProjectId} (billed to that project)`,
+      command: `gcloud projects add-iam-policy-binding ${s.queryProjectId} --member=${member} --role=roles/bigquery.jobUser --condition=None`,
+      optional: false,
+    },
+    {
+      id: 'projects',
+      title: 'Optional: resources and recommendations (list every project ID)',
+      command: `for p in ${s.exportProjectId}; do for r in ${roles}; do gcloud projects add-iam-policy-binding "$p" --member=${member} --role="$r" --condition=None; done; done`,
+      optional: true,
+    },
+  ]
+}
+
 export class DemoApi implements Api {
   readonly mode = 'demo' as const
   private state: State = load()
@@ -1391,7 +1453,8 @@ export class DemoApi implements Api {
   async reloadBills(tenantId: string, connectionId: string, period: string | null): Promise<ReloadStatus> {
     await this.tick()
     const conn = this.connection(tenantId, connectionId)
-    if ((conn.status !== 'healthy' && conn.status !== 'degraded') || !conn.curBucket) {
+    // Google Cloud bills come from BigQuery, not a bucket.
+    if ((conn.status !== 'healthy' && conn.status !== 'degraded') || (!conn.curBucket && conn.provider !== 'gcp')) {
       throw new ApiError(409, 'Check the connection first: bills are reloaded for a working connection with an export.')
     }
     const last = this.state.reloads?.[connectionId]
@@ -1499,9 +1562,105 @@ export class DemoApi implements Api {
     return this.setup(this.connection(tenantId, connectionId))
   }
 
+  async createGcpConnection(tenantId: string, body: GcpConnectionCreate): Promise<GcpSetup> {
+    await this.tick()
+    this.tenant(tenantId)
+    const errors: { field: string; message: string }[] = []
+    if (!/^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$/.test(body.billingAccountId)) {
+      errors.push({ field: 'billingAccountId', message: 'A billing account ID looks like 012345-6789AB-CDEF01' })
+    }
+    if (!GCP_PROJECT.test(body.exportProjectId)) {
+      errors.push({ field: 'exportProjectId', message: 'Enter a project ID, such as my-billing-project' })
+    }
+    if (body.queryProjectId && !GCP_PROJECT.test(body.queryProjectId)) {
+      errors.push({ field: 'queryProjectId', message: 'Enter a project ID, such as my-billing-project' })
+    }
+    if (errors.length) throw new ApiError(422, 'Request validation failed', errors)
+    const all = Object.values(this.state.connections).flat()
+    if (all.some((c) => c.provider === 'gcp' && c.awsAccountId === body.billingAccountId && c.status !== 'disconnected')) {
+      throw new ApiError(409, 'This billing account is already connected to a Cloudoptics workspace.')
+    }
+    const settings: GcpSettings = {
+      billingAccountId: body.billingAccountId,
+      exportProjectId: body.exportProjectId,
+      exportDatasetId: body.exportDatasetId,
+      exportTableId: body.exportTableId,
+      exportKind: body.exportKind,
+      queryProjectId: body.queryProjectId || body.exportProjectId,
+      datasetLocation: body.datasetLocation || null,
+    }
+    // Reconnecting a disconnected billing account reuses its connection, back to pending.
+    const own = (this.state.connections[tenantId] ?? []).find(
+      (c) => c.provider === 'gcp' && c.awsAccountId === body.billingAccountId,
+    )
+    const conn: Connection = own ?? {
+      id: randomId(),
+      provider: 'gcp',
+      awsAccountId: body.billingAccountId,
+      accountType: 'management',
+      roleArn: DEMO_GCP_SERVICE_ACCOUNT,
+      status: 'pending',
+      createCurExport: false,
+      curBucket: null,
+      curPrefix: null,
+      curExportArn: null,
+      permissionChecks: [],
+      lastError: null,
+      lastValidatedAt: null,
+      createdAt: new Date().toISOString(),
+      stackName: 'gcp',
+      stackVersion: null,
+    }
+    if (own) Object.assign(own, { status: 'pending', permissionChecks: [], lastError: null, lastValidatedAt: null })
+    else (this.state.connections[tenantId] ??= []).push(conn)
+    const labelValue = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('')
+    ;(this.state.gcp ??= {})[conn.id] = { settings, labelValue }
+    this.save()
+    return this.gcpSetup(conn)
+  }
+
+  async getGcpSetup(tenantId: string, connectionId: string): Promise<GcpSetup> {
+    await this.tick()
+    return this.gcpSetup(this.connection(tenantId, connectionId))
+  }
+
+  private gcpSetup(conn: Connection): GcpSetup {
+    const gcp = this.state.gcp?.[conn.id]
+    if (conn.provider !== 'gcp' || !gcp) throw new ApiError(404, 'Connection not found')
+    const s = gcp.settings
+    const sa = DEMO_GCP_SERVICE_ACCOUNT
+    return {
+      connection: structuredClone(conn),
+      settings: { ...s },
+      serviceAccount: sa,
+      labelKey: 'cloudoptics',
+      labelValue: gcp.labelValue,
+      commands: demoGcpCommands(s, sa, gcp.labelValue),
+      consoleSteps: [
+        `In BigQuery, open the dataset ${s.exportDatasetId} in project ${s.exportProjectId}.`,
+        `Choose Edit details, add the label cloudoptics with the value ${gcp.labelValue}, and save.`,
+        `Choose Sharing, then Permissions, and add ${sa} with the role BigQuery Data Viewer.`,
+        `In IAM for project ${s.queryProjectId}, grant ${sa} the role BigQuery Job User.`,
+        'Optional, for resources and recommendations: in each project grant it Compute Viewer, Monitoring Viewer, Recommender Viewer and Cloud SQL Viewer.',
+      ],
+      enabled: true,
+    }
+  }
+
   async validateConnection(tenantId: string, connectionId: string): Promise<Connection> {
     await delay(this.latencyMs * 4)
     const conn = this.connection(tenantId, connectionId)
+    const gcp = this.state.gcp?.[conn.id]
+    if (conn.provider === 'gcp' && gcp) {
+      Object.assign(conn, {
+        status: 'healthy',
+        permissionChecks: demoGcpChecks(gcp.settings),
+        lastError: null,
+        lastValidatedAt: new Date().toISOString(),
+      })
+      this.save()
+      return structuredClone(conn)
+    }
     const bucket = `cloudoptics-cur-${conn.awsAccountId}`
     const checks: PermissionCheck[] = [
       {

@@ -412,10 +412,12 @@ async def after_reload_inline(
     from cloudoptics.analysis.engine import run_analysis
     from cloudoptics.anomalies.service import detect_and_alert
     from cloudoptics.budgets.service import alert_budgets
-    from cloudoptics.ingestion.reconcile import reconcile_period
+    from cloudoptics.providers import capability_for
 
+    check = await capability_for(tenant_id, connection_id, "reconcile")
     for p in sorted(set(periods)):
-        await reconcile_period(tenant_id, connection_id, p)
+        if check is not None:
+            await check.reconcile(tenant_id, connection_id, p)
     today = datetime.now(UTC).date()
     async with get_sessionmaker()() as session, session.begin():
         await scope(session, tenant_id=tenant_id)

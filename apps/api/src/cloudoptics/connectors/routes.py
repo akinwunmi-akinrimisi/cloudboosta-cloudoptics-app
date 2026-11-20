@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
+from cloudoptics import providers
 from cloudoptics.audit import log as audit
 from cloudoptics.connectors import accounts, aws
 from cloudoptics.connectors.crypto import get_encryptor
@@ -35,6 +36,7 @@ from cloudoptics.platform.api import ApiModel, user_actor
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.providers.base import ProviderName
+from cloudoptics.providers.registry import CONNECTION_PROVIDER
 
 router = APIRouter(prefix="/v1/tenants/{tenant_id}/connections", tags=["connections"])
 accounts_router = APIRouter(prefix="/v1/tenants/{tenant_id}/accounts", tags=["connections"])
@@ -384,9 +386,19 @@ async def start_validation(
     to reach STS). A disconnected connection is never validated.
     """
     if get_settings().jobs_mode == "inline":
-        result = await run_validation(
-            session, tenant_id=tenant_id, connection_id=connection_id, actor=actor
-        )
+        # The connection's provider validates it (ADR-018); AWS runs run_validation as before.
+        name = (await session.execute(CONNECTION_PROVIDER, {"c": connection_id})).scalar()
+        plugin = providers.find(str(name or "aws"))
+        if plugin is None or plugin.connect is None:
+            return False
+        if plugin.name == "aws":
+            result: Any = await run_validation(
+                session, tenant_id=tenant_id, connection_id=connection_id, actor=actor
+            )
+        else:
+            result = await plugin.connect.validate(
+                session, tenant_id=tenant_id, connection_id=connection_id, actor=actor
+            )
         if result is not None and result.health_worsened:
             await send_connection_alert(session, tenant_id, connection_id)
         return False
@@ -460,6 +472,8 @@ async def scan_resources(
             status.HTTP_409_CONFLICT,
             "Check the billing connection first: resources are scanned for working connections.",
         )
+    if row.provider != "aws":
+        return await _scan_provider(row, response, access, session)
     account_ids = await accounts.scan_account_ids(session, connection_id)
     external_id = await read_external_id(session, row, access.tenant_id)
     factory = get_session_factory()
@@ -518,6 +532,44 @@ async def scan_resources(
     await defer_scan(get_job_app(), str(access.tenant_id), str(connection_id))
     response.status_code = status.HTTP_202_ACCEPTED
     return ScanStarted(status="queued", accounts=checked)
+
+
+async def _scan_provider(
+    row: Any, response: Response, access: AdminAccess, session: Session
+) -> ScanStarted:
+    """Another cloud's scan through its plug-in (ADR-018): no AWS role check; the access
+    shown is what the plug-in's last scan recorded per account."""
+    plugin = providers.find(row.provider)
+    if plugin is None or plugin.inventory is None:
+        return ScanStarted(status="skipped", accounts=[])
+    if get_settings().jobs_mode == "inline":
+        from cloudoptics.analysis.engine import run_analysis
+
+        result = await plugin.inventory.scan(access.tenant_id, row.id)
+        if result in ("succeeded", "partial"):
+            if plugin.metrics is not None:
+                await plugin.metrics.pull(access.tenant_id, row.id)
+            await run_analysis(access.tenant_id)
+        listed = await session.execute(
+            text(
+                "SELECT provider_account_id, resource_access FROM cloud_account "
+                "WHERE connection_id = :c AND account_type = 'member' ORDER BY 1"
+            ),
+            {"c": row.id},
+        )
+        return ScanStarted(
+            status=result if result in ("succeeded", "partial") else "skipped",
+            accounts=[
+                AccountAccess(aws_account_id=a, access=ok, error=None if ok else "AccessDenied")
+                for a, ok in listed
+            ],
+        )
+    from cloudoptics.inventory.jobs import defer_scan
+    from cloudoptics.platform.jobs import get_job_app
+
+    await defer_scan(get_job_app(), str(access.tenant_id), str(row.id))
+    response.status_code = status.HTTP_202_ACCEPTED
+    return ScanStarted(status="queued", accounts=[])
 
 
 def _member_rollout(

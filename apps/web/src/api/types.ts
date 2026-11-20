@@ -170,6 +170,53 @@ export interface ConnectionCreate {
   createCurExport: boolean
 }
 
+/** Which BigQuery billing export a Google Cloud connection reads. */
+export type GcpExportKind = 'focus_export' | 'focus_view'
+
+/** POST /connections/gcp: where the customer's billing export lives. */
+export interface GcpConnectionCreate {
+  billingAccountId: string
+  exportProjectId: string
+  exportDatasetId: string
+  exportTableId: string
+  exportKind: GcpExportKind
+  /** Billed for the queries; defaults to exportProjectId. */
+  queryProjectId?: string | null
+  datasetLocation?: string | null
+}
+
+export interface GcpSettings {
+  billingAccountId: string
+  exportProjectId: string
+  exportDatasetId: string
+  exportTableId: string
+  exportKind: GcpExportKind
+  queryProjectId: string
+  datasetLocation: string | null
+}
+
+export interface GcpCommand {
+  /** 'label', 'dataset', 'jobs' or 'projects'. */
+  id: string
+  title: string
+  command: string
+  optional: boolean
+}
+
+/** What the customer runs to give Cloudoptics read access to the export. */
+export interface GcpSetup {
+  /** provider 'gcp'; awsAccountId holds the billing account ID, roleArn the service account. */
+  connection: Connection
+  settings: GcpSettings
+  serviceAccount: string
+  labelKey: string
+  labelValue: string
+  commands: GcpCommand[]
+  consoleSteps: string[]
+  /** False until Google Cloud connections are switched on for this environment. */
+  enabled: boolean
+}
+
 export interface AuthConfig {
   mode: 'dev' | 'oidc'
   configured: boolean
@@ -1150,6 +1197,9 @@ export interface Api {
   createIntent(tenantId: string): Promise<IntentSetup>
   getIntent(tenantId: string, intentId: string): Promise<ConnectionIntent>
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup>
+  /** A Google Cloud connection: returns the commands that grant read access. */
+  createGcpConnection(tenantId: string, body: GcpConnectionCreate): Promise<GcpSetup>
+  getGcpSetup(tenantId: string, connectionId: string): Promise<GcpSetup>
   validateConnection(tenantId: string, connectionId: string): Promise<Connection>
   disconnectConnection(tenantId: string, connectionId: string): Promise<void>
   /** Admins only, once disconnected: `confirm` is the connection's AWS account ID. */

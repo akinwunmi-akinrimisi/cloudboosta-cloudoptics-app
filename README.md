@@ -20,6 +20,7 @@ Sign-in uses WorkOS AuthKit (ADR-006). **Actions → Staging setup** (run from `
 |---|---|
 | Sign-in and workspaces | Sign in with WorkOS, create a workspace, invite people and change or remove members |
 | Connecting AWS | One CloudFormation stack with a one-click link: billing access, resource access and member-account rollout together. Later permission changes are one-click in-place updates ("Update CloudOptics access"). CloudOptics only reads |
+| Connecting Google Cloud | Billing account + the BigQuery FOCUS export: four copy-paste commands (a dataset label proves it is yours, then read-only roles). No Google key is stored: Workload Identity Federation from the AWS broker ([ADR-019](docs/adr/019-google-cloud-provider.md)). Costs from BigQuery, projects as accounts, resources, Recommender and seven starter rules. Tested against a fake Google Cloud; owner set-up in `infra/gcp/setup.sh` |
 | Costs | Month-to-date spend, month-end and 3-month forecast with a currency scenario, "what changed" since last month, daily trend, top spend, Costs Explorer, every figure in USD and local currency |
 | Recommendations | Unattached volumes, old snapshots, idle IPs and load balancers, gp2 to gp3, idle servers and databases, rightsizing, older and x86 server types, office-hours schedules for non-production, Extended Support charges, idle NAT gateways, Savings Plan advice; each with a risk score, usage charts, an "Open in AWS console" fix and rollback steps. Assign, comment and act in bulk; Cloudoptics checks AWS for the change and measures the realised savings from the bills |
 | Planning and alerts | Budgets with alerts, credits runway (how long AWS credits will last), anomaly detection, Commitments page (Savings Plans and Reserved Instances, with expiry alerts at 60/30/15 days), connection-failure and assignment emails, notification preferences and a weekly digest. Email is the only channel (ADR-014) |
@@ -47,6 +48,7 @@ Locally, sign-in uses development tokens; staging uses WorkOS AuthKit (ADR-006).
 | `tools/cur-fixture/` | Synthetic AWS CUR 2.0 generator for ingestion and engine tests |
 | `infra/cloudformation/` | Customer-facing read-only access: `cloudoptics-access.yaml` is the single onboarding stack (setup step in `setup/`). `billing-role.yaml`, `resource-role.yaml` and `resource-stackset.yaml` are the older stacks, kept for connections that have not moved yet |
 | `infra/aws/`, `infra/digitalocean/` | Staging setup: Cloudoptics' own AWS account (template bucket, broker role) and the App Platform app |
+| `infra/gcp/` | `setup.sh`: Cloudoptics' own Google Cloud side (workload identity pool trusting the AWS broker, keyless service account), run by the owner once per environment |
 | `.github/workflows/` | `ci.yml` (lint, types, tests with PostgreSQL, cfn-lint, bundle budget, audits, Gitleaks, Semgrep, Trivy, SBOM), `pages.yml` (demo), `container.yml` (API image to GHCR), `deploy-staging.yml` (redeploy staging after each merge), `staging-setup.yml` (one-off staging setup) |
 
 ## Getting started

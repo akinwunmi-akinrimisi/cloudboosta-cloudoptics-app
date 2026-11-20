@@ -626,6 +626,23 @@ The full owner steps, in order, with costs, are in the ADR-007 amendment. In sho
 
 **`InvalidCiphertextException` or `AccessDeniedException` from KMS:** the key policy must name `CloudopticsBroker` (re-run with `kms` set), and the key must be enabled. A ciphertext copied between workspaces fails this way by design.
 
+### RB-21: Google Cloud connections (ADR-019)
+
+**Set up (once per environment):** `PROJECT_ID=<our project> AWS_ACCOUNT_ID=<broker account> ./infra/gcp/setup.sh` in Cloud Shell, then set the two printed settings (`CLOUDOPTICS_GCP_WORKLOAD_PROVIDER`, `CLOUDOPTICS_GCP_SERVICE_ACCOUNT`) on the API and worker. Nothing is secret; there is no key to rotate.
+
+| Symptom (check or `sync_run.error_code`) | Cause | Fix |
+|---|---|---|
+| `federation` / `GcpNotConfigured` | The two settings are not set | Set them and redeploy |
+| `federation` / `invalid_grant` or `PERMISSION_DENIED` | The pool's AWS provider does not admit the broker role (wrong account, or the broker role was renamed), or the service account binding is missing | Re-run `infra/gcp/setup.sh`; check the broker works for AWS first (RB-20) |
+| `ownership` / `OwnershipNotProven` | The customer has not run the label command, or labelled another dataset | Ask them to run command 1 exactly as shown (Set up again shows it) |
+| `ownership` / `AccountInUse` | The billing account is proven in another workspace | As for AWS accounts (ADR-017): disconnect it there or invite the person |
+| `query_jobs` error, or `cur.ingest` `accessDenied` | No BigQuery Job User on the query project | Command 3 |
+| `cur.ingest` detail `too_large: ...` | A period's query would scan more than `CLOUDOPTICS_GCP_MAX_BYTES_BILLED` (20 GiB) or return more than 500,000 groups | Check the table is the FOCUS export (partitioned) and not a copy; raise the limit for that environment only after checking the customer's query cost |
+| Batch failed with `fx` error | A non-USD bill and no Cloudoptics rate nor Google rate for those days | Staff set the rate (Exchange rates page), then Reload bills |
+| `cost.reconcile` mismatch | BigQuery's total changed since the load (Google restates until the invoice closes) | The next 6-hourly poll reloads it; Reload bills to do it now |
+
+Who pays: queries run in the customer's query project at BigQuery on-demand prices; `sync_run.scope.bytesBilled` and `est_customer_api_cost_usd` show each run's share.
+
 ### RB-19: Security-audit follow-ups
 
 The Sprint 6 audit (security-audit run 1, report kept outside the repository) had no confirmed findings: every candidate was left as "needs validation" because no target code could be run in a sandbox. Fixes have shipped for the leads in #76 (deploy guards: owned template URLs, push-only staging deploys, secrets-only setup, no public dev-auth port), #77 (MFA policy enforced), #78 (stack callback cannot act on the External ID alone; links expire) and #83 (bounded worker work per tenant, leads 11 to 17).

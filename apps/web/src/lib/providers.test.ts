@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { PROVIDER_LABEL, accountLabel, accountNoun, asProvider, providerOf, workspaceProviders } from './providers'
+import { PROVIDER_LABEL, accountLabel, connectionLabel, accountNoun, asProvider, providerOf, workspaceProviders } from './providers'
 
 describe('PROVIDER_LABEL', () => {
   it('names every provider', () => {
@@ -68,5 +68,18 @@ describe('asProvider', () => {
     expect(asProvider('oracle')).toBeUndefined()
     expect(asProvider(3)).toBeUndefined()
     expect(asProvider(undefined)).toBeUndefined()
+  })
+})
+
+describe('connectionLabel', () => {
+  it('names a Google Cloud connection by its billing account', () => {
+    expect(connectionLabel({ provider: 'gcp', awsAccountId: '012345-6789AB-CDEF01' })).toBe(
+      'Google Cloud billing account 012345-6789AB-CDEF01',
+    )
+  })
+
+  it('names other connections by their account', () => {
+    expect(connectionLabel({ awsAccountId: '123456789012' })).toBe('AWS account 123456789012')
+    expect(connectionLabel({ provider: 'aws', awsAccountId: '123456789012' })).toBe('AWS account 123456789012')
   })
 })

@@ -46,13 +46,13 @@ def test_aws_is_registered_with_every_capability_but_native_recs() -> None:
         assert aws.capability(name) is not None, name
     assert aws.native_recs is None
     assert "nat_gateway" in aws.resource_types
-    assert [p.name for p in providers.registered()] == ["aws"]
+    assert [p.name for p in providers.registered()] == ["aws", "gcp"]
 
 
 def test_unknown_and_unregistered_providers() -> None:
     assert set(providers.PROVIDER_NAMES) == {"aws", "gcp", "azure", "digitalocean"}
     with pytest.raises(providers.UnknownProviderError):
-        providers.get("gcp")  # valid in the schema, no plug-in yet
+        providers.get("azure")  # valid in the schema, no plug-in yet
     assert providers.find("azure") is None
     with pytest.raises(ValueError, match="not a provider"):
         register(
@@ -331,7 +331,7 @@ def test_the_rule_registry_keeps_the_engines_order_and_metadata() -> None:
         "schedule_instances", "schedule_databases", "extended_support", "idle_nat_gateways",
         "R8",
     ]  # fmt: skip
-    assert registry.engine_rules() == specs[:-1]
+    assert tuple(s for s in registry.engine_rules() if s.provider == "aws") == specs[:-1]
     assert all(s.provider == "aws" and s.resource_types for s in specs)
     assert registry.spec_for("R10_idle_nat").version == 2  # type: ignore[union-attr]
     assert registry.spec_for("R6_graviton") is registry.spec_for("R6_newer_generation")

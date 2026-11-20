@@ -2,9 +2,8 @@
 
 Jobs ask ``capability_for(tenant, connection, "billing_source")`` and call what comes back;
 ``None`` means the connection's provider has no plug-in yet, or a plug-in without that
-capability, and the job skips the connection. AWS is the only registered provider today;
-``gcp``, ``azure`` and ``digitalocean`` are accepted by the schema and get plug-ins in later
-phases.
+capability, and the job skips the connection. AWS and Google Cloud (ADR-019) are registered;
+``azure`` and ``digitalocean`` are accepted by the schema and get plug-ins in later phases.
 """
 
 from __future__ import annotations
@@ -49,17 +48,29 @@ def register(provider: CloudProvider) -> CloudProvider:
 
 
 def unregister(name: str) -> None:
-    """Tests only: remove a plug-in registered for the test."""
+    """Tests only: remove a plug-in registered for the test; a built-in one comes back."""
     _REGISTRY.pop(name, None)
+    if _BUILTINS_LOADED and name in _BUILTINS:
+        register(_build(name))
+
+
+#: The built-in plug-ins, in registration order (module with a ``build()``).
+_BUILTINS = {"aws": "cloudoptics.providers.aws", "gcp": "cloudoptics.providers.gcp"}
+
+
+def _build(name: str) -> CloudProvider:
+    import importlib
+
+    built: CloudProvider = importlib.import_module(_BUILTINS[name]).build()
+    return built
 
 
 def _load_builtins() -> None:
     global _BUILTINS_LOADED
     if not _BUILTINS_LOADED:
         _BUILTINS_LOADED = True
-        from cloudoptics.providers import aws
-
-        register(aws.build())
+        for name in _BUILTINS:
+            register(_build(name))
 
 
 def registered() -> tuple[CloudProvider, ...]:

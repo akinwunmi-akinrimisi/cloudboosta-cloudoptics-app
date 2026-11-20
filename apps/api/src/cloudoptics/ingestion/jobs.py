@@ -136,7 +136,7 @@ async def _connections(with_export: bool) -> list[tuple[str, str]]:
             await session.execute(
                 text(
                     "SELECT tenant_id, id FROM cloud_connection WHERE status = ANY(:ok) "
-                    "AND (cur_bucket IS NOT NULL OR NOT :with_export)"
+                    "AND (cur_bucket IS NOT NULL OR provider <> 'aws' OR NOT :with_export)"
                 ),
                 {"ok": list(INGESTABLE), "with_export": with_export},
             )
