@@ -87,6 +87,28 @@ class Settings(BaseSettings):
     azure_blob_suffix: str = "blob.core.windows.net"
     azure_blob_scheme: Literal["https", "http"] = "https"
 
+    # DigitalOcean sign-in (ADR-021, "Connect DigitalOcean"): the OAuth application registered
+    # in DigitalOcean's control panel (API -> OAuth Applications). Without both, onboarding
+    # offers only the token paste. The scope is space-separated and configurable because
+    # DigitalOcean does not document whether OAuth grants granular scopes: the per-scope access
+    # checks then say exactly what is missing. ``read`` is the documented fallback.
+    do_oauth_client_id: str = ""
+    do_oauth_client_secret: SecretStr = SecretStr("")
+    do_oauth_scope: str = (
+        "account:read billing:read droplet:read block_storage:read snapshot:read "
+        "reserved_ip:read load_balancer:read database:read monitoring:read tag:read"
+    )
+    # Where DigitalOcean sends the browser back; empty: ``app_url`` + the callback page. It must
+    # match the application's registered callback URL exactly.
+    do_oauth_redirect_url: str = ""
+    do_oauth_authorize_url: str = "https://cloud.digitalocean.com/v1/oauth/authorize"
+    # Token and revoke endpoints (``/v1/oauth/token``, ``/v1/oauth/revoke``) are under this.
+    do_oauth_base_url: str = "https://cloud.digitalocean.com"
+    # PKCE (S256): required for public clients, allowed for confidential ones.
+    do_oauth_pkce: bool = True
+    # Tokens last 30 days; renew this many days before expiry (the hourly job).
+    do_oauth_refresh_days: int = Field(default=7, ge=1, le=29)
+
     # AWS connection (PRD FR-CON-01/13). Templates must be served from S3 for quick-create.
     # The defaults are local placeholders; the API and worker refuse them in staging and
     # production (require_aws_connection_settings).
@@ -180,6 +202,17 @@ class Settings(BaseSettings):
     @property
     def public_api_url(self) -> str:
         return (self.api_public_url or f"{self.app_url}/api").rstrip("/")
+
+    @property
+    def do_oauth_enabled(self) -> bool:
+        return bool(self.do_oauth_client_id and self.do_oauth_client_secret.get_secret_value())
+
+    @property
+    def do_oauth_callback_url(self) -> str:
+        return (
+            self.do_oauth_redirect_url
+            or f"{self.app_url.rstrip('/')}/connect/digitalocean/callback"
+        )
 
     @property
     def cfn_access_template_url(self) -> str:

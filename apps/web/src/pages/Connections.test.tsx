@@ -1,12 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DemoApi } from '../api/demo'
 import { ApiProvider } from '../app/context'
 import { createAppRouter } from '../app/router'
+import { browser } from './connect/DigitalOceanConnect'
 
 // The Connections page, Overview and Commitments for workspaces with other clouds than AWS:
 // each provider's own name and account, its badge when there are several, Scan now and
@@ -273,5 +274,52 @@ describe('Deleting a workspace with other clouds', () => {
     open(api, '/settings?section=workspace')
     expect(await screen.findByRole('heading', { name: 'Remove Cloudoptics from your AWS accounts' })).toBeTruthy()
     expect(screen.queryByRole('heading', { name: 'Remove Cloudoptics from your other clouds' })).toBeNull()
+  })
+})
+
+describe('Connect DigitalOcean by signing in (demo)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+  })
+
+  it('signs in, comes back, checks access and offers Reconnect', async () => {
+    const { api, tenantId } = await workspace([])
+    let sent = ''
+    const go = vi.spyOn(browser, 'go').mockImplementation((url) => {
+      sent = url
+    })
+    const { user } = open(api, '/onboarding?step=1')
+    await user.click(await screen.findByText('DigitalOcean', { exact: true }))
+    await user.click(await screen.findByRole('button', { name: 'Connect DigitalOcean' }))
+    await waitFor(() => expect(sent).toMatch(/^#\/connect\/digitalocean\/callback\?/))
+    go.mockRestore()
+    cleanup()
+    // DigitalOcean sends the browser back to the callback page.
+    const back = open(api, sent.slice(1))
+    expect(await screen.findByRole('heading', { name: 'Connected' }, { timeout: 5000 })).toBeTruthy()
+    expect(back.router.state.location.pathname).toBe('/onboarding')
+    const [conn] = await api.listConnections(tenantId)
+    expect(conn?.credentialType).toBe('oauth')
+    cleanup()
+    open(api, '/settings/connections')
+    const c = await card('DigitalOcean team')
+    expect(within(c).getByText(/^DigitalOcean team, read-only sign-in/)).toBeTruthy()
+    expect(within(c).getByRole('button', { name: 'Reconnect' })).toBeTruthy()
+    expect(within(c).queryByRole('button', { name: 'Replace token…' })).toBeNull()
+  })
+
+  it('a used or unknown sign-in says so and offers the steps again', async () => {
+    const { api } = await workspace([])
+    open(api, '/connect/digitalocean/callback?code=demo&state=demo-not-started-here-0000')
+    expect((await screen.findByRole('alert')).textContent).toContain('expired or was already used')
+    expect(await screen.findByRole('button', { name: 'Connect DigitalOcean' })).toBeTruthy()
+  })
+
+  it('a sign-in cancelled at DigitalOcean connects nothing', async () => {
+    const { api, tenantId } = await workspace([])
+    open(api, '/connect/digitalocean/callback?error=access_denied&state=x')
+    expect((await screen.findByRole('alert')).textContent).toContain('Not approved in DigitalOcean')
+    expect(await api.listConnections(tenantId)).toEqual([])
   })
 })

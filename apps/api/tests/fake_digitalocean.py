@@ -8,6 +8,14 @@ DigitalOcean. Tokens decide what the caller may do:
   and its team is derived from the token (each test gets its own team). Hex starting with
   ``dead`` is refused (401), ``ffff`` can also write, ``b111`` lacks ``billing:read``.
 
+OAuth (https://docs.digitalocean.com/reference/api/oauth/): ``authorize`` stands in for the
+consent page (sign in, pick the team, approve) and returns the redirect with ``code`` and
+``state``; ``POST https://cloud.digitalocean.com/v1/oauth/token`` exchanges a code (single
+use, 10 minutes, the registered client and redirect URI, the PKCE verifier) or a refresh
+token (single use; the access token it came with stops working) and answers in the
+documented shape; ``POST /v1/oauth/revoke`` revokes an access token. Errors are
+``{"error": "invalid_grant" | "invalid_client" | "invalid_request" | ...}``.
+
 Every team has the same synthetic bill and resources (``Team``): two closed monthly
 invoices with a CSV and summary, this month's balance and daily insights, and Droplets
 (one idle), an unattached volume, an old snapshot, an unassigned reserved IP, a load
@@ -16,10 +24,14 @@ balancer with nothing behind it and a database.
 
 from __future__ import annotations
 
+import base64
 import csv
+import hashlib
 import io
 import json
 import secrets
+import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -30,6 +42,9 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 
 HOST = "api.digitalocean.com"
+OAUTH_HOST = "cloud.digitalocean.com"
+CLIENT_ID = "fake-do-client-id"
+CLIENT_SECRET = "fake-do-client-secret"  # noqa: S105 - the fake's own test value
 READ_SCOPES = frozenset(
     {
         "account:read",
@@ -358,6 +373,26 @@ class FakeDigitalOcean:
     unavailable: int = 0
     #: Remove these paths' answers (403) for every token, e.g. the insights endpoint.
     forbidden_paths: set[str] = field(default_factory=set)
+    # -- OAuth ------------------------------------------------------------------------------
+    client_id: str = CLIENT_ID
+    client_secret: str = CLIENT_SECRET
+    #: The registered callback URL; None accepts any.
+    redirect_uri: str | None = None
+    #: The team the customer picks on the consent page; None: a new team per sign-in.
+    oauth_team: str | None = None
+    oauth_team_name: str = "Ocean Team"
+    #: What the customer approves on "Manage permissions", replacing the requested scope.
+    granted: frozenset[str] | None = None
+    #: Refuse every refresh (``invalid_grant``), as after the customer removed the app.
+    refuse_refresh: bool = False
+    #: Seconds a refresh takes (to make racing refreshes overlap).
+    refresh_delay: float = 0.0
+    codes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    refresh_tokens: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: (grant_type, sorted form field names) for every token request: values are not kept.
+    token_requests: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+    revoked: list[str] = field(default_factory=list)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self.handle)
@@ -402,11 +437,132 @@ class FakeDigitalOcean:
 
     # -- the handler ------------------------------------------------------------------------
 
+    # -- OAuth ------------------------------------------------------------------------------
+
+    def authorize(self, query: dict[str, str], *, approve: bool = True) -> str:
+        """The consent page: the customer signs in, picks the team and approves. Returns the
+        URL DigitalOcean redirects the browser to."""
+        redirect = query.get("redirect_uri", "")
+        if query.get("client_id") != self.client_id:
+            raise ValueError("unknown client_id")
+        if self.redirect_uri is not None and redirect != self.redirect_uri:
+            raise ValueError("The redirect uri included is not valid.")
+        if query.get("response_type") != "code":
+            raise ValueError("unsupported response_type")
+        challenge = query.get("code_challenge")
+        if challenge and query.get("code_challenge_method") != "S256":
+            raise ValueError("only S256 is supported")
+        back: dict[str, str] = {}
+        if "state" in query:
+            back["state"] = query["state"]
+        if not approve:
+            return f"{redirect}?{urlencode({'error': 'access_denied', **back})}"
+        requested = query.get("scope")
+        scopes = self.granted if self.granted is not None else _scopes(requested)
+        if scopes is None:
+            raise ValueError("The requested scope is invalid, unknown, or malformed.")
+        code = secrets.token_hex(10)
+        team = self.oauth_team or str(uuid.uuid4())
+        with self._lock:
+            self.codes[code] = {
+                "redirect_uri": redirect,
+                "challenge": challenge,
+                "scopes": frozenset(scopes),
+                "scope": requested or "read",
+                "team": team,
+                "at": time.monotonic(),
+            }
+        return f"{redirect}?{urlencode({'code': code, **back})}"
+
+    def _issue(self, team: str, scopes: frozenset[str], scope: str) -> dict[str, Any]:
+        access = "doo_v1_" + secrets.token_hex(32)
+        refresh = "dor_v1_" + secrets.token_hex(32)
+        self.tokens[access] = Profile(Team(team, self.oauth_team_name, self.today), scopes)
+        self.refresh_tokens[refresh] = {
+            "access": access,
+            "team": team,
+            "scopes": scopes,
+            "scope": scope,
+        }
+        return {
+            "access_token": access,
+            "token_type": "bearer",
+            "expires_in": 2592000,
+            "refresh_token": refresh,
+            "scope": scope,
+            "info": {
+                "name": "Sammy the Shark",
+                "email": "sammy@example.com",
+                "uuid": str(uuid.uuid5(NAMESPACE, "user:" + team)),
+                "team_uuid": team,
+                "team_name": self.oauth_team_name,
+            },
+        }
+
+    def _oauth(self, request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+        form |= {k: v[0] for k, v in parse_qs(request.url.query.decode()).items()}
+        if request.method != "POST":
+            return _oauth_error(405, "invalid_request")
+        if path == "/v1/oauth/revoke":
+            token = request.headers.get("authorization", "").removeprefix("Bearer ")
+            if not token or form.get("token") != token:
+                return _oauth_error(401, "invalid_token")
+            with self._lock:
+                self.tokens.pop(token, None)
+                self.revoked.append(token)
+            return httpx.Response(200, json={})
+        if path != "/v1/oauth/token":
+            return _oauth_error(404, "not_found")
+        grant = form.get("grant_type", "")
+        self.token_requests.append((grant, tuple(sorted(form))))
+        if "client_secret" in form and (
+            form.get("client_id") != self.client_id or form["client_secret"] != self.client_secret
+        ):
+            return _oauth_error(401, "invalid_client")
+        if grant == "authorization_code":
+            return self._exchange(form)
+        if grant == "refresh_token":
+            if self.refresh_delay:
+                time.sleep(self.refresh_delay)
+            with self._lock:
+                live = self.refresh_tokens.pop(form.get("refresh_token", ""), None)
+                if live is None or self.refuse_refresh:
+                    return _oauth_error(400, "invalid_grant")
+                # The access token it was issued with stops working.
+                self.tokens.pop(live["access"], None)
+                return httpx.Response(
+                    200, json=self._issue(live["team"], live["scopes"], live["scope"])
+                )
+        return _oauth_error(400, "unsupported_grant_type")
+
+    def _exchange(self, form: dict[str, str]) -> httpx.Response:
+        if "client_secret" not in form and "code_verifier" not in form:
+            return _oauth_error(400, "invalid_request")
+        with self._lock:
+            grant = self.codes.pop(form.get("code", ""), None)
+            if grant is None or time.monotonic() - grant["at"] > 600:
+                return _oauth_error(400, "invalid_grant")
+            if form.get("redirect_uri") != grant["redirect_uri"]:
+                return _oauth_error(400, "invalid_grant")
+            if grant["challenge"]:
+                verifier = form.get("code_verifier", "")
+                digest = hashlib.sha256(verifier.encode()).digest()
+                expected = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+                if expected != grant["challenge"]:
+                    return _oauth_error(400, "invalid_grant")
+            return httpx.Response(
+                200, json=self._issue(grant["team"], grant["scopes"], grant["scope"])
+            )
+
     def handle(self, request: httpx.Request) -> httpx.Response:
         url = request.url
         path = url.path
         auth = request.headers.get("authorization", "")
         self.requests.append((request.method, path, auth.startswith("Bearer ")))
+        if url.host == OAUTH_HOST:
+            return self._oauth(request)
         if url.host != HOST:
             return _error(404, "not_found")
         if self.throttle > 0:
@@ -551,6 +707,28 @@ def _paged(path: str, key: str, items: list[Any], query: dict[str, str]) -> http
         nxt = urlencode({"page": page + 1, "per_page": per_page})
         body["links"] = {"pages": {"next": f"https://{HOST}{path}?{nxt}"}}
     return httpx.Response(200, json=body)
+
+
+def _scopes(requested: str | None) -> frozenset[str] | None:
+    """What a scope string grants. Without one, the customer ticks scopes on "Manage
+    permissions": here, every read scope. ``read`` and ``api:read`` are every read scope."""
+    if not requested:
+        return READ_SCOPES
+    granted: set[str] = set()
+    for scope in requested.split():
+        if scope in ("read", "api:read"):
+            granted |= READ_SCOPES
+        elif scope in ("write", "api:write"):
+            granted |= READ_SCOPES | WRITE_SCOPES
+        elif scope in READ_SCOPES or scope in WRITE_SCOPES:
+            granted.add(scope)
+        else:
+            return None
+    return frozenset(granted)
+
+
+def _oauth_error(code: int, error: str) -> httpx.Response:
+    return httpx.Response(code, json={"error": error, "error_description": error.replace("_", " ")})
 
 
 def _error(code: int, ident: str) -> httpx.Response:

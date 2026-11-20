@@ -1,12 +1,12 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Check, Cloud, KeyRound, ListChecks, LogIn } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Check, Cloud, KeyRound, ListChecks, LogIn, MousePointerClick, ShieldCheck } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useState } from 'react'
 
 import type { Connection } from '../../api/types'
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
-import { Chips, Flow, Todo, TodoItem } from '../../components/onboarding'
+import { Chips, Disclosure, Flow, Todo, TodoItem } from '../../components/onboarding'
 import { Alert, Button, Field } from '../../components/ui'
 
 /** DigitalOcean's page for a new personal access token. */
@@ -35,6 +35,69 @@ function message(err: unknown): string {
 const FLOW = {
   from: { icon: Cloud, label: 'Billing team' },
   link: { icon: KeyRound, label: 'Read-only token' },
+}
+
+const SIGN_IN_FLOW = {
+  from: { icon: Cloud, label: 'Billing team' },
+  link: { icon: ShieldCheck, label: 'Read-only sign-in' },
+}
+
+/** Where the callback page finds the workspace a sign-in was started from. */
+export const SIGN_IN_KEY = 'cloudoptics.do-sign-in'
+
+/** The browser leaves for DigitalOcean (the demo: straight to the callback page). Tests swap it. */
+export const browser = {
+  go: (url: string): void => {
+    window.location.assign(url)
+  },
+}
+
+/** Starts a sign-in: remembers the workspace, then opens DigitalOcean's approval page. */
+function useSignIn(tenantId: string) {
+  const api = useApi()
+  return useMutation({
+    mutationFn: () => api.startDigitalOceanOAuth(tenantId),
+    onSuccess: ({ authorizeUrl }) => {
+      sessionStorage.setItem(SIGN_IN_KEY, tenantId)
+      browser.go(authorizeUrl)
+    },
+  })
+}
+
+/** Whether "Connect DigitalOcean" (sign in) is set up; false while unknown or on error. */
+export function useSignInAvailable(tenantId: string): { ready: boolean; enabled: boolean } {
+  const api = useApi()
+  const q = useQuery({
+    queryKey: ['do-oauth', tenantId],
+    queryFn: () => api.digitalOceanOAuth(tenantId),
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+  return { ready: !q.isPending, enabled: q.data?.enabled === true }
+}
+
+/** The main way: sign in to DigitalOcean, pick the team, approve read-only access. */
+function SignInSteps({ tenantId }: { tenantId: string }) {
+  const signIn = useSignIn(tenantId)
+  return (
+    <>
+      <Todo label="What to do in DigitalOcean">
+        <TodoItem n={1} icon={MousePointerClick} title="Press the button" hint="DigitalOcean opens" go>
+          {signIn.error && <Alert tone="error">{message(signIn.error)}</Alert>}
+          <button
+            type="button"
+            className="ed-btn wide"
+            disabled={signIn.isPending || signIn.isSuccess}
+            onClick={() => signIn.mutate()}
+          >
+            {signIn.isPending || signIn.isSuccess ? 'Opening DigitalOcean…' : 'Connect DigitalOcean'}
+          </button>
+        </TodoItem>
+        <TodoItem n={2} icon={LogIn} title="Sign in, pick the billing team" />
+        <TodoItem n={3} icon={ShieldCheck} title="Approve read-only access" hint="Cloudoptics checks it here" />
+      </Todo>
+    </>
+  )
 }
 
 /** The three customer steps: make a token, tick the read scopes, paste it. */
@@ -117,19 +180,22 @@ export function DigitalOceanConnect({
       onConnected(conn.id)
     },
   })
+  const oauth = useSignInAvailable(tenantId)
   const submit = (e: FormEvent) => {
     e.preventDefault()
     setTouched(true)
     if (formatError(token) || !token.trim()) return
     connect.mutate(token.trim())
   }
-  return (
-    <div className="max-w-[760px]">
-      <section className="min-w-0">
-        <h1 className="ed-h1">Connect DigitalOcean</h1>
-        <Flow label="How Cloudoptics connects to DigitalOcean" {...FLOW} />
-        <TokenSteps />
-        <form className="ed-sheet ed-form mt-7" onSubmit={submit}>
+  if (!oauth.ready) {
+    return (
+      <p className="ed-sub" role="status">
+        Loading…
+      </p>
+    )
+  }
+  const form = (
+    <form className={oauth.enabled ? 'ed-form mt-4' : 'ed-sheet ed-form mt-7'} onSubmit={submit}>
           <TokenField
             label="DigitalOcean token"
             value={token}
@@ -141,8 +207,43 @@ export function DigitalOceanConnect({
           <button type="submit" className="ed-btn wide" disabled={connect.isPending || !token.trim()}>
             {connect.isPending ? 'Checking the token…' : 'Connect'}
           </button>
-        </form>
+    </form>
+  )
+  return (
+    <div className="max-w-[760px]">
+      <section className="min-w-0">
+        <h1 className="ed-h1">Connect DigitalOcean</h1>
+        <Flow label="How Cloudoptics connects to DigitalOcean" {...(oauth.enabled ? SIGN_IN_FLOW : FLOW)} />
+        {oauth.enabled ? (
+          <>
+            <SignInSteps tenantId={tenantId} />
+            <Disclosure summary="Use an API token instead" className="mt-7">
+              <TokenSteps />
+              {form}
+            </Disclosure>
+          </>
+        ) : (
+          <>
+            <TokenSteps />
+            {form}
+          </>
+        )}
       </section>
+    </div>
+  )
+}
+
+/** Connections page, for a signed-in team: sign in again (new tokens, the same connection). */
+export function ReconnectDigitalOcean({ tenantId }: { tenantId: string }) {
+  const signIn = useSignIn(tenantId)
+  return (
+    <div className="flex flex-col gap-2">
+      {signIn.error && <Alert tone="error">{message(signIn.error)}</Alert>}
+      <div>
+        <Button variant="secondary" disabled={signIn.isPending || signIn.isSuccess} onClick={() => signIn.mutate()}>
+          {signIn.isPending || signIn.isSuccess ? 'Opening DigitalOcean…' : 'Reconnect'}
+        </Button>
+      </div>
     </div>
   )
 }

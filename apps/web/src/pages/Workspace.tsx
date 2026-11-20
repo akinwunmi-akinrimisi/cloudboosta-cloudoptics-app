@@ -36,7 +36,7 @@ import {
   supports,
   workspaceProviders,
 } from '../lib/providers'
-import { ReplaceDigitalOceanToken } from './connect/DigitalOceanConnect'
+import { ReconnectDigitalOcean, ReplaceDigitalOceanToken } from './connect/DigitalOceanConnect'
 import { ProviderBadge } from '../components/providers'
 
 // Fetched only when an admin opens Set up again on an Azure connection.
@@ -566,8 +566,9 @@ function ConnectionActions({
       return (
         <div className="mt-4 flex flex-col gap-2">
           <p className="text-sm text-secondary">
-            Disconnected and its token deleted from Cloudoptics. Past costs stay until you delete them. To connect again,
-            choose Connect an account and paste a new token.
+            {c.credentialType === 'oauth'
+              ? 'Disconnected, access revoked in DigitalOcean. Past costs stay until you delete them. To connect again, choose Connect an account.'
+              : 'Disconnected and its token deleted from Cloudoptics. Past costs stay until you delete them. To connect again, choose Connect an account and paste a new token.'}
           </p>
           <div className="flex flex-wrap gap-2">
             <DeleteConnectionData connection={c} tenantId={tenantId} onDeleted={onDeleted} />
@@ -581,8 +582,10 @@ function ConnectionActions({
         {confirming ? (
           <div ref={confirmPanel} className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
             <p>
-              Disconnect {accountLabel(c.provider, c.awsAccountId)}? Cloudoptics deletes its copy of the token and stops
-              reading the team. Past costs stay. Delete the token in DigitalOcean too.
+              Disconnect {accountLabel(c.provider, c.awsAccountId)}?{' '}
+              {c.credentialType === 'oauth'
+                ? 'Cloudoptics revokes its access in DigitalOcean and stops reading the team. Past costs stay.'
+                : 'Cloudoptics deletes its copy of the token and stops reading the team. Past costs stay. Delete the token in DigitalOcean too.'}
             </p>
             <div className="flex gap-2">
               <Button disabled={busy} onClick={() => disconnect.mutate()}>
@@ -598,7 +601,11 @@ function ConnectionActions({
             <Button variant="secondary" disabled={busy || c.status === 'validating'} onClick={() => check.mutate()}>
               {check.isPending || c.status === 'validating' ? 'Checking…' : 'Check again'}
             </Button>
-            <ReplaceDigitalOceanToken tenantId={tenantId} connectionId={c.id} />
+            {c.credentialType === 'oauth' ? (
+              <ReconnectDigitalOcean tenantId={tenantId} />
+            ) : (
+              <ReplaceDigitalOceanToken tenantId={tenantId} connectionId={c.id} />
+            )}
             <Button ref={confirmButton} variant="ghost" disabled={busy} onClick={() => setConfirming(true)}>
               Disconnect…
             </Button>
@@ -709,7 +716,7 @@ function ConnectionActions({
 function connectionKindNote(c: Connection): string {
   switch (providerOf(c.provider)) {
     case 'digitalocean':
-      return 'DigitalOcean team, read-only token'
+      return c.credentialType === 'oauth' ? 'DigitalOcean team, read-only sign-in' : 'DigitalOcean team, read-only token'
     case 'gcp':
       return 'Billing account, with every project billed to it'
     case 'azure':

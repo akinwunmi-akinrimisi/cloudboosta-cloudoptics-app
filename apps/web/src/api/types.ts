@@ -104,6 +104,13 @@ export interface Connection {
   stackName: string
   /** The single stack's version as last reported; null while on the older stacks. */
   stackVersion: string | null
+  /** ``oauth``: a DigitalOcean sign-in (Reconnect, not Replace token). Absent from older payloads. */
+  credentialType?: 'static' | 'oauth'
+}
+
+/** Whether "Connect DigitalOcean" (sign in) is set up; without it only the token paste is offered. */
+export interface DigitalOceanOAuthConfig {
+  enabled: boolean
 }
 
 export const ACCESS_STACK_NAME = 'cloudoptics-access'
@@ -1271,6 +1278,12 @@ export interface Api {
   connectDigitalOcean(tenantId: string, token: string): Promise<Connection>
   /** Admins only. The new token must read the same DigitalOcean team. */
   replaceDigitalOceanToken(tenantId: string, connectionId: string, token: string): Promise<Connection>
+  /** Admins only. Whether signing in with DigitalOcean (OAuth) is available. */
+  digitalOceanOAuth(tenantId: string): Promise<DigitalOceanOAuthConfig>
+  /** Admins only. A one-time DigitalOcean sign-in link for this admin and workspace (10 minutes). */
+  startDigitalOceanOAuth(tenantId: string): Promise<{ authorizeUrl: string }>
+  /** Admins only. DigitalOcean sent the browser back: runs the access checks and stores the sign-in. */
+  finishDigitalOceanOAuth(tenantId: string, code: string, state: string): Promise<Connection>
   /** Azure: creates the connection and returns the steps to run in Azure (409 if already connected). */
   createAzureConnection(tenantId: string, body: AzureConnectionCreate): Promise<AzureConnectionSetup>
   /** Azure, admins only. */

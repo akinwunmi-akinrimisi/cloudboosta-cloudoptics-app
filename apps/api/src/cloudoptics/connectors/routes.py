@@ -80,6 +80,9 @@ class Connection(ApiModel):
     stack_version: str | None = None
     # The cloud (ADR-018); added after the other fields so AWS responses only gain this key.
     provider: ProviderName = "aws"
+    # How the secret was obtained: ``oauth`` for a DigitalOcean sign-in (ADR-021), which the
+    # Connections page offers to reconnect instead of replacing a token.
+    credential_type: Literal["static", "oauth"] = "static"
 
 
 class ConnectionSetup(ApiModel):
@@ -613,9 +616,23 @@ async def disconnect(
     connection_id: uuid.UUID, request: Request, access: AdminAccess, session: Session
 ) -> Response:
     row = await _load(session, connection_id)
-    await mark_disconnected(
-        session, access.tenant_id, connection_id, row.status, user_actor(request, access.user.id)
-    )
+    actor = user_actor(request, access.user.id)
+    if row.credential_type == "oauth" and row.status != "disconnected":
+        # A DigitalOcean sign-in (ADR-021): revoke the access at DigitalOcean, then the
+        # tokens are wiped with every other provider secret (mark_disconnected).
+        from cloudoptics.providers.digitalocean.oauth import revoke_stored
+
+        revoked = await revoke_stored(session, access.tenant_id, row)
+        await audit.record(
+            session,
+            tenant_id=access.tenant_id,
+            actor=actor,
+            action="connection.token_revoked",
+            target_type="cloud_connection",
+            target_id=str(connection_id),
+            after={"provider": row.provider, "revoked": bool(revoked)},
+        )
+    await mark_disconnected(session, access.tenant_id, connection_id, row.status, actor)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

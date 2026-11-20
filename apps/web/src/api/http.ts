@@ -43,6 +43,7 @@ import type {
   CurrentRate,
   DailyCosts,
   DataDeletion,
+  DigitalOceanOAuthConfig,
   Me,
   InventorySummary,
   Invite,
@@ -409,6 +410,18 @@ export class HttpApi implements Api {
 
   replaceDigitalOceanToken(tenantId: string, connectionId: string, token: string): Promise<Connection> {
     return this.request('PUT', `/v1/tenants/${tenantId}/connections/${connectionId}/token`, { token })
+  }
+
+  digitalOceanOAuth(tenantId: string): Promise<DigitalOceanOAuthConfig> {
+    return this.request('GET', `/v1/tenants/${tenantId}/connections/digitalocean/oauth`)
+  }
+
+  startDigitalOceanOAuth(tenantId: string): Promise<{ authorizeUrl: string }> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connections/digitalocean/oauth/start`)
+  }
+
+  finishDigitalOceanOAuth(tenantId: string, code: string, state: string): Promise<Connection> {
+    return this.request('POST', `/v1/tenants/${tenantId}/connections/digitalocean/oauth/callback`, { code, state })
   }
 
   disconnectConnection(tenantId: string, connectionId: string): Promise<void> {

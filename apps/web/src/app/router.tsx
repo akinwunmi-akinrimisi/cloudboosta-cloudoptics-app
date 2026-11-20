@@ -89,14 +89,17 @@ const staff = createRoute({
 const onboarding = createRoute({
   getParentRoute: () => root,
   path: '/onboarding',
-  validateSearch: (search: Record<string, unknown>): { step?: number; connection?: string; new?: true } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { step?: number; connection?: string; check?: string; new?: true } => ({
     ...(search.step === undefined ? {} : { step: Number(search.step) === 1 ? 1 : 0 }),
     ...(typeof search.connection === 'string' ? { connection: search.connection } : {}),
+    ...(typeof search.check === 'string' ? { check: search.check } : {}),
     ...(search.new === true || search.new === 'true' || search.new === 1 ? { new: true as const } : {}),
   }),
   beforeLoad: async ({ context, search }) => {
     const me = await loadMe(context)
-    const creating = !search.step && !search.connection
+    const creating = !search.step && !search.connection && !search.check
     // With a workspace already, the create step opens only from "New workspace" (?new=true);
     // without one, there is nothing to connect yet.
     if (me.memberships.length && creating && !search.new) throw redirect({ to: '/overview' })
@@ -104,8 +107,40 @@ const onboarding = createRoute({
   },
   loader: preload(Onboarding),
   component: function OnboardingRoute() {
-    const { step, connection } = onboarding.useSearch()
-    return <Onboarding startAt={step ?? 0} connectionId={connection} />
+    const { step, connection, check } = onboarding.useSearch()
+    return <Onboarding startAt={step ?? 0} connectionId={connection} checkId={check} />
+  },
+})
+
+// Where DigitalOcean sends the browser back after "Connect DigitalOcean" (ADR-021). Must match
+// the OAuth app's registered callback URL: <app URL>/connect/digitalocean/callback.
+const doCallback = createRoute({
+  getParentRoute: () => root,
+  path: '/connect/digitalocean/callback',
+  validateSearch: (search: Record<string, unknown>): { code?: string; state?: string; error?: string } => {
+    // The address bar's own text first: the router reads an all-digit value as a number.
+    const raw = new URLSearchParams(window.location.search)
+    const pick = (name: string) => {
+      const v = raw.get(name) ?? search[name]
+      return typeof v === 'string' && v ? v : undefined
+    }
+    const out: { code?: string; state?: string; error?: string } = {}
+    const code = pick('code')
+    const state = pick('state')
+    const error = pick('error')
+    if (code) out.code = code
+    if (state) out.state = state
+    if (error) out.error = error
+    return out
+  },
+  beforeLoad: async ({ context }) => {
+    const me = await loadMe(context)
+    if (!me.memberships.length) throw redirect({ to: '/onboarding' })
+  },
+  loader: preload(Onboarding),
+  component: function DigitalOceanCallbackRoute() {
+    const search = doCallback.useSearch()
+    return <Onboarding signIn={search} />
   },
 })
 
@@ -183,6 +218,7 @@ const routeTree = root.addChildren([
   index,
   staff,
   onboarding,
+  doCallback,
   app.addChildren([
     overview,
     connections,

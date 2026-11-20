@@ -24,7 +24,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type { Connection, IntentSetup, Provider } from '../api/types'
 import { ACCESS_STACK_NAME, ApiError } from '../api/types'
@@ -35,6 +35,7 @@ import { PermissionPanel, SiteLinks } from '../components/permissions'
 import { Alert, Button, Field, Logo, StatusPill, cx } from '../components/ui'
 import { PROVIDER_LABEL, connectionLabel, providerOf } from '../lib/providers'
 import { DEMO_URL, HOW_IT_WORKS_STACK, absoluteSiteUrl } from '../lib/site'
+import { DigitalOceanConnect, SIGN_IN_KEY } from './connect/DigitalOceanConnect'
 import { GcpConnect } from './connect/GcpConnect'
 import { CONNECT_PROVIDERS, DEFAULT_CONNECT } from './connect/providers'
 import './onboarding.css'
@@ -767,15 +768,89 @@ function WorkspaceSlip({ name, country }: { name: string; country: string }) {
   )
 }
 
-/** ``connectionId`` opens the AWS step for an existing connection (move or set up again). */
-export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; connectionId?: string }) {
+/** What DigitalOcean sends back to the callback page after "Connect DigitalOcean". */
+export interface SignInReturn {
+  code?: string
+  state?: string
+  error?: string
+}
+
+/** DigitalOcean sent the browser back: finish the sign-in, then show Check access. */
+function FinishSignIn({
+  tenantId,
+  back,
+  onConnected,
+}: {
+  tenantId: string
+  back: SignInReturn
+  onConnected: (connectionId: string) => void
+}) {
+  const api = useApi()
+  const navigate = useNavigate()
+  const sent = useRef(false)
+  const cancelled = back.error === 'access_denied'
+  const [error, setError] = useState<string | null>(
+    back.error ? (cancelled ? 'Not approved in DigitalOcean. Nothing was connected.' : 'DigitalOcean did not finish the sign-in.') : null,
+  )
+  useEffect(() => {
+    // The state works once: never send it twice (a re-render, React's strict mode).
+    if (sent.current || back.error || !back.code || !back.state) return
+    sent.current = true
+    api
+      .finishDigitalOceanOAuth(tenantId, back.code, back.state)
+      .then((conn) => {
+        sessionStorage.removeItem(SIGN_IN_KEY)
+        rememberTenant(tenantId)
+        onConnected(conn.id)
+        // Off the callback address, so a reload does not try the used state again.
+        void navigate({ to: '/onboarding', search: { check: conn.id }, replace: true })
+      })
+      .catch((err: unknown) => setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.'))
+  }, [api, back, navigate, onConnected, tenantId])
+  if (!error && back.code && back.state) {
+    return (
+      <section className="max-w-[760px]">
+        <h1 className="ed-h1">Checking access</h1>
+        <div className="ed-wait" role="status">
+          <span className="dot" aria-hidden="true" />
+          <p>Testing each permission…</p>
+        </div>
+      </section>
+    )
+  }
+  return (
+    <>
+      <div className="mb-6 max-w-[760px]">
+        <Alert tone="error">{error ?? 'DigitalOcean did not send the sign-in back.'}</Alert>
+      </div>
+      <DigitalOceanConnect tenantId={tenantId} onConnected={onConnected} />
+    </>
+  )
+}
+
+/** ``connectionId`` opens the AWS step for an existing connection (move or set up again);
+ * ``checkId`` opens Check access for a connection; ``signIn`` finishes "Connect DigitalOcean". */
+export function Onboarding({
+  startAt = 0,
+  connectionId,
+  checkId,
+  signIn,
+}: {
+  startAt?: number
+  connectionId?: string
+  checkId?: string
+  signIn?: SignInReturn
+}) {
   const api = useApi()
   const qc = useQueryClient()
   const { data: me } = useMe()
   const [currentTenant] = useCurrentTenantId(me)
-  const [step, setStep] = useState(connectionId ? 1 : startAt)
-  const [tenantId, setTenantId] = useState<string | null>(startAt > 0 || connectionId ? currentTenant : null)
-  const [checking, setChecking] = useState<string | null>(null)
+  const resuming = Boolean(connectionId || checkId || signIn)
+  const [step, setStep] = useState(checkId ? 2 : connectionId || signIn ? 1 : startAt)
+  const [tenantId, setTenantId] = useState<string | null>(() =>
+    signIn ? (sessionStorage.getItem(SIGN_IN_KEY) ?? currentTenant) : startAt > 0 || resuming ? currentTenant : null,
+  )
+  const [checking, setChecking] = useState<string | null>(checkId ?? null)
   const [error, setError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -786,7 +861,7 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
   // Fixed on arrival, so creating the first workspace does not flip the heading.
   const [another] = useState(() => !!me?.memberships.length)
   // The cloud being connected: picked on the connect step, or the existing connection's.
-  const [picked, setPicked] = useState<Provider>('aws')
+  const [picked, setPicked] = useState<Provider>(signIn || checkId ? 'digitalocean' : 'aws')
   const existing = useQuery({
     queryKey: ['connections', tid],
     queryFn: () => api.listConnections(tid as string),
@@ -894,7 +969,8 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
           </section>
         )}
 
-        {step === 1 && tid && !connectionId && (
+        {step === 1 && tid && signIn && <FinishSignIn tenantId={tid} back={signIn} onConnected={connected} />}
+        {step === 1 && tid && !connectionId && !signIn && (
           <ConnectStep tenantId={tid} onConnected={connected} providerId={picked} onProvider={setPicked} />
         )}
         {step === 1 && tid && connectionId && (

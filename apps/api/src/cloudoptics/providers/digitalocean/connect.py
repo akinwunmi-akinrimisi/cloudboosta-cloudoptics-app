@@ -32,6 +32,7 @@ from cloudoptics.connectors.service import get_connection, read_external_id
 from cloudoptics.notifications.alerts import should_alert
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.providers.digitalocean.client import Client, DigitalOceanError
+from cloudoptics.providers.digitalocean.oauth import access_token
 
 CheckStatus = Literal["ok", "warning", "error", "skipped"]
 Status = Literal["healthy", "degraded", "failed"]
@@ -379,14 +380,15 @@ async def validate(
     conn = await get_connection(session, connection_id)
     if conn.status == "disconnected" or conn.external_id_enc is None:
         return None
-    token = await read_external_id(session, conn, tenant_id)
+    token = access_token(await read_external_id(session, conn, tenant_id))
     started = datetime.now(UTC)
     result = await run_in_threadpool(inspect, token)
     return await store(session, tenant_id, conn, result, actor, started)
 
 
 async def usable_token(session: AsyncSession, tenant_id: uuid.UUID, conn: Any) -> str | None:
-    """The stored token, or None when there is none to use (disconnected)."""
+    """The stored token (a signed-in connection's access token), or None when there is none
+    to use (disconnected)."""
     if conn.status == "disconnected" or conn.external_id_enc is None:
         return None
-    return await read_external_id(session, conn, tenant_id)
+    return access_token(await read_external_id(session, conn, tenant_id))

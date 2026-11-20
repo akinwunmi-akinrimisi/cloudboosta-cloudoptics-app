@@ -186,6 +186,15 @@ def seed_connection(owner_sql: Sql, tenant: str, conn: str, account: str) -> Non
             str(uuid.uuid4()),
         ),
         (
+            # ADR-021: a DigitalOcean sign-in state (workspace-wide, 10 minutes).
+            "INSERT INTO oauth_state (id, tenant_id, user_id, provider, state_hash, expires_at) "
+            "VALUES (%s, %s, %s, 'digitalocean', %s, now() + interval '10 minutes')",
+            uuid.uuid4(),
+            tenant,
+            uuid.uuid4(),
+            uuid.uuid4().bytes * 2,
+        ),
+        (
             "INSERT INTO connection_intent (id, tenant_id, external_id_enc, connection_id) "
             "VALUES (%s, %s, '\\x00', %s)",
             uuid.uuid4(),

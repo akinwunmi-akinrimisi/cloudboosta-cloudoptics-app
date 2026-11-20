@@ -18,7 +18,10 @@ What it does, in order:
    stand in for what the customer does in Google Cloud: ``POST /__e2e/gcp/billing-account``
    (a fresh billing account for the test's export) and ``POST /__e2e/gcp/label`` (the
    ``bq update --set_label`` command). The DigitalOcean API is the fake in
-   ``apps/api/tests/fake_digitalocean.py``. Then it serves the app with uvicorn on 127.0.0.1.
+   ``apps/api/tests/fake_digitalocean.py``; "Connect DigitalOcean" (OAuth, ADR-021) is on,
+   and ``GET /__e2e/digitalocean/authorize`` stands in for DigitalOcean's consent page: it
+   approves at once (a new team per sign-in) and redirects back with ``code`` and ``state``.
+   Then it serves the app with uvicorn on 127.0.0.1.
    ``bq update --set_label`` command). Every Azure call goes to the fake Azure
    (apps/api/tests/fake_azure.py, ADR-020); ``/e2e/azure`` and ``/e2e/azure/tag`` stand in for
    the customer there. Then it serves the app with uvicorn on 127.0.0.1.
@@ -35,6 +38,10 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+# Module level: the route below is annotated with them, and annotations are strings here.
+from fastapi import Request
+from fastapi.responses import RedirectResponse
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -57,6 +64,9 @@ DEFAULTS = {
     "CLOUDOPTICS_RATE_LIMIT_TENANT_PER_MINUTE": "100000",
     "CLOUDOPTICS_RATE_LIMIT_USER_PER_MINUTE": "240",
     "CLOUDOPTICS_LOG_LEVEL": "WARNING",
+    # The fake DigitalOcean's OAuth app (apps/api/tests/fake_digitalocean.py CLIENT_ID/SECRET).
+    "CLOUDOPTICS_DO_OAUTH_CLIENT_ID": "fake-do-client-id",
+    "CLOUDOPTICS_DO_OAUTH_CLIENT_SECRET": "fake-do-client-secret",
 }
 # Same throwaway password as the pytest suite: the role is shared by every database on a
 # developer's PostgreSQL, so both must agree.
@@ -71,6 +81,11 @@ def configure() -> dict[str, str]:
     for key, value in DEFAULTS.items():
         os.environ.setdefault(key, value)
     env = os.environ
+    # DigitalOcean's consent page is this server's test-only route.
+    env.setdefault(
+        "CLOUDOPTICS_DO_OAUTH_AUTHORIZE_URL",
+        env["CLOUDOPTICS_API_PUBLIC_URL"].rstrip("/") + "/__e2e/digitalocean/authorize",
+    )
     if env.get("CLOUDOPTICS_E2E") != "1":
         raise RefusedError("refusing to start: set CLOUDOPTICS_E2E=1 (test-only server)")
     if env["CLOUDOPTICS_ENVIRONMENT"] != "test":
@@ -138,7 +153,7 @@ def write_bills(root: Path, today: datetime) -> dict[str, dict[str, float]]:
     return totals
 
 
-def install_fakes(bills: Path, totals: dict[str, dict[str, float]]) -> None:
+def install_fakes(bills: Path, totals: dict[str, dict[str, float]]) -> Any:
     from fake_aws import FakeSessionFactory
 
     from cloudoptics.connectors import service as connectors
@@ -164,7 +179,18 @@ def install_fakes(bills: Path, totals: dict[str, dict[str, float]]) -> None:
 
     from cloudoptics.providers.digitalocean import client as digitalocean
 
-    digitalocean.set_transport(FakeDigitalOcean(accept_any=True).transport())
+    fake = FakeDigitalOcean(accept_any=True)
+    digitalocean.set_transport(fake.transport())
+    return fake
+
+
+def add_digitalocean_routes(app: Any, fake: Any) -> None:
+    """DigitalOcean's consent page for the sign-in spec: the customer signs in, picks a team
+    (a new one each time) and approves; the browser goes back to the app's callback page."""
+
+    @app.get("/__e2e/digitalocean/authorize", include_in_schema=False)
+    async def authorize(request: Request) -> RedirectResponse:
+        return RedirectResponse(fake.authorize(dict(request.query_params)), status_code=302)
 
 
 def install_gcp(app: object) -> None:
@@ -252,7 +278,7 @@ def main() -> None:
         import shutil
 
         shutil.rmtree(bills)
-    install_fakes(bills, write_bills(bills, datetime.now(UTC)))
+    digitalocean = install_fakes(bills, write_bills(bills, datetime.now(UTC)))
     azure = install_azure_fake(datetime.now(UTC))
 
     import uvicorn
@@ -263,6 +289,7 @@ def main() -> None:
     app = create_app()
     install_gcp(app)
     add_azure_routes(app, azure)
+    add_digitalocean_routes(app, digitalocean)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     # psycopg's async driver needs a selector event loop (Windows defaults to proactor).
     asyncio.run(uvicorn.Server(config).serve(), loop_factory=asyncio.SelectorEventLoop)
