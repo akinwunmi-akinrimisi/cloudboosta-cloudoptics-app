@@ -639,8 +639,9 @@ function ConnectionActions({
         <div ref={confirmPanel} className="flex flex-col gap-2 rounded-sm bg-surface-2 p-3 text-sm">
           {gcp ? (
             <p>
-              Disconnect {connectionLabel(c)}? Cloudoptics stops reading it and its open recommendations close. Past
-              costs stay. To remove our access completely, also remove the roles you gave {c.roleArn} in Google Cloud.
+              Disconnect {connectionLabel(c)}? Cloudoptics stops reading it, deletes its Google Cloud account for
+              this connection (so the access you gave it stops working), and its open recommendations close. Past
+              costs stay.
             </p>
           ) : azure ? (
             <p>

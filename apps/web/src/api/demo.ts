@@ -153,8 +153,8 @@ interface State {
   deletions?: Record<string, DataDeletion[]>
   /** One-click links waiting for the (simulated) stack to report back. */
   intents?: Record<string, { tenantId: string; createdAt: number; connectionId: string | null }>
-  /** Google Cloud connections: where the export is, and the dataset label that proves ownership. */
-  gcp?: Record<string, { settings: GcpSettings; labelValue: string }>
+  /** Google Cloud connections: where the export is, and the connection's own Cloudoptics account. */
+  gcp?: Record<string, { settings: GcpSettings; serviceAccount?: string }>
   /** Azure connections' own settings (the Connections page lists them with the others). */
   azure?: Record<string, { tenantId: string; conn: AzureConnection; code: string }>
   /** deletionId -> the deleted connection's provider (its audit entry names it, as the API's). */
@@ -828,18 +828,32 @@ function externalId(): string {
     .replace(/=+$/, '')
 }
 
-const DEMO_GCP_SERVICE_ACCOUNT = 'cloudoptics-reader@cloudoptics-demo.iam.gserviceaccount.com'
+/** A connection's own Cloudoptics account, as the API names them (providers/gcp/identity.py). */
+function demoGcpAccount(): string {
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, '0')).join('')
+  return `co-${hex}@cloudoptics-demo.iam.gserviceaccount.com`
+}
+const GCP_ROLES: GcpSetup['roles'] = [
+  { role: 'roles/compute.viewer', title: 'Compute Viewer' },
+  { role: 'roles/monitoring.viewer', title: 'Monitoring Viewer' },
+  { role: 'roles/recommender.computeViewer', title: 'Compute Recommender Viewer' },
+  { role: 'roles/recommender.cloudsqlViewer', title: 'Cloud SQL Recommender Viewer' },
+  { role: 'roles/cloudsql.viewer', title: 'Cloud SQL Viewer' },
+]
 const GCP_PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/
 
 /** The demo's checks of a Google Cloud connection: the same checks the API runs. */
 function demoGcpChecks(s: GcpSettings): PermissionCheck[] {
   const ok = (id: string, label: string, message: string): PermissionCheck => ({ id, label, status: 'ok', message, hint: null })
   return [
-    ok('federation', 'Sign in to Google Cloud as Cloudoptics', 'Signed in.'),
-    ok('dataset', 'Read the billing export dataset', `Dataset ${s.exportProjectId}:${s.exportDatasetId} is readable.`),
-    ok('ownership', 'Prove the dataset is yours', 'The label matches this workspace.'),
+    ok('federation', 'Sign in as your Cloudoptics account', 'Signed in.'),
+    ok('dataset', 'Read the billing export dataset', `Dataset ${s.exportProjectId}.${s.exportDatasetId} is shared.`),
     ok('export_table', 'Find the FOCUS table', `${s.exportTableId} has FOCUS rows.`),
-    ok('query_jobs', 'Run BigQuery queries', `Queries run in ${s.queryProjectId}, which pays for them.`),
+    ok(
+      'query_jobs',
+      'Run BigQuery queries',
+      s.queryProjectId ? `Queries run in ${s.queryProjectId}, which pays for them.` : 'Queries run in Cloudoptics’ project, at our cost.',
+    ),
     ok('billing_account', 'Match the billing account', `The export is billing account ${s.billingAccountId}.`),
     {
       id: 'projects',
@@ -852,33 +866,31 @@ function demoGcpChecks(s: GcpSettings): PermissionCheck[] {
 }
 
 /** The same commands the API returns (providers/gcp/connect.py). */
-function demoGcpCommands(s: GcpSettings, serviceAccount: string, labelValue: string): GcpSetup['commands'] {
+function demoGcpCommands(s: GcpSettings, serviceAccount: string): GcpSetup['commands'] {
   const member = `serviceAccount:${serviceAccount}`
   const location = s.datasetLocation ? ` --location=${s.datasetLocation}` : ''
   const grant = `GRANT \`roles/bigquery.dataViewer\` ON SCHEMA \`${s.exportProjectId}.${s.exportDatasetId}\` TO "${member}"`
-  const roles = 'roles/compute.viewer roles/monitoring.viewer roles/recommender.computeViewer roles/recommender.cloudsqlViewer roles/cloudsql.viewer'
+  const roles = GCP_ROLES.map((r) => r.role).join(' ')
   return [
     {
-      id: 'label',
-      title: 'Label the dataset (proves it is yours)',
-      command: `bq update --set_label cloudoptics:${labelValue} ${s.exportProjectId}:${s.exportDatasetId}`,
-      optional: false,
-    },
-    {
       id: 'dataset',
-      title: 'Let Cloudoptics read the dataset',
+      title: 'Share the dataset (and, for a view, each dataset it reads)',
       command: `bq query --nouse_legacy_sql${location} '${grant}'`,
       optional: false,
     },
-    {
-      id: 'jobs',
-      title: `Let Cloudoptics run queries in ${s.queryProjectId} (billed to that project)`,
-      command: `gcloud projects add-iam-policy-binding ${s.queryProjectId} --member=${member} --role=roles/bigquery.jobUser --condition=None`,
-      optional: false,
-    },
+    ...(s.queryProjectId
+      ? [
+          {
+            id: 'jobs',
+            title: `Let Cloudoptics run queries in ${s.queryProjectId} (billed to that project)`,
+            command: `gcloud projects add-iam-policy-binding ${s.queryProjectId} --member=${member} --role=roles/bigquery.jobUser --condition=None`,
+            optional: false,
+          },
+        ]
+      : []),
     {
       id: 'projects',
-      title: 'Optional: resources and recommendations (list every project ID)',
+      title: 'Optional: resources and recommendations (or once with gcloud organizations add-iam-policy-binding)',
       command: `for p in ${s.exportProjectId}; do for r in ${roles}; do gcloud projects add-iam-policy-binding "$p" --member=${member} --role="$r" --condition=None; done; done`,
       optional: true,
     },
@@ -1608,19 +1620,16 @@ export class DemoApi implements Api {
     if (c.provider === 'gcp') {
       const s = this.state.gcp?.[c.id]?.settings
       if (!s) return []
-      const member = `serviceAccount:${DEMO_GCP_SERVICE_ACCOUNT}`
+      const sa = this.state.gcp?.[c.id]?.serviceAccount ?? 'your Cloudoptics account'
       return [
         {
           provider: 'gcp',
           label,
           steps: [
-            `Remove the IAM bindings you gave the Cloudoptics service account ${DEMO_GCP_SERVICE_ACCOUNT} (BigQuery Data Viewer on the dataset ${s.exportProjectId}.${s.exportDatasetId}, BigQuery Job User on the project ${s.queryProjectId}, and the optional project roles for resources), and the dataset label cloudoptics. Run these in Cloud Shell; a binding you never added says it is not found, which is fine.`,
+            `Cloudoptics deletes its account for this connection, ${sa}, so the access you gave it stops working at once. Nothing else to do.`,
+            `Optional tidying: Google shows the old grants as deleted:serviceAccount:${sa} (on the dataset ${s.exportProjectId}.${s.exportDatasetId} and wherever you granted the viewer roles) and removes them within 60 days. You can remove them sooner in IAM and on the dataset's Share, Manage permissions page.`,
           ],
-          commands: [
-            `bq query --nouse_legacy_sql 'REVOKE \`roles/bigquery.dataViewer\` ON SCHEMA \`${s.exportProjectId}.${s.exportDatasetId}\` FROM "${member}"'`,
-            `gcloud projects remove-iam-policy-binding ${s.queryProjectId} --member=${member} --role=roles/bigquery.jobUser --condition=None`,
-            `bq update --clear_label cloudoptics ${s.exportProjectId}:${s.exportDatasetId}`,
-          ],
+          commands: [],
         },
       ]
     }
@@ -1854,7 +1863,7 @@ export class DemoApi implements Api {
       exportDatasetId: body.exportDatasetId,
       exportTableId: body.exportTableId,
       exportKind: body.exportKind,
-      queryProjectId: body.queryProjectId || body.exportProjectId,
+      queryProjectId: body.queryProjectId || null,
       datasetLocation: body.datasetLocation || null,
     }
     // Reconnecting a disconnected billing account reuses its connection, back to pending.
@@ -1866,7 +1875,7 @@ export class DemoApi implements Api {
       provider: 'gcp',
       awsAccountId: body.billingAccountId,
       accountType: 'management',
-      roleArn: DEMO_GCP_SERVICE_ACCOUNT,
+      roleArn: '',
       status: 'pending',
       createCurExport: false,
       curBucket: null,
@@ -1881,8 +1890,10 @@ export class DemoApi implements Api {
     }
     if (own) Object.assign(own, { status: 'pending', permissionChecks: [], lastError: null, lastValidatedAt: null })
     else (this.state.connections[tenantId] ??= []).push(conn)
-    const labelValue = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('')
-    ;(this.state.gcp ??= {})[conn.id] = { settings, labelValue }
+    // Each connection gets its own account; reconnecting makes a new one (the old is deleted).
+    const serviceAccount = demoGcpAccount()
+    conn.roleArn = serviceAccount
+    ;(this.state.gcp ??= {})[conn.id] = { settings, serviceAccount }
     this.save()
     return this.gcpSetup(conn)
   }
@@ -1896,21 +1907,22 @@ export class DemoApi implements Api {
     const gcp = this.state.gcp?.[conn.id]
     if (conn.provider !== 'gcp' || !gcp) throw new ApiError(404, 'Connection not found')
     const s = gcp.settings
-    const sa = DEMO_GCP_SERVICE_ACCOUNT
+    const sa = (gcp.serviceAccount ??= demoGcpAccount())
+    const p = encodeURIComponent(s.exportProjectId)
+    const d = encodeURIComponent(s.exportDatasetId)
     return {
       connection: structuredClone(conn),
       settings: { ...s },
       serviceAccount: sa,
-      labelKey: 'cloudoptics',
-      labelValue: gcp.labelValue,
-      commands: demoGcpCommands(s, sa, gcp.labelValue),
-      consoleSteps: [
-        `In BigQuery, open the dataset ${s.exportDatasetId} in project ${s.exportProjectId}.`,
-        `Choose Edit details, add the label cloudoptics with the value ${gcp.labelValue}, and save.`,
-        `Choose Sharing, then Permissions, and add ${sa} with the role BigQuery Data Viewer.`,
-        `In IAM for project ${s.queryProjectId}, grant ${sa} the role BigQuery Job User.`,
-        'Optional, for resources and recommendations: in each project grant it Compute Viewer, Monitoring Viewer, Compute Recommender Viewer, Cloud SQL Recommender Viewer and Cloud SQL Viewer.',
-      ],
+      links: {
+        billingExport: 'https://console.cloud.google.com/billing/export',
+        dataset: `https://console.cloud.google.com/bigquery?project=${p}&p=${p}&d=${d}&page=dataset`,
+        iamProject: `https://console.cloud.google.com/iam-admin/iam?project=${p}`,
+        iamAny: 'https://console.cloud.google.com/projectselector/iam-admin/iam?supportedpurview=project%2Cfolder%2CorganizationId',
+      },
+      roles: [...(s.queryProjectId ? [{ role: 'roles/bigquery.jobUser', title: 'BigQuery Job User' }] : []), ...GCP_ROLES],
+      customerPaysQueries: Boolean(s.queryProjectId),
+      commands: demoGcpCommands(s, sa),
       enabled: true,
     }
   }

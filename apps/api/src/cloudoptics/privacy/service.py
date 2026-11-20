@@ -26,6 +26,7 @@ from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.privacy.deletion import delete_connection_data, delete_tenant_data
 from cloudoptics.privacy.removal import Removal, removal_lines, removal_steps
+from cloudoptics.providers.gcp import identity as gcp_identity
 from cloudoptics.providers.naming import connection_label, provider_label
 
 log = logging.getLogger(__name__)
@@ -365,6 +366,8 @@ async def run_due(
             # Reconnected since the request: its data is in use again.
             await session.execute(CANCEL_DELETION, {"id": deletion_id, "by": None})
             return Outcome("cancelled")
+        # A Google Cloud account whose deletion failed at disconnect is retried first.
+        await gcp_identity.retire(session, tenant_id, row.connection_id, actor)
         verification = await run_connection_deletion(
             session, tenant_id, deletion_id, row.connection_id
         )
@@ -393,6 +396,8 @@ async def run_due(
     recipients = await admin_emails(session, tenant_id)
     steps = await stack_steps(session)
     removals = await removal_steps(session, tenant_id)
+    # Every Google Cloud connection's own account goes before its record does (ADR-019).
+    await gcp_identity.retire_all(session, tenant_id, actor)
     verification = await delete_tenant_data(session, tenant_id)
     await _complete(session, deletion_id, verification)
     await audit.record(

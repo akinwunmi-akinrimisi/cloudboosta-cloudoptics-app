@@ -1,10 +1,12 @@
 """The Google Cloud plug-in (ADR-019) against the fake Google Cloud (tests/fake_gcp.py):
-federation, the connect flow and its checks, FOCUS loads in USD and other currencies,
-reloads, reconciliation, project discovery, inventory, Recommender, metrics and rules."""
+federation, one service account per connection (created, impersonated, deleted), the connect
+flow and its checks, FOCUS loads in USD and other currencies, reloads, reconciliation, project
+discovery, inventory, Recommender, metrics and rules."""
 
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
@@ -19,7 +21,7 @@ from fake_gcp import (
     EXPORT_PROJECT,
     FOCUS_FIELDS,
     PROJECTS,
-    SERVICE_ACCOUNT,
+    SA_PROJECT,
     TABLE,
     WORKLOAD_PROVIDER,
     FakeGcp,
@@ -35,12 +37,14 @@ from cloudoptics.analysis import engine
 from cloudoptics.analysis.pricing import PriceBook
 from cloudoptics.analysis.rules import Context, Resource
 from cloudoptics.ingestion import jobs as ingestion_jobs
-from cloudoptics.providers.gcp import billing, client, connect, inventory
+from cloudoptics.providers.gcp import billing, client, connect, identity, inventory
 from cloudoptics.providers.gcp.client import AwsCredentials, decode_rows, signed_caller_identity
 from cloudoptics.providers.gcp.rules import GCP_RULES, machine_month_usd
 
 Sql = Callable[..., list[tuple[Any, ...]]]
 NOW = datetime(2026, 11, 19, 12, tzinfo=UTC)
+VIEW_SQL = f"/* co:none */ SELECT 1 FROM `{EXPORT_PROJECT}.attacker.focus`"  # noqa: S608
+SA_EMAIL = re.compile(rf"^co-[0-9a-f]{{12}}@{SA_PROJECT}\.iam\.gserviceaccount\.com$")
 
 
 @pytest.fixture
@@ -51,26 +55,33 @@ def gcp() -> Iterator[FakeGcp]:
     uninstall()
 
 
-def create_body(fake: FakeGcp) -> dict[str, str]:
+def create_body(fake: FakeGcp, **extra: Any) -> dict[str, Any]:
     return {
         "billingAccountId": fake.billing_account.lower(),
         "exportProjectId": EXPORT_PROJECT,
         "exportDatasetId": DATASET,
         "exportTableId": TABLE,
         "exportKind": "focus_export",
+        **extra,
     }
 
 
 async def gcp_connection(
-    client_: AsyncClient, tenant: str, headers: dict[str, str], fake: FakeGcp, *, label: bool = True
+    client_: AsyncClient,
+    tenant: str,
+    headers: dict[str, str],
+    fake: FakeGcp,
+    *,
+    share: bool = True,
+    **extra: Any,
 ) -> dict[str, Any]:
     r = await client_.post(
-        f"/v1/tenants/{tenant}/connections/gcp", json=create_body(fake), headers=headers
+        f"/v1/tenants/{tenant}/connections/gcp", json=create_body(fake, **extra), headers=headers
     )
     assert r.status_code == 201, r.text
     setup: dict[str, Any] = r.json()
-    if label:
-        fake.set_label(EXPORT_PROJECT, DATASET, setup["labelKey"], setup["labelValue"])
+    if share:
+        fake.customer_setup(setup["serviceAccount"])
     return setup
 
 
@@ -86,6 +97,13 @@ async def connected(client_: AsyncClient, login, fake: FakeGcp) -> tuple[str, di
     conn = setup["connection"]["id"]
     assert (await validate(client_, tenant, headers, conn))["status"] == "healthy"
     return tenant, headers, conn
+
+
+def settings_row(query_project: str | None = None, sa: str | None = None) -> connect.GcpSettingsRow:
+    return connect.GcpSettingsRow(
+        uuid.uuid4(), BILLING_ACCOUNT, EXPORT_PROJECT, DATASET, TABLE, "focus_export",
+        query_project, "EU", sa,
+    )  # fmt: skip
 
 
 # --- units ------------------------------------------------------------------------------
@@ -150,55 +168,84 @@ def test_periods_tags_versions_prices_and_rows() -> None:
     assert decoded == [{"d": nov, "n": Decimal("1.5"), "i": None}]
 
 
-def test_the_commands_quote_their_values() -> None:
-    gs = connect.GcpSettingsRow(
-        uuid.uuid4(), BILLING_ACCOUNT, EXPORT_PROJECT, DATASET, TABLE, "focus_export",
-        "acme-queries", "EU",
-    )  # fmt: skip
-    cmds = {
-        c.id: c
-        for c in connect.commands(gs, service_account=SERVICE_ACCOUNT, label="ab12", projects=[])
-    }
-    assert (
-        cmds["label"].command
-        == f"bq update --set_label cloudoptics:ab12 {EXPORT_PROJECT}:{DATASET}"
+def test_account_ids_links_roles_and_commands(gcp: FakeGcp) -> None:
+    for _ in range(50):  # Google's rule: 6-30 characters, [a-z]([-a-z0-9]*[a-z0-9])
+        account_id = identity.new_account_id()
+        assert 6 <= len(account_id) <= 30
+        assert re.fullmatch(identity.ACCOUNT_ID_PATTERN, account_id)
+    sa = identity.email_for("co-0123456789ab", SA_PROJECT)
+    ours = settings_row(sa=sa)
+    assert not ours.customer_pays and ours.query_project == SA_PROJECT
+    assert "roles/bigquery.jobUser" not in connect.access_roles(ours)
+    links = connect.links(ours)
+    assert links["billing_export"] == "https://console.cloud.google.com/billing/export"
+    assert links["dataset"] == (
+        f"https://console.cloud.google.com/bigquery?project={EXPORT_PROJECT}&p={EXPORT_PROJECT}"
+        f"&d={DATASET}&page=dataset"
     )
+    assert links["iam_project"].endswith(f"/iam-admin/iam?project={EXPORT_PROJECT}")
+    assert "supportedpurview=project%2Cfolder%2CorganizationId" in links["iam_any"]
+    cmds = {c.id: c for c in connect.commands(ours, service_account=sa, projects=[])}
+    assert set(cmds) == {"dataset", "projects"}  # no Job User: queries run in our project
     assert "GRANT `roles/bigquery.dataViewer` ON SCHEMA" in cmds["dataset"].command
+    assert f'TO "serviceAccount:{sa}"' in cmds["dataset"].command
     assert "--location=EU" in cmds["dataset"].command
-    assert "gcloud projects add-iam-policy-binding acme-queries" in cmds["jobs"].command
     assert cmds["projects"].optional and EXPORT_PROJECT in cmds["projects"].command
-    assert len(connect.new_label_value()) == 32
+
+    theirs = settings_row("acme-queries", sa)
+    assert theirs.customer_pays and theirs.query_project == "acme-queries"
+    assert connect.access_roles(theirs)[0] == "roles/bigquery.jobUser"
+    jobs = {c.id: c for c in connect.commands(theirs, service_account=sa, projects=[])}["jobs"]
+    assert "gcloud projects add-iam-policy-binding acme-queries" in jobs.command
+    with pytest.raises(client.NoServiceAccountError):
+        connect.api_for(settings_row())
 
 
 # --- connect ----------------------------------------------------------------------------
 
 
-async def test_connect_proves_the_dataset_and_checks_each_permission(
+async def test_connect_makes_an_account_and_checks_each_step(
     client: AsyncClient, login, owner_sql: Sql, gcp: FakeGcp
 ) -> None:
     tenant, headers = await workspace(client, login, "Acme Cloud Ltd")
-    setup = await gcp_connection(client, tenant, headers, gcp, label=False)
+    setup = await gcp_connection(client, tenant, headers, gcp, share=False)
     conn = setup["connection"]
+    sa = setup["serviceAccount"]
+    assert SA_EMAIL.match(sa) and sa in gcp.service_accounts  # made in our project
     assert conn["provider"] == "gcp" and conn["awsAccountId"] == gcp.billing_account
     assert conn["accountType"] == "management" and conn["status"] == "pending"
-    assert setup["serviceAccount"] == SERVICE_ACCOUNT and setup["enabled"] is True
-    assert [c["id"] for c in setup["commands"]] == ["label", "dataset", "jobs", "projects"]
-    assert setup["labelValue"] in setup["commands"][0]["command"]
-    assert setup["settings"]["queryProjectId"] == EXPORT_PROJECT
+    assert conn["roleArn"] == sa and setup["enabled"] is True
+    assert setup["customerPaysQueries"] is False
+    assert setup["roles"][0]["title"] == "Compute Viewer"  # no Job User
+    assert setup["links"]["dataset"].endswith(f"&d={DATASET}&page=dataset")
+    assert [c["id"] for c in setup["commands"]] == ["dataset", "projects"]
+    assert setup["settings"]["queryProjectId"] is None
+    assert "labelValue" not in setup
+    created = owner_sql(
+        "SELECT after->>'serviceAccount' FROM audit_log WHERE tenant_id = %s "
+        "AND action = 'gcp.service_account_created'",
+        tenant,
+    )
+    assert created == [(sa,)]
 
-    # Without the label nothing is read: the connection fails and claims nothing.
+    # Not shared yet: the check says which step is missing, and nothing is read.
     body = await validate(client, tenant, headers, conn["id"])
-    assert body["status"] == "failed" and body["lastError"]["code"] == "OwnershipNotProven"
+    assert body["status"] == "failed" and body["lastError"]["check"] == "dataset"
+    dataset = next(c for c in body["permissionChecks"] if c["id"] == "dataset")
+    assert dataset["message"].endswith("finish step 2.") and sa in dataset["hint"]
     assert not any("queries" in c for c in gcp.calls)
 
-    gcp.set_label(EXPORT_PROJECT, DATASET, "cloudoptics", setup["labelValue"])
+    gcp.customer_setup(sa)
     body = await validate(client, tenant, headers, conn["id"])
     assert body["status"] == "healthy", body["permissionChecks"]
     checks = {c["id"]: c["status"] for c in body["permissionChecks"]}
     assert checks == {
-        "federation": "ok", "dataset": "ok", "ownership": "ok", "export_table": "ok",
-        "query_jobs": "ok", "billing_account": "ok", "projects": "skipped",
+        "federation": "ok", "dataset": "ok", "export_table": "ok", "query_jobs": "ok",
+        "billing_account": "ok", "projects": "skipped",
     }  # fmt: skip
+    # Every read was made as this connection's account; queries ran in our project.
+    assert {who for _, who in gcp.callers} == {sa}
+    assert any(f"projects/{SA_PROJECT}/queries" in c for c in gcp.calls)
     verified = owner_sql(
         "SELECT account_verified_at IS NOT NULL FROM cloud_connection WHERE id = %s", conn["id"]
     )
@@ -209,20 +256,105 @@ async def test_connect_proves_the_dataset_and_checks_each_permission(
         conn["id"],
     )
     assert accounts == [("gcp", gcp.billing_account, "management")]
+    cost = owner_sql(
+        "SELECT max(est_customer_api_cost_usd) FROM sync_run WHERE connection_id = %s",
+        conn["id"],
+    )
+    assert float(cost[0][0] or 0) == 0.0  # Cloudoptics pays for its queries
 
-    # The setup page again, and a second connect of the same billing account.
+    # The setup page again keeps the account; a second connect of the same billing account.
     again = await client.get(f"/v1/tenants/{tenant}/connections/gcp/{conn['id']}", headers=headers)
-    assert again.status_code == 200 and again.json()["labelValue"] == setup["labelValue"]
+    assert again.status_code == 200 and again.json()["serviceAccount"] == sa
+    assert len(gcp.service_accounts) == 1
     dup = await client.post(
         f"/v1/tenants/{tenant}/connections/gcp", json=create_body(gcp), headers=headers
     )
     assert dup.status_code == 409
 
-    # Another workspace cannot claim the proven billing account, even with its own label.
+    # Another workspace cannot claim the proven billing account, even when the customer
+    # shares the same export with its account too.
     other, other_headers = await workspace(client, login, "Copycat Ltd")
     theirs = await gcp_connection(client, other, other_headers, gcp)
+    assert theirs["serviceAccount"] != sa
     body = await validate(client, other, other_headers, theirs["connection"]["id"])
     assert body["status"] == "failed" and body["lastError"]["code"] == "AccountInUse"
+
+
+async def test_another_workspace_cannot_read_a_dataset_shared_with_someone_else(
+    client: AsyncClient, login, owner_sql: Sql, gcp: FakeGcp
+) -> None:
+    """The property that replaced the dataset label: workspace B types workspace A's names,
+    but its own account was never given A's data, so it reads nothing."""
+    tenant_a, _, conn_a = await connected(client, login, gcp)
+    sa_a = owner_sql("SELECT role_arn FROM cloud_connection WHERE id = %s", conn_a)[0][0]
+
+    tenant_b, headers_b = await workspace(client, login, "Attacker Ltd")
+    setup_b = await gcp_connection(client, tenant_b, headers_b, gcp, share=False)
+    sa_b, conn_b = setup_b["serviceAccount"], setup_b["connection"]["id"]
+    assert sa_b != sa_a
+    gcp.calls.clear()
+    gcp.callers.clear()
+    body = await validate(client, tenant_b, headers_b, conn_b)
+    assert body["status"] == "failed" and body["lastError"] == {
+        "code": "accessDenied",
+        "check": "dataset",
+    }
+    assert {who for _, who in gcp.callers} == {sa_b}  # never A's account
+    assert not any("/queries" in c for c in gcp.calls)
+
+    # Straight at the API as B's account: the dataset, the table and a query are all refused.
+    row = await _settings(owner_sql, conn_b)
+    api = connect.api_for(row)
+    for call in (
+        api.dataset(EXPORT_PROJECT, DATASET),
+        api.table(EXPORT_PROJECT, DATASET, TABLE),
+        api.query(SA_PROJECT, billing.daily_sql(row, set(FOCUS_FIELDS)), []),
+    ):
+        with pytest.raises(client_mod().GcpError) as err:
+            await call
+        assert err.value.denied
+    # A view of B's own over A's export reads nothing either: BigQuery runs it with B's access.
+    gcp.datasets.add((EXPORT_PROJECT, "attacker"))
+    gcp.views[(EXPORT_PROJECT, "attacker", "focus")] = [(EXPORT_PROJECT, DATASET, TABLE)]
+    gcp.share(sa_b, EXPORT_PROJECT, "attacker")
+    with pytest.raises(client_mod().GcpError) as err:
+        await api.query(SA_PROJECT, VIEW_SQL)
+    assert err.value.denied
+    assert (await billing.ingest(uuid.UUID(tenant_b), uuid.UUID(conn_b))).status == "skipped"
+    rows = owner_sql("SELECT count(*) FROM cost_daily WHERE connection_id = %s", conn_b)
+    assert rows == [(0,)]
+    assert tenant_a != tenant_b
+
+
+async def _settings(owner_sql: Sql, conn: str) -> connect.GcpSettingsRow:
+    [r] = owner_sql(
+        "SELECT connection_id, billing_account_id, export_project_id, export_dataset_id, "
+        "export_table_id, export_kind, query_project_id, dataset_location, "
+        "service_account_email FROM gcp_connection WHERE connection_id = %s",
+        conn,
+    )
+    return connect.GcpSettingsRow(*r)
+
+
+async def test_a_view_needs_each_dataset_it_reads_shared(
+    client: AsyncClient, login, gcp: FakeGcp
+) -> None:
+    """The detailed export plus Google's FOCUS view: the view's dataset and the datasets it
+    reads must all be shared with the account (step 2 says so)."""
+    source = ("acme-billing", "detailed_export", "gcp_billing_export_resource_v1_x")
+    gcp.views[(EXPORT_PROJECT, DATASET, TABLE)] = [source]
+    gcp.datasets.add(source[:2])
+    tenant, headers = await workspace(client, login, "Acme Views Ltd")
+    setup = await gcp_connection(client, tenant, headers, gcp, exportKind="focus_view")
+    conn, sa = setup["connection"]["id"], setup["serviceAccount"]
+    body = await validate(client, tenant, headers, conn)
+    assert body["status"] == "degraded" and body["lastError"]["check"] == "billing_account"
+    check = next(c for c in body["permissionChecks"] if c["id"] == "billing_account")
+    assert "finish step 2" in check["message"]
+    assert not any("co:daily" in c for c in gcp.calls)
+    gcp.share(sa, *source[:2])
+    body = await validate(client, tenant, headers, conn)
+    assert body["status"] == "healthy", body["permissionChecks"]
 
 
 async def test_connect_failures_are_specific(client: AsyncClient, login, gcp: FakeGcp) -> None:
@@ -233,58 +365,113 @@ async def test_connect_failures_are_specific(client: AsyncClient, login, gcp: Fa
         headers=headers,
     )
     assert bad.status_code == 422
-    setup = await gcp_connection(client, tenant, headers, gcp)
-    conn = setup["connection"]["id"]
+    # The customer's own query project: then step 3 includes BigQuery Job User.
+    setup = await gcp_connection(client, tenant, headers, gcp, queryProjectId=EXPORT_PROJECT)
+    assert setup["customerPaysQueries"] is True
+    assert setup["roles"][0] == {"role": "roles/bigquery.jobUser", "title": "BigQuery Job User"}
+    conn, sa = setup["connection"]["id"], setup["serviceAccount"]
 
     gcp.tables[(EXPORT_PROJECT, DATASET, TABLE)] = ("BilledCost",)
     body = await validate(client, tenant, headers, conn)
     assert body["status"] == "degraded" and body["lastError"]["code"] == "NotFocus"
 
     gcp.tables[(EXPORT_PROJECT, DATASET, TABLE)] = FOCUS_FIELDS
-    gcp.permissions[EXPORT_PROJECT] = set()
+    gcp.members[EXPORT_PROJECT].discard(sa)
     body = await validate(client, tenant, headers, conn)
     assert body["status"] == "degraded"
-    assert {c["id"]: c["status"] for c in body["permissionChecks"]}["query_jobs"] == "error"
+    jobs = next(c for c in body["permissionChecks"] if c["id"] == "query_jobs")
+    assert jobs["status"] == "error" and jobs["message"].endswith("finish step 3.")
 
-    gcp.grant_all()
+    gcp.grant(sa)
     gcp.rows = {p: focus_rows(p, billing_account="AAAAAA-BBBBBB-CCCCCC") for p in gcp.rows}
     body = await validate(client, tenant, headers, conn)
     assert body["status"] == "failed" and body["lastError"]["code"] == "BillingAccountMismatch"
+    assert "check step 1" in body["permissionChecks"][-2]["message"]
 
-    gcp.dataset_access = False
+    gcp.unshare(sa)
     body = await validate(client, tenant, headers, conn)
     assert body["status"] == "failed" and body["lastError"]["check"] == "dataset"
 
     gcp.sts_ok = False
-    from cloudoptics.providers.gcp import client as gcp_client
-
-    gcp_client.reset_token()
+    client_module = client_mod()
+    client_module.reset_token()
     body = await validate(client, tenant, headers, conn)
     assert body["status"] == "failed" and body["lastError"]["check"] == "federation"
 
 
-async def test_a_view_must_prove_the_datasets_it_reads(
-    client: AsyncClient, login, gcp: FakeGcp
+def client_mod() -> Any:
+    from cloudoptics.providers.gcp import client as gcp_client
+
+    return gcp_client
+
+
+async def test_the_account_quota_fails_clearly(
+    client: AsyncClient, login, owner_sql: Sql, gcp: FakeGcp
 ) -> None:
-    """A label on the view's own dataset is not enough: the view could read another
-    customer's export through the shared service account (confused deputy)."""
-    victim = ("victim-billing", "victim_export", "gcp_billing_export_focus_x")
-    gcp.views[(EXPORT_PROJECT, DATASET, TABLE)] = [victim]
-    gcp.datasets.add(victim[:2])
-    tenant, headers = await workspace(client, login, "Attacker Ltd")
-    setup = await gcp_connection(client, tenant, headers, gcp)  # labels its own dataset only
-    conn = setup["connection"]["id"]
-    body = await validate(client, tenant, headers, conn)
-    assert body["status"] == "failed" and body["lastError"] == {
-        "code": "OwnershipNotProven",
-        "check": "view_sources",
-    }
-    assert not any("co:daily" in c for c in gcp.calls)
-    # The owner of the source dataset labels it too: the view is proven.
-    gcp.set_label(*victim[:2], "cloudoptics", setup["labelValue"])
-    body = await validate(client, tenant, headers, conn)
-    assert body["status"] == "healthy", body["permissionChecks"]
-    assert {c["id"]: c["status"] for c in body["permissionChecks"]}["view_sources"] == "ok"
+    tenant, headers = await workspace(client, login)
+    gcp.sa_quota = len(gcp.service_accounts)
+    r = await client.post(
+        f"/v1/tenants/{tenant}/connections/gcp", json=create_body(gcp), headers=headers
+    )
+    assert r.status_code == 503, r.text
+    assert "limit for connection accounts" in r.text
+    left = owner_sql("SELECT count(*) FROM cloud_connection WHERE tenant_id = %s", tenant)
+    assert left == [(0,)]  # nothing half-made
+    gcp.sa_quota = 100
+    await gcp_connection(client, tenant, headers, gcp)
+
+
+async def test_disconnect_deletes_the_account_and_reconnect_makes_a_new_one(
+    client: AsyncClient, login, owner_sql: Sql, gcp: FakeGcp
+) -> None:
+    tenant, headers, conn = await connected(client, login, gcp)
+    sa = owner_sql("SELECT role_arn FROM cloud_connection WHERE id = %s", conn)[0][0]
+    r = await client.delete(f"/v1/tenants/{tenant}/connections/{conn}", headers=headers)
+    assert r.status_code == 204
+    assert sa not in gcp.service_accounts
+    state = owner_sql(
+        "SELECT service_account_state FROM gcp_connection WHERE connection_id = %s", conn
+    )
+    assert state == [("deleted",)]
+    actions = [
+        a
+        for (a,) in owner_sql(
+            "SELECT action FROM audit_log WHERE tenant_id = %s ORDER BY id", tenant
+        )
+    ]
+    assert "gcp.service_account_deleted" in actions
+    # Its token no longer works anywhere.
+    client_mod().reset_token()
+    with pytest.raises(client_mod().GcpError):
+        await client_mod().GcpApi(service_account=sa).dataset(EXPORT_PROJECT, DATASET)
+
+    # Connecting again keeps the row and its history, with a new account to share with.
+    setup = await gcp_connection(client, tenant, headers, gcp)
+    assert setup["connection"]["id"] == conn and setup["serviceAccount"] != sa
+    assert (await validate(client, tenant, headers, conn))["status"] == "healthy"
+
+    # Google down at disconnect: the account is kept for deletion and retried later.
+    gcp.failures["iam.googleapis.com"] = (503, "UNAVAILABLE")
+    r = await client.delete(f"/v1/tenants/{tenant}/connections/{conn}", headers=headers)
+    assert r.status_code == 204
+    pending = owner_sql(
+        "SELECT service_account_state FROM gcp_connection WHERE connection_id = %s", conn
+    )
+    assert pending == [("delete_pending",)]
+    gcp.failures.clear()
+    outcome = await _retire(tenant, conn)
+    assert outcome == "deleted" and setup["serviceAccount"] not in gcp.service_accounts
+
+
+async def _retire(tenant: str, conn: str) -> str:
+    from cloudoptics.audit.log import Actor
+    from cloudoptics.platform.db import get_sessionmaker, scope
+
+    async with get_sessionmaker()() as session, session.begin():
+        await scope(session, tenant_id=uuid.UUID(tenant))
+        return await identity.retire(
+            session, uuid.UUID(tenant), uuid.UUID(conn), Actor(type="system")
+        )
 
 
 async def test_not_switched_on(client: AsyncClient, login, gcp: FakeGcp) -> None:
@@ -295,10 +482,15 @@ async def test_not_switched_on(client: AsyncClient, login, gcp: FakeGcp) -> None
             f"/v1/tenants/{tenant}/connections/gcp", json=create_body(gcp), headers=headers
         )
         assert r.status_code == 201 and r.json()["enabled"] is False
-        body = await validate(client, tenant, headers, r.json()["connection"]["id"])
+        assert r.json()["serviceAccount"] == "" and r.json()["commands"] == []
+        conn = r.json()["connection"]["id"]
+        body = await validate(client, tenant, headers, conn)
         assert body["lastError"]["code"] == "GcpNotConfigured"
     finally:
         install(gcp)
+    # Switched on later: the setup page makes the account.
+    again = await client.get(f"/v1/tenants/{tenant}/connections/gcp/{conn}", headers=headers)
+    assert SA_EMAIL.match(again.json()["serviceAccount"])
 
 
 async def test_viewers_cannot_connect(
@@ -312,6 +504,7 @@ async def test_viewers_cannot_connect(
         f"/v1/tenants/{tenant}/connections/gcp", json=create_body(gcp), headers=viewer
     )
     assert r.status_code == 403
+    assert gcp.service_accounts == {}
 
 
 # --- bills ------------------------------------------------------------------------------
@@ -595,12 +788,11 @@ def test_rules_skip_what_they_should() -> None:
 
 
 async def test_client_pages_and_caps_rows(gcp: FakeGcp) -> None:
-    api = client.GcpApi()
+    sa = gcp.add_account()
+    gcp.customer_setup(sa)
+    api = client.GcpApi(service_account=sa)
     period = max(gcp.rows)
-    gs = connect.GcpSettingsRow(
-        uuid.uuid4(), BILLING_ACCOUNT, EXPORT_PROJECT, DATASET, TABLE, "focus_export",
-        EXPORT_PROJECT, None,
-    )  # fmt: skip
+    gs = settings_row(EXPORT_PROJECT, sa)
     sql = billing.daily_sql(gs, set(FOCUS_FIELDS))
     result = await api.query(EXPORT_PROJECT, sql, [client.param("period", "STRING", period)])
     assert len(result.rows) > 40  # more than one fake page
@@ -630,7 +822,9 @@ async def test_client_pages_and_caps_rows(gcp: FakeGcp) -> None:
 
 
 async def test_transient_errors_are_retried_and_quota_is_not_denial(gcp: FakeGcp) -> None:
-    api = client.GcpApi()
+    sa = gcp.add_account()
+    gcp.customer_setup(sa)
+    api = client.GcpApi(service_account=sa)
     api.settings.retry_base_seconds = 0
     try:
         gcp.flaky["bigquery.googleapis.com/bigquery/v2/projects/acme-billing/datasets"] = [
@@ -669,26 +863,22 @@ def test_recommendations_find_their_target() -> None:
 async def test_workspace_deletion_says_what_to_remove_in_google_cloud(
     client: AsyncClient, login, gcp, owner_sql
 ) -> None:
-    """The deletion page and email undo the set-up commands: the IAM bindings of the
-    Cloudoptics service account and the dataset label; nothing about AWS stacks."""
+    """Deleting the workspace deletes each connection's own Cloudoptics account, so the
+    customer has nothing to undo; the page and email say so (and nothing about AWS stacks)."""
     from test_data_deletion import Outbox
 
     from cloudoptics.notifications.email import set_mailer
 
-    tenant, headers, _ = await connected(client, login, gcp)
-    sa = connect.service_account()
+    tenant, headers, conn = await connected(client, login, gcp)
+    sa = owner_sql("SELECT role_arn FROM cloud_connection WHERE id = %s", conn)[0][0]
     url = f"/v1/tenants/{tenant}/deletion"
     view = (await client.get(url, headers=headers)).json()
     assert view["stacks"] == []
     [removal] = view["removals"]
     assert removal["provider"] == "gcp"
     assert removal["label"] == f"Google Cloud billing account {gcp.billing_account.upper()}"
-    commands = "\n".join(removal["commands"])
-    assert f"bq update --clear_label cloudoptics {EXPORT_PROJECT}:{DATASET}" in commands
-    assert "REVOKE `roles/bigquery.dataViewer` ON SCHEMA" in commands
-    assert f'FROM "serviceAccount:{sa}"' in commands
-    assert "remove-iam-policy-binding" in commands and "roles/bigquery.jobUser" in commands
-    assert "add-iam-policy-binding" not in commands
+    assert removal["commands"] == []
+    assert sa in removal["steps"][0] and "stops working at once" in removal["steps"][0]
     box = Outbox()
     set_mailer(box)
     try:
@@ -698,5 +888,15 @@ async def test_workspace_deletion_says_what_to_remove_in_google_cloud(
         set_mailer(None)
     [mail] = box.sent
     assert f"Google Cloud billing account {gcp.billing_account.upper()}:" in mail.text
-    assert "bq update --clear_label cloudoptics" in mail.text
+    assert "Nothing else to do" in mail.text
     assert "CloudFormation" not in mail.text and "AWS" not in mail.text
+    from cloudoptics.privacy import jobs
+
+    deletion = r.json()["deletion"]["id"]
+    owner_sql(
+        "UPDATE data_deletion SET scheduled_for = now() - interval '1 minute' WHERE id = %s",
+        deletion,
+    )
+    done = await jobs.execute(uuid.UUID(tenant), uuid.UUID(deletion), datetime.now(UTC))
+    assert done == "completed"
+    assert sa not in gcp.service_accounts  # deleted with the workspace

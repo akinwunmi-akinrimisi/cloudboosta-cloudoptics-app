@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { Check, Copy, Database, KeyRound, Tag, Terminal } from 'lucide-react'
+import { Check, Copy, Database, MousePointerClick, Receipt, Share2, ShieldCheck, UserRound } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import type { GcpConnectionCreate, GcpExportKind, GcpSetup } from '../../api/types'
+import type { GcpConnectionCreate, GcpExportKind, GcpSetup, PermissionCheck } from '../../api/types'
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
-import { Disclosure, Flow, Lede } from '../../components/onboarding'
+import { Chips, CopyRow, Disclosure, Flow, Lede, NewTab, Todo, TodoItem } from '../../components/onboarding'
 import { Alert, Field } from '../../components/ui'
 
 export interface ConnectProps {
@@ -92,15 +92,19 @@ function CopyButton({ text, name, label = 'Copy' }: { text: string; name: string
 
 const FLOW = {
   from: { icon: Database, label: 'BigQuery export' },
-  link: { icon: KeyRound, label: 'Read-only access' },
+  link: { icon: UserRound, label: 'Your own account' },
 }
 
+/** Google's Billing export page (the export guides link here); the export has no API. */
+export const BILLING_EXPORT_URL = 'https://console.cloud.google.com/billing/export'
 
-/** Google Cloud: where the billing export is, then the commands that give read access to it. */
+
+/** Google Cloud: turn on the export and say where it is, then share it with this
+ * connection's own Cloudoptics account (console clicks; commands only if preferred). */
 export function GcpConnect({ tenantId, onConnected, connectionId }: ConnectProps & { connectionId?: string }) {
   const api = useApi()
   const [created, setCreated] = useState<GcpSetup | null>(null)
-  // "Set up again" for an existing connection: straight to the commands.
+  // "Set up again" for an existing connection: straight to the sharing steps.
   const existing = useQuery({
     queryKey: ['gcp-setup', tenantId, connectionId],
     queryFn: () => api.getGcpSetup(tenantId, connectionId as string),
@@ -183,7 +187,17 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
       <section className="min-w-0">
         <h1 className="ed-h1">Connect Google Cloud</h1>
         <Flow label="How Cloudoptics connects to Google Cloud" {...FLOW} />
+        <Todo label="First, in Google Cloud">
+          <TodoItem n={1} icon={Receipt} title="Turn on the billing export" hint="Enable FOCUS export, then Save">
+            <div>
+              <NewTab href={BILLING_EXPORT_URL} className="ed-btn ghost sm">
+                Open billing export
+              </NewTab>
+            </div>
+          </TodoItem>
+        </Todo>
         <form className="ed-sheet ed-form mt-7" onSubmit={submit} noValidate>
+          <h2 className="text-base font-semibold">Where is it?</h2>
           <Field
             label="Billing account ID"
             hint="Billing, Account management"
@@ -254,7 +268,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
             <div className="mt-4 flex flex-col gap-4">
               <Field
                 label="Project that runs queries"
-                hint="Empty: the export project. Billed for queries, under a cent a day."
+                hint="Empty: Cloudoptics runs and pays for them. Yours needs BigQuery Job User."
                 autoComplete="off"
                 spellCheck={false}
                 value={queryProjectId}
@@ -282,6 +296,13 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
   )
 }
 
+/** The first failing check, in its own words ("We can't see the dataset yet: finish step 2."). */
+export function firstProblem(checks: PermissionCheck[]): string | null {
+  const bad = checks.find((c) => c.status === 'error')
+  if (!bad) return null
+  return bad.hint ? `${bad.message} ${bad.hint}` : bad.message
+}
+
 function GrantAccess({
   tenantId,
   setup,
@@ -302,14 +323,24 @@ function GrantAccess({
     if (focus) heading.current?.focus()
   }, [focus])
   const id = setup.connection.id
+  const s = setup.settings
   const all = setup.commands.map((c) => `# ${c.title}\n${c.command}`).join('\n\n')
+  const optional = !setup.customerPaysQueries
 
   const check = () => {
     setBusy(true)
     setError(null)
     api
       .validateConnection(tenantId, id)
-      .then(() => onConnected(id))
+      .then((conn) => {
+        // Failed: say which step is missing and stay here; otherwise show the result.
+        if (conn.status === 'failed') {
+          setError(firstProblem(conn.permissionChecks) ?? 'Access is not ready yet. Check the steps above.')
+          setBusy(false)
+        } else {
+          onConnected(id)
+        }
+      })
       .catch((err: unknown) => {
         setError(err instanceof ApiError ? err.message : 'Something went wrong. Try again.')
         setBusy(false)
@@ -322,61 +353,80 @@ function GrantAccess({
         <h1 ref={heading} tabIndex={-1} className="ed-h1">
           Give Cloudoptics read access
         </h1>
-        <Lede icon={Terminal}>Run in Cloud Shell or any signed-in terminal.</Lede>
-        <p className="ed-sub flex items-start gap-2">
-          <Tag size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
-          For a view, label every dataset it reads.
-        </p>
+        <Lede icon={MousePointerClick}>A few clicks in Google Cloud. No commands.</Lede>
         {!setup.enabled && (
           <div className="mt-4">
             <Alert tone="info">Google Cloud connections are not switched on for this Cloudoptics environment yet.</Alert>
           </div>
         )}
-        <div className="ed-kv mt-6">
-          <div>
-            <span className="k">Cloudoptics service account</span>
-            <code>{setup.serviceAccount}</code>
-            <CopyButton text={setup.serviceAccount} name="service account" />
-          </div>
-        </div>
-        <ol className="ed-todo" aria-label="Commands to run">
-          {setup.commands.map((c, i) => (
-            <li key={c.id}>
-              <span className="n" aria-hidden="true">
-                {i + 1}
-              </span>
-              <span className="ic" aria-hidden="true">
-                <Terminal size={22} strokeWidth={1.75} />
-              </span>
-              <div className="body">
-                <div className="ed-copyhead">
-                  <h2 className="text-base font-semibold">
-                    <span className="sr-only">{i + 1}. </span>
-                    {c.title}
-                    {c.optional && !/optional/i.test(c.title) && (
-                      <span className="ml-2 text-xs font-normal text-secondary">Optional</span>
-                    )}
-                  </h2>
-                  <CopyButton text={c.command} name={c.title} />
-                </div>
-                <pre className="ed-term">
-                  <code>{c.command}</code>
-                </pre>
+        <Todo label="Steps in Google Cloud, then check access here">
+          <TodoItem
+            n={1}
+            icon={Receipt}
+            title="Turn on the billing export"
+            hint={
+              <NewTab href={setup.links.billingExport} className="text-accent underline">
+                Billing export
+              </NewTab>
+            }
+          />
+          <TodoItem
+            n={2}
+            icon={Share2}
+            title="Share the dataset with your account"
+            hint="Share, Add principal, BigQuery Data Viewer"
+            go
+          >
+            {setup.serviceAccount && (
+              <div className="ed-kv">
+                <CopyRow label="Your Cloudoptics account" value={setup.serviceAccount} />
               </div>
-              <span className="tm" aria-hidden="true" />
-            </li>
-          ))}
-        </ol>
-        <div className="mt-4">
-          <CopyButton text={all} name="all commands" label="Copy all" />
-        </div>
-        {setup.consoleSteps.length > 0 && (
-          <Disclosure summary="Prefer the Google Cloud console?">
+            )}
+            <div>
+              <NewTab href={setup.links.dataset} className="ed-btn">
+                Open {s.exportDatasetId}
+              </NewTab>
+            </div>
+            {s.exportKind === 'focus_view' && (
+              <p className="text-sm text-secondary">For a view, share each dataset it reads too.</p>
+            )}
+          </TodoItem>
+          <TodoItem
+            n={3}
+            icon={ShieldCheck}
+            title={optional ? 'Grant viewer roles once' : 'Grant these roles once'}
+            hint="Organisation or one project, Grant access"
+            time={optional ? 'Optional' : undefined}
+          >
+            <Chips items={setup.roles.map((r) => r.title)} label="Roles to grant your account" />
+            <div className="flex flex-wrap gap-2">
+              <NewTab href={setup.links.iamProject} className="ed-btn ghost sm">
+                IAM for {s.exportProjectId}
+              </NewTab>
+              <NewTab href={setup.links.iamAny} className="ed-btn ghost sm">
+                Choose organisation
+              </NewTab>
+            </div>
+          </TodoItem>
+        </Todo>
+        {setup.commands.length > 0 && (
+          <Disclosure summary="Prefer commands?">
             <ol className="ed-steps">
-              {setup.consoleSteps.map((step) => (
-                <li key={step}>{step}</li>
+              {setup.commands.map((c) => (
+                <li key={c.id}>
+                  <div className="ed-copyhead">
+                    <span className="text-sm font-semibold">{c.title}</span>
+                    <CopyButton text={c.command} name={c.title} />
+                  </div>
+                  <pre className="ed-term">
+                    <code>{c.command}</code>
+                  </pre>
+                </li>
               ))}
             </ol>
+            <div className="mt-3">
+              <CopyButton text={all} name="all commands" label="Copy all" />
+            </div>
           </Disclosure>
         )}
         {error && (
@@ -386,7 +436,7 @@ function GrantAccess({
         )}
         <div className="ed-actions end">
           <button type="button" className="ed-btn" onClick={check} disabled={busy || !setup.enabled}>
-            {busy ? 'Checking…' : 'I have run the commands'}
+            {busy ? 'Checking…' : 'Check access'}
           </button>
         </div>
       </section>
