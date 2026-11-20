@@ -5,9 +5,10 @@ emails and the Settings page list, for each connection the workspace had, what t
 removes there, in the names and commands of that provider's own set-up steps:
 
 - AWS: the CloudFormation stacks (``service.stack_steps``, unchanged).
-- Google Cloud (ADR-019): the IAM bindings given to the Cloudoptics service account (BigQuery
-  Data Viewer on the dataset, BigQuery Job User on the query project, the optional project
-  roles) and the ``cloudoptics`` dataset label (``providers/gcp/connect.commands``).
+- Google Cloud (ADR-019): Cloudoptics deletes each connection's own service account, so what
+  the customer shared with it stops working at once; the leftover entries (``deleted:
+  serviceAccount:...``) are listed for tidying. Connections from before per-connection
+  accounts (label era) list the shared account's bindings and the ``cloudoptics`` label.
 - Azure (ADR-020): the role assignments of the Cloudoptics app, the ``cloudoptics-verify``
   tag on the export's storage account, then the app's enterprise application (service
   principal) in the directory (``providers/azure/connection.role_command``).
@@ -36,8 +37,9 @@ from cloudoptics.providers.naming import connection_label
 DO_TOKENS_URL = "https://cloud.digitalocean.com/account/api/tokens"
 
 GCP_CONNECTIONS = text(
-    "SELECT c.id, c.provider_account_id, c.account_type, g.export_project_id, "
-    "g.export_dataset_id, g.export_kind, g.query_project_id, g.dataset_location "
+    "SELECT c.id, c.provider_account_id, c.account_type, c.role_arn, g.export_project_id, "
+    "g.export_dataset_id, g.export_kind, g.query_project_id, g.dataset_location, "
+    "g.service_account_email "
     "FROM cloud_connection c JOIN gcp_connection g ON g.connection_id = c.id "
     "WHERE c.provider = 'gcp' ORDER BY c.provider_account_id"
 )
@@ -68,6 +70,28 @@ def _q(value: str) -> str:
     return shlex.quote(value)
 
 
+LABEL_KEY = "cloudoptics"  # the label-era ownership label
+
+
+def gcp_account_removal(
+    account_id: str, *, service_account: str, export_project_id: str, export_dataset_id: str
+) -> Removal:
+    """A connection with its own Cloudoptics account: we delete the account; nothing the
+    customer granted it works after that, so tidying is optional."""
+    return Removal(
+        provider="gcp",
+        label=connection_label("gcp", account_id),
+        steps=[
+            f"Cloudoptics deletes its account for this connection, {service_account}, so the "
+            "access you gave it stops working at once. Nothing else to do.",
+            "Optional tidying: Google shows the old grants as deleted:serviceAccount:"
+            f"{service_account} (on the dataset {export_project_id}.{export_dataset_id} and "
+            "wherever you granted the viewer roles) and removes them within 60 days. You can "
+            "remove them sooner in IAM and on the dataset's Share, Manage permissions page.",
+        ],
+    )
+
+
 def gcp_removal(
     account_id: str,
     *,
@@ -79,7 +103,7 @@ def gcp_removal(
     projects: list[str],
     service_account: str,
 ) -> Removal:
-    """The set-up commands of ``gcp.commands``, undone in reverse."""
+    """A label-era connection (one shared account): its set-up commands, undone."""
     member = f"serviceAccount:{service_account}"
     dataset = f"{export_project_id}:{export_dataset_id}"
     location = f" --location={_q(dataset_location)}" if dataset_location else ""
@@ -94,12 +118,12 @@ def gcp_removal(
         f"(BigQuery Data Viewer on the dataset {export_project_id}.{export_dataset_id}, "
         f"BigQuery Job User on the project {query_project_id}, and the optional project roles "
         "for resources), and the dataset label "
-        f"{gcp.LABEL_KEY}. Run these in Cloud Shell; a binding you never added says it is "
+        f"{LABEL_KEY}. Run these in Cloud Shell; a binding you never added says it is "
         "not found, which is fine.",
     ]
     if export_kind == "focus_view":
         steps.append(
-            f"The export is a view: remove the {gcp.LABEL_KEY} label from each dataset the view "
+            f"The export is a view: remove the {LABEL_KEY} label from each dataset the view "
             "reads too."
         )
     return Removal(
@@ -113,7 +137,7 @@ def gcp_removal(
             f"for p in {scanned}; do for r in {roles}; do gcloud projects "
             f'remove-iam-policy-binding "$p" --member={_q(member)} --role="$r" '
             "--condition=None; done; done",
-            f"bq update --clear_label {gcp.LABEL_KEY} {_q(dataset)}",
+            f"bq update --clear_label {LABEL_KEY} {_q(dataset)}",
         ],
     )
 
@@ -190,8 +214,17 @@ async def removal_steps(session: AsyncSession, tenant_id: uuid.UUID) -> list[Rem
     """Every non-AWS connection's clean-up, Google Cloud, Azure, then DigitalOcean (tenant
     scope already set; before the data is deleted)."""
     out: list[Removal] = []
-    sa = gcp.service_account()
     for r in (await session.execute(GCP_CONNECTIONS)).all():
+        if r.service_account_email:
+            out.append(
+                gcp_account_removal(
+                    str(r.provider_account_id).strip(),
+                    service_account=r.service_account_email,
+                    export_project_id=r.export_project_id,
+                    export_dataset_id=r.export_dataset_id,
+                )
+            )
+            continue
         projects = [str(p) for p in (await session.execute(GCP_PROJECTS, {"c": r.id})).scalars()]
         out.append(
             gcp_removal(
@@ -199,10 +232,10 @@ async def removal_steps(session: AsyncSession, tenant_id: uuid.UUID) -> list[Rem
                 export_project_id=r.export_project_id,
                 export_dataset_id=r.export_dataset_id,
                 export_kind=r.export_kind,
-                query_project_id=r.query_project_id,
+                query_project_id=r.query_project_id or r.export_project_id,
                 dataset_location=r.dataset_location,
                 projects=projects,
-                service_account=sa,
+                service_account=r.role_arn or "the Cloudoptics service account",
             )
         )
     for (connection_id,) in (await session.execute(AZURE_CONNECTIONS)).all():

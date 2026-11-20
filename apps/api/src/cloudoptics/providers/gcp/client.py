@@ -1,21 +1,23 @@
 """Google Cloud access without stored secrets (ADR-019): Workload Identity Federation from
-Cloudoptics' AWS broker identity, then the Cloudoptics service account, then plain REST.
+Cloudoptics' AWS broker identity, then the connection's own service account, then plain REST.
 
 1. The broker's short-lived AWS credentials (Roles Anywhere, ADR-007) sign an
    ``sts:GetCallerIdentity`` request. The signed request, not the credentials, goes to Google.
 2. Google STS checks it with AWS and returns a federated token for our workload identity pool
    (``CLOUDOPTICS_GCP_WORKLOAD_PROVIDER``), whose attribute condition admits only our broker
-   role.
-3. The federated token impersonates ``CLOUDOPTICS_GCP_SERVICE_ACCOUNT`` for one hour
-   (``iamcredentials.generateAccessToken``). Customers grant that service account read roles.
+   role. With it alone, Cloudoptics creates and deletes the per-connection service accounts in
+   its own project (IAM API, ``serviceAccounts.create`` / ``delete``).
+3. To read a customer's data, the federated token impersonates **that connection's** service
+   account for one hour (``iamcredentials.generateAccessToken``). Customers share their data
+   with that account only, so one workspace's token cannot read another's data.
 
-The token is cached until five minutes before it expires (``expireTime``). Transient errors
-(429, 5xx, and BigQuery's ``rateLimitExceeded`` / ``backendError``, which BigQuery returns
-as 403) are retried with truncated exponential backoff; jobs.query carries a ``requestId``
-so a retried query is not run twice. REST over httpx keeps Google's
-SDKs (google-auth, google-cloud-bigquery and their gRPC stacks) out of the image; the few
-calls Cloudoptics makes are small JSON requests. Tests and the E2E server swap the transport
-(``set_transport``) and the AWS credentials (``set_aws_credentials``) for fakes.
+Tokens are cached (the federated one, and one per service account) until five minutes
+before they expire. Transient errors (429, 5xx, and BigQuery's ``rateLimitExceeded`` /
+``backendError``, which BigQuery returns as 403) are retried with truncated exponential
+backoff; jobs.query carries a ``requestId`` so a retried query is not run twice. REST over
+httpx keeps Google's SDKs (google-auth, google-cloud-bigquery and their gRPC stacks) out of
+the image; the few calls Cloudoptics makes are small JSON requests. Tests and the E2E server
+swap the transport (``set_transport``) and the AWS credentials (``set_aws_credentials``).
 """
 
 from __future__ import annotations
@@ -76,10 +78,29 @@ class GcpError(Exception):
     def api_disabled(self) -> bool:
         return self.code in {"accessNotConfigured", "SERVICE_DISABLED"}
 
+    @property
+    def quota(self) -> bool:
+        """Out of a quota: a count (service accounts per project) or a rate."""
+        text = self.message.lower()
+        return (
+            self.status == 429
+            or self.code in QUOTA_REASONS
+            or self.code in {"RESOURCE_EXHAUSTED", "quotaExceeded"}
+            or "quota" in text
+            or "maximum number" in text
+        )
+
 
 class NotConfiguredError(GcpError):
     def __init__(self) -> None:
         super().__init__(0, "GcpNotConfigured", "Google Cloud access is not set up")
+
+
+class NoServiceAccountError(GcpError):
+    """A connection made before per-connection accounts (label era): connect it again."""
+
+    def __init__(self) -> None:
+        super().__init__(0, "ReconnectNeeded", "This connection has no service account")
 
 
 @dataclass(frozen=True)
@@ -111,23 +132,34 @@ def _broker_credentials() -> AwsCredentials:
 
 _transport: httpx.AsyncBaseTransport | None = None
 _aws_credentials: AwsCredentialSource = _broker_credentials
-_token: tuple[str, float] | None = None
+#: The broker's federated token, and one access token per service account (email -> token).
+_federated: tuple[str, float] | None = None
+_tokens: dict[str, tuple[str, float]] = {}
 
 
 def set_transport(transport: httpx.AsyncBaseTransport | None) -> None:
     """Tests and the E2E server: answer Google's APIs with a fake."""
-    global _transport, _token
-    _transport, _token = transport, None
+    global _transport
+    _transport = transport
+    reset_token()
 
 
 def set_aws_credentials(source: AwsCredentialSource | None) -> None:
-    global _aws_credentials, _token
-    _aws_credentials, _token = source or _broker_credentials, None
+    global _aws_credentials
+    _aws_credentials = source or _broker_credentials
+    reset_token()
 
 
 def reset_token() -> None:
-    global _token
-    _token = None
+    global _federated
+    _federated = None
+    _tokens.clear()
+
+
+def _fresh(cached: tuple[str, float] | None) -> str | None:
+    if cached is not None and cached[1] - time.time() > REFRESH_BEFORE_SECONDS:
+        return cached[0]
+    return None
 
 
 def signed_caller_identity(creds: AwsCredentials, audience: str, region: str) -> str:
@@ -186,11 +218,28 @@ def _expiry(expire_time: str | None) -> float:
 
 
 class GcpApi:
-    """The Google APIs Cloudoptics calls, as the Cloudoptics service account."""
+    """The Google APIs Cloudoptics calls: as ``service_account`` (a connection's own account)
+    for customer data, or as the broker's federated identity for the IAM calls in our own
+    project (``service_account=None``)."""
 
-    def __init__(self, settings: GcpSettings | None = None) -> None:
+    def __init__(
+        self,
+        settings: GcpSettings | None = None,
+        *,
+        service_account: str | None = None,
+        customer_pays: bool = False,
+    ) -> None:
         self.settings = settings or get_gcp_settings()
+        self.service_account = service_account
+        #: Whether the queries run in (and are billed to) the customer's project.
+        self.customer_pays = customer_pays
         self.bytes_billed = 0
+
+    @property
+    def customer_cost_usd(self) -> float:
+        """What the customer pays for this run's queries: nothing when they run in
+        Cloudoptics' project."""
+        return bq_cost_usd(self.bytes_billed) if self.customer_pays else 0.0
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=_transport, timeout=self.settings.http_timeout_seconds)
@@ -219,13 +268,15 @@ class GcpApi:
             await asyncio.sleep(min(delay, 60.0) if base > 0 else 0)
         raise AssertionError("unreachable")  # pragma: no cover
 
-    async def token(self) -> str:
-        global _token
+    async def federated_token(self) -> str:
+        """The broker's federated token (STS token exchange), cached."""
+        global _federated
         s = self.settings
         if not s.enabled:
             raise NotConfiguredError()
-        if _token is not None and _token[1] - time.time() > REFRESH_BEFORE_SECONDS:
-            return _token[0]
+        cached = _fresh(_federated)
+        if cached:
+            return cached
         from starlette.concurrency import run_in_threadpool
 
         try:
@@ -248,24 +299,47 @@ class GcpApi:
                         "subject_token": subject,
                     },
                 )
-                if sts.status_code != 200:
-                    raise _error(sts)
-                federated = sts.json()["access_token"]
-                sa = quote(s.service_account, safe="@.")
+            except httpx.HTTPError as exc:
+                raise GcpError(0, "Unreachable", type(exc).__name__) from exc
+        if sts.status_code != 200:
+            raise _error(sts)
+        granted = sts.json()
+        expires = time.time() + float(granted.get("expires_in") or 3600)
+        _federated = (str(granted["access_token"]), expires)
+        return _federated[0]
+
+    async def token(self) -> str:
+        """The token calls are made with: the connection's service account, or the broker's
+        federated identity when there is none (IAM calls in our own project)."""
+        if not self.settings.enabled:
+            raise NotConfiguredError()
+        if self.service_account is None:
+            return await self.federated_token()
+        sa = self.service_account
+        cached = _fresh(_tokens.get(sa))
+        if cached:
+            return cached
+        federated = await self.federated_token()
+        url = (
+            f"{self.settings.iamcredentials_url}/projects/-/serviceAccounts/"
+            f"{quote(sa, safe='@.')}:generateAccessToken"
+        )
+        async with self._client() as http:
+            try:
                 impersonated = await self._send(
                     http,
                     "POST",
-                    f"{s.iamcredentials_url}/projects/-/serviceAccounts/{sa}:generateAccessToken",
+                    url,
                     headers={"Authorization": f"Bearer {federated}"},
                     json={"scope": [SCOPE], "lifetime": "3600s"},
                 )
             except httpx.HTTPError as exc:
                 raise GcpError(0, "Unreachable", type(exc).__name__) from exc
-            if impersonated.status_code != 200:
-                raise _error(impersonated)
-            granted = impersonated.json()
-            _token = (granted["accessToken"], _expiry(granted.get("expireTime")))
-        return _token[0]
+        if impersonated.status_code != 200:
+            raise _error(impersonated)
+        granted = impersonated.json()
+        _tokens[sa] = (granted["accessToken"], _expiry(granted.get("expireTime")))
+        return _tokens[sa][0]
 
     async def request(
         self, method: str, url: str, *, params: dict[str, Any] | None = None, body: Any = None
@@ -317,6 +391,29 @@ class GcpApi:
             if not token:
                 return
             params["pageToken"] = token
+
+    # --- IAM: the per-connection service accounts, in Cloudoptics' own project ---------
+
+    async def create_service_account(
+        self, project: str, account_id: str, display_name: str, description: str
+    ) -> dict[str, Any]:
+        """``projects.serviceAccounts.create`` (``iam.serviceAccounts.create``)."""
+        return await self.request(
+            "POST",
+            f"{self.settings.iam_url}/projects/{quote(project)}/serviceAccounts",
+            body={
+                "accountId": account_id,
+                "serviceAccount": {"displayName": display_name, "description": description},
+            },
+        )
+
+    async def delete_service_account(self, email: str) -> None:
+        """``projects.serviceAccounts.delete``: what customers granted it stops working at
+        once (shown as ``deleted:serviceAccount:...`` until Google purges it)."""
+        await self.request(
+            "DELETE",
+            f"{self.settings.iam_url}/projects/-/serviceAccounts/{quote(email, safe='@.')}",
+        )
 
     # --- Resource Manager ---------------------------------------------------------------
 
@@ -402,30 +499,6 @@ class GcpApi:
             billed = int(page.get("totalBytesProcessed") or processed)
         self.bytes_billed += billed
         return QueryResult(rows, processed, billed)
-
-    async def referenced_tables(
-        self, project: str, sql: str, *, location: str | None = None
-    ) -> list[tuple[str, str, str]]:
-        """The base tables a query would read, from a dry run (``jobs.insert`` with
-        ``configuration.dryRun``): ``statistics.query.referencedTables``. Views are listed
-        apart (``referencedLogicalViews``). Dry runs are not billed."""
-        body: dict[str, Any] = {
-            "configuration": {
-                "dryRun": True,
-                "labels": {"cloudoptics": "ownership"},
-                "query": {"query": sql, "useLegacySql": False},
-            }
-        }
-        if location:
-            body["jobReference"] = {"projectId": project, "location": location}
-        job = await self.request(
-            "POST", f"{self.settings.bigquery_url}/projects/{quote(project)}/jobs", body=body
-        )
-        tables = ((job.get("statistics") or {}).get("query") or {}).get("referencedTables") or []
-        return [
-            (str(t.get("projectId")), str(t.get("datasetId")), str(t.get("tableId")))
-            for t in tables
-        ]
 
 
 @dataclass(frozen=True)

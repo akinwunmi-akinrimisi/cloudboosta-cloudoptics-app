@@ -526,6 +526,9 @@ const ACTIONS: Record<string, string> = {
   'tenant.data_deleted': 'Deleted the workspace’s data',
   'support_access.granted': 'Opened read-only support access to this workspace',
   'support_access.ended': 'Ended support access',
+  'gcp.service_account_created': 'Made a Google Cloud account for a connection',
+  'gcp.service_account_deleted': 'Deleted a connection’s Google Cloud account',
+  'gcp.service_account_delete_failed': 'Could not delete a connection’s Google Cloud account yet (retried later)',
 }
 
 /** Connection entries name the provider's account when the entry says which provider. */

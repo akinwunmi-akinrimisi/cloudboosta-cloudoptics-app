@@ -2,22 +2,33 @@
 # Cloudoptics' own Google Cloud side of the GCP connector (ADR-019). Run by the owner, once
 # per environment, in Cloud Shell or with gcloud signed in as a project owner. Nothing here
 # touches a customer's project. It is idempotent: re-running it brings what exists to the state
-# below (an older principalSet binding by full role ARN is left for the owner to remove).
+# below.
 #
 #   PROJECT_ID=cloudoptics-staging AWS_ACCOUNT_ID=<broker account> ./infra/gcp/setup.sh
 #
-# What it creates in PROJECT_ID (a project of Cloudoptics' own, with no customer data):
-#   1. The APIs the token exchange needs: IAM, Resource Manager, IAM Service Account
-#      Credentials and Security Token Service.
+# PROJECT_ID should be a project of Cloudoptics' own that holds nothing else: every service
+# account in it can be impersonated by the broker and can run BigQuery jobs there (below).
+#
+# What it creates in PROJECT_ID:
+#   1. The APIs: IAM, IAM Service Account Credentials, Security Token Service, Resource
+#      Manager and BigQuery (Cloudoptics' queries run here, at our cost).
 #   2. A workload identity pool "cloudoptics" with an AWS provider "aws-broker" that admits
 #      only the broker role (CloudopticsBroker, ADR-007) of AWS_ACCOUNT_ID.
-#   3. The service account "cloudoptics-reader" customers grant read roles to. It has no
-#      roles in this project and no keys (key creation stays blocked: see step 5).
-#   4. Lets identities from the pool that are the broker role impersonate that account.
-#   5. Prints the two settings to put on the API and worker:
-#        CLOUDOPTICS_GCP_WORKLOAD_PROVIDER and CLOUDOPTICS_GCP_SERVICE_ACCOUNT.
+#   3. Project roles for the broker's federated identity (the pool's principal set):
+#        - Create Service Accounts and Delete Service Accounts: one account per connection
+#          (co-<12 hex>), made when a customer connects and deleted when they disconnect;
+#        - Workload Identity User: impersonate those accounts. Granted on the project, not per
+#          account, so Cloudoptics needs no right to change IAM policies (see ADR-019).
+#   4. BigQuery Job User for every service account of the project (the principal set
+#      principalSet://cloudresourcemanager.googleapis.com/projects/<number>/type/
+#      ServiceAccount), so the per-connection accounts run queries here and customers grant
+#      no Job User. Nothing is written per connection.
+#   5. Prints the settings to put on the API and worker:
+#        CLOUDOPTICS_GCP_WORKLOAD_PROVIDER and CLOUDOPTICS_GCP_SERVICE_ACCOUNT_PROJECT.
 #
-# Cost: none of these resources is billed. BigQuery queries run in each customer's project.
+# Cost: the pool, provider and service accounts are free. Queries are billed to this project
+# at BigQuery on-demand prices (the first TiB a month is free); cap them with the custom quotas
+# printed at the end.
 set -euo pipefail
 
 : "${PROJECT_ID:?set PROJECT_ID (Cloudoptics' own Google Cloud project)}"
@@ -25,7 +36,6 @@ set -euo pipefail
 BROKER_ROLE="${BROKER_ROLE:-CloudopticsBroker}"
 POOL="${POOL:-cloudoptics}"
 PROVIDER="${PROVIDER:-aws-broker}"
-SA_NAME="${SA_NAME:-cloudoptics-reader}"
 
 if ! [[ "$AWS_ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
   echo "AWS_ACCOUNT_ID must be 12 digits" >&2
@@ -34,11 +44,10 @@ fi
 
 gcloud config set project "$PROJECT_ID" >/dev/null
 NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
-SA="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 echo "1/4 APIs"
 gcloud services enable iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com \
-  cloudresourcemanager.googleapis.com
+  cloudresourcemanager.googleapis.com bigquery.googleapis.com
 
 echo "2/4 Workload identity pool and AWS provider"
 if ! gcloud iam workload-identity-pools describe "$POOL" --location=global >/dev/null 2>&1; then
@@ -65,24 +74,32 @@ else
     --attribute-mapping="$MAPPING" --attribute-condition="$CONDITION"
 fi
 
-echo "3/4 Service account (no keys, no roles here)"
-if ! gcloud iam service-accounts describe "$SA" >/dev/null 2>&1; then
-  gcloud iam service-accounts create "$SA_NAME" --display-name="Cloudoptics (read-only)" \
-    --description="Customers grant this account read roles on their billing export and projects"
-fi
+echo "3/4 The broker creates, deletes and impersonates the per-connection accounts"
+BROKER="principalSet://iam.googleapis.com/projects/${NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.aws_role/${BROKER_ROLE}"
+for ROLE in roles/iam.serviceAccountCreator roles/iam.serviceAccountDeleter \
+    roles/iam.workloadIdentityUser; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="$BROKER" --role="$ROLE" \
+    --condition=None >/dev/null
+done
 
-echo "4/4 The broker role may impersonate it"
-# Service account impersonation needs Workload Identity User for the pool's principal set.
-MEMBER="principalSet://iam.googleapis.com/projects/${NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.aws_role/${BROKER_ROLE}"
-gcloud iam service-accounts add-iam-policy-binding "$SA" \
-  --role=roles/iam.workloadIdentityUser --member="$MEMBER" --condition=None >/dev/null
+echo "4/4 Every service account of the project may run BigQuery jobs here"
+ACCOUNTS="principalSet://cloudresourcemanager.googleapis.com/projects/${NUMBER}/type/ServiceAccount"
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="$ACCOUNTS" \
+  --role=roles/bigquery.jobUser --condition=None >/dev/null
 
 cat <<OUT
 
 Done. Set these on the API and worker (they are not secrets):
   CLOUDOPTICS_GCP_WORKLOAD_PROVIDER=//iam.googleapis.com/projects/${NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}
-  CLOUDOPTICS_GCP_SERVICE_ACCOUNT=${SA}
+  CLOUDOPTICS_GCP_SERVICE_ACCOUNT_PROJECT=${PROJECT_ID}
+  (CLOUDOPTICS_GCP_SERVICE_ACCOUNT is no longer read; remove it.)
 
-Recommended once, at the organization or project: the constraint
-iam.disableServiceAccountKeyCreation, so nobody can ever create a key for ${SA}.
+Then, in the console, for ${PROJECT_ID} (docs/11g, Google Cloud runbook):
+  - IAM & Admin, Quotas: check "Service Account Count" (one account per Google Cloud
+    connection; deleted accounts do not count) and request more before it runs out.
+  - IAM & Admin, Quotas: set the BigQuery custom quotas "Query usage per day" (all of
+    Cloudoptics) and "Query usage per day per user" (one connection's account), so a large or
+    hostile export cannot run up the bill.
+  - Recommended: the organization policy iam.disableServiceAccountKeyCreation, so no key can
+    ever be created for these accounts.
 OUT

@@ -42,10 +42,12 @@ describe('Connect Google Cloud', () => {
     expect((within(picker).getByRole('radio', { name: /AWS/ }) as HTMLInputElement).checked).toBe(true)
   })
 
-  it('takes the export, shows the commands, then checks access', async () => {
+  it('takes the export, shows the sharing steps with no commands, then checks access', async () => {
     const { user } = await onboarding()
     await user.click(await screen.findByRole('radio', { name: /Google Cloud/ }))
     expect(await screen.findByRole('heading', { name: 'Connect Google Cloud' })).toBeTruthy()
+    const exportLink = screen.getByRole('link', { name: /Open billing export/ })
+    expect(exportLink.getAttribute('href')).toBe('https://console.cloud.google.com/billing/export')
 
     // Mistakes are named before anything is sent.
     await user.type(screen.getByLabelText(/Billing account ID/), 'nope')
@@ -60,16 +62,44 @@ describe('Connect Google Cloud', () => {
     await user.click(screen.getByRole('button', { name: 'Continue' }))
 
     expect(await screen.findByRole('heading', { name: 'Give Cloudoptics read access' })).toBeTruthy()
-    const label = screen.getByText(/bq update --set_label cloudoptics:[0-9a-f]{32} acme-billing:billing_export/)
-    expect(label).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Copy Let Cloudoptics read the dataset' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Copy all commands' })).toBeTruthy()
-    expect(screen.getByText('Prefer the Google Cloud console?')).toBeTruthy()
+    // The connection's own account, to copy, and the dataset's Share page.
+    const account = screen.getByText(/^co-[0-9a-f]{12}@cloudoptics-demo\.iam\.gserviceaccount\.com$/)
+    expect(account).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Copy Your Cloudoptics account' })).toBeTruthy()
+    const share = screen.getByRole('link', { name: /Open billing_export/ })
+    expect(share.getAttribute('href')).toBe(
+      'https://console.cloud.google.com/bigquery?project=acme-billing&p=acme-billing&d=billing_export&page=dataset',
+    )
+    // No Job User: Cloudoptics runs the queries. The viewer roles are optional.
+    const roles = screen.getByRole('list', { name: 'Roles to grant your account' })
+    expect(within(roles).queryByText('BigQuery Job User')).toBeNull()
+    expect(within(roles).getByText('Compute Viewer')).toBeTruthy()
+    expect(screen.getByText('Optional')).toBeTruthy()
+    // Commands only on request.
+    expect(screen.getByText('Prefer commands?')).toBeTruthy()
+    expect(screen.queryByText(/set_label/)).toBeNull()
 
-    await user.click(screen.getByRole('button', { name: 'I have run the commands' }))
+    await user.click(screen.getByRole('button', { name: 'Check access' }))
     expect(await screen.findByRole('heading', { name: 'Connected' })).toBeTruthy()
     expect(screen.getByText(`Google Cloud billing account ${BILLING}.`)).toBeTruthy()
-    expect(screen.getByText('Prove the dataset is yours')).toBeTruthy()
+    expect(screen.getByText('Read the billing export dataset')).toBeTruthy()
+  })
+
+  it('says which step is missing when the check fails', async () => {
+    const { firstProblem } = await import('./GcpConnect')
+    expect(
+      firstProblem([
+        { id: 'federation', label: 'Sign in', status: 'ok', message: 'Signed in.', hint: null },
+        {
+          id: 'dataset',
+          label: 'Read the billing export dataset',
+          status: 'error',
+          message: "We can't see dataset p.d yet: finish step 2.",
+          hint: 'Share it with co-1@x as BigQuery Data Viewer.',
+        },
+      ]),
+    ).toBe("We can't see dataset p.d yet: finish step 2. Share it with co-1@x as BigQuery Data Viewer.")
+    expect(firstProblem([])).toBeNull()
   })
 
   it('checks fields like the API does', () => {

@@ -218,12 +218,14 @@ def install_gcp(app: object) -> None:
         return {"billingAccountId": fake.billing_account, "project": EXPORT_PROJECT,
                 "dataset": DATASET}  # fmt: skip
 
-    def label(key: str = Body(), value: str = Body()) -> dict[str, str]:
-        fake.set_label(EXPORT_PROJECT, DATASET, key, value)
-        return {"status": "labelled"}
+    def share(service_account: str = Body(embed=True, alias="serviceAccount")) -> dict[str, str]:
+        # Steps 2 and 3 of the wizard, as the customer does them in the console: share the
+        # dataset with the connection's own account, and grant it the viewer roles.
+        fake.customer_setup(service_account)
+        return {"status": "shared"}
 
     app.add_api_route("/__e2e/gcp/billing-account", billing_account, methods=["POST"])  # type: ignore[attr-defined]
-    app.add_api_route("/__e2e/gcp/label", label, methods=["POST"])  # type: ignore[attr-defined]
+    app.add_api_route("/__e2e/gcp/share", share, methods=["POST"])  # type: ignore[attr-defined]
 
 
 def install_azure_fake(today: datetime) -> Any:

@@ -33,7 +33,7 @@ from cloudoptics.metrics.puller import KEEP_DAYS, daily_rows
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.providers.gcp.client import GcpApi, GcpError
-from cloudoptics.providers.gcp.connect import load_settings
+from cloudoptics.providers.gcp.connect import api_for, load_settings
 from cloudoptics.providers.gcp.settings import get_gcp_settings
 
 USABLE = ("healthy", "degraded")
@@ -429,9 +429,9 @@ async def scan(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> str:
         conn = await get_connection(session, connection_id)
         gs = await load_settings(session, connection_id)
         projects = await _projects(session, connection_id)
-    if conn.status not in USABLE or gs is None:
+    if conn.status not in USABLE or gs is None or not gs.service_account_email:
         return "skipped"
-    api = GcpApi()
+    api = api_for(gs)
     scans = [await scan_project(api, p) for p in projects]
     errors = [e for s in scans for e in s.errors]
     records = sum(len(s.records) for s in scans)
@@ -519,12 +519,13 @@ async def pull(tenant_id: uuid.UUID, connection_id: uuid.UUID, now: datetime | N
         await scope(session, tenant_id=tenant_id)
         conn = await get_connection(session, connection_id)
         running = list(await session.execute(RUNNING, {"c": connection_id}))
-    if conn.status not in USABLE:
+        gs = await load_settings(session, connection_id)
+    if conn.status not in USABLE or gs is None or not gs.service_account_email:
         return "skipped"
     by_project: dict[str, list[Any]] = defaultdict(list)
     for r in running:
         by_project[r.provider_account_id].append(r)
-    api = GcpApi()
+    api = api_for(gs)
     end = now.replace(minute=0, second=0, microsecond=0)
     start = end - timedelta(days=METRIC_DAYS)
     params: list[dict[str, Any]] = []

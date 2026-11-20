@@ -3,8 +3,9 @@ import { expect, test } from '@playwright/test'
 import { API_URL, appPath, ngn, uniqueEmail, usd } from './support'
 
 // Phase 2a (ADR-019): connect Google Cloud, then costs appear. All in the browser except what
-// the customer does in Google Cloud itself (label the dataset), which the test-only route on
-// the E2E API does for the fake Google Cloud (apps/api/tests/fake_gcp.py).
+// the customer does in Google Cloud itself (share the dataset with the connection's own
+// account, grant the viewer roles), which the test-only route on the E2E API does for the fake
+// Google Cloud (apps/api/tests/fake_gcp.py).
 
 test('an admin connects Google Cloud and sees its costs', async ({ page, request }) => {
   const fake = await request.post(`${API_URL}/__e2e/gcp/billing-account`)
@@ -35,19 +36,27 @@ test('an admin connects Google Cloud and sees its costs', async ({ page, request
     await expect(page.getByRole('heading', { name: 'Give Cloudoptics read access' })).toBeVisible()
   })
 
-  await test.step('run the commands in Google Cloud', async () => {
-    const command = await page.getByText(/^bq update --set_label cloudoptics:/).innerText()
-    const value = /cloudoptics:([0-9a-f]{32})/.exec(command)?.[1]
-    expect(value).toBeTruthy()
-    const labelled = await request.post(`${API_URL}/__e2e/gcp/label`, { data: { key: 'cloudoptics', value } })
-    expect(labelled.ok()).toBeTruthy()
-    await page.getByRole('button', { name: 'I have run the commands' }).click()
+  await test.step('a check before sharing says which step is missing', async () => {
+    await expect(page.getByRole('link', { name: new RegExp(`Open ${dataset}`) })).toHaveAttribute(
+      'href',
+      `https://console.cloud.google.com/bigquery?project=${project}&p=${project}&d=${dataset}&page=dataset`,
+    )
+    await page.getByRole('button', { name: 'Check access' }).click()
+    await expect(page.getByRole('alert')).toContainText('finish step 2')
+  })
+
+  await test.step('share the dataset with the connection’s own account', async () => {
+    const account = await page.getByRole('button', { name: 'Copy Your Cloudoptics account' }).locator('..').locator('code').innerText()
+    expect(account).toMatch(/^co-[0-9a-f]{12}@[a-z0-9-]+\.iam\.gserviceaccount\.com$/)
+    const shared = await request.post(`${API_URL}/__e2e/gcp/share`, { data: { serviceAccount: account } })
+    expect(shared.ok()).toBeTruthy()
+    await page.getByRole('button', { name: 'Check access' }).click()
   })
 
   await test.step('the access check passes', async () => {
     await expect(page.getByRole('heading', { name: 'Connected' })).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText(`Google Cloud billing account ${billingAccountId}.`)).toBeVisible()
-    await expect(page.getByText('Prove the dataset is yours')).toBeVisible()
+    await expect(page.getByText('Read the billing export dataset')).toBeVisible()
     await page.getByRole('button', { name: 'Go to my workspace' }).click()
     await expect(page.getByRole('heading', { name: 'Overview' })).toBeVisible()
   })

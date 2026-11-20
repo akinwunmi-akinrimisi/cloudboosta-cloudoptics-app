@@ -628,20 +628,31 @@ The full owner steps, in order, with costs, are in the ADR-007 amendment. In sho
 
 ### RB-21: Google Cloud connections (ADR-019)
 
-**Set up (once per environment):** `PROJECT_ID=<our project> AWS_ACCOUNT_ID=<broker account> ./infra/gcp/setup.sh` in Cloud Shell, then set the two printed settings (`CLOUDOPTICS_GCP_WORKLOAD_PROVIDER`, `CLOUDOPTICS_GCP_SERVICE_ACCOUNT`) on the API and worker. Nothing is secret; there is no key to rotate.
+**Set up (once per environment):** `PROJECT_ID=<our project> AWS_ACCOUNT_ID=<broker account> ./infra/gcp/setup.sh` in Cloud Shell, then set the two printed settings (`CLOUDOPTICS_GCP_WORKLOAD_PROVIDER`, `CLOUDOPTICS_GCP_SERVICE_ACCOUNT_PROJECT`) on the API and worker. `CLOUDOPTICS_GCP_QUERY_PROJECT` is optional (default: the same project). Nothing is secret; there is no key to rotate. Use a project that holds nothing else: the broker can impersonate every service account in it.
+
+**One service account per connection.** Connecting creates `co-<12 hex>@<project>.iam.gserviceaccount.com` (audit `gcp.service_account_created`); disconnecting deletes it (`gcp.service_account_deleted`), so whatever the customer shared with it stops working at once. If Google could not be reached, the audit says `gcp.service_account_delete_failed`, `gcp_connection.service_account_state` is `delete_pending`, and the delete is retried at the connection's or workspace's data deletion. To find leftovers: list the project's service accounts (`gcloud iam service-accounts list --project <project> --filter="email~^co-"`) and compare with `SELECT service_account_email FROM gcp_connection WHERE service_account_state = 'active'` (owner SQL); delete any account not in the list. An account created by a request whose database commit then failed has no grants and is safe to delete.
+
+**Raising the service account quota.** Each live connection uses one account; deleted ones do not count. In the console, IAM & Admin, Quotas & System Limits for the project, filter "Service Account Count", tick it and choose Edit quota (or Request adjustment); give the new limit and the reason ("one service account per customer connection"). If the console offers no edit, open a Google Cloud support case. Check the count monthly; ask for more at 80%. When it is full, new connections fail with 503 "Cloudoptics has reached its Google Cloud limit for connection accounts" and nothing is written.
+
+**Capping the query bill.** Queries run in our project, at our cost. Set the BigQuery custom quotas on it (IAM & Admin, Quotas): "Query usage per day" for all of Cloudoptics, and "Query usage per day per user", which applies to each service account and so to each connection. Over the cap, queries fail with `quotaExceeded` (shown as a failed `cur.ingest`) until the next day. Each query is also capped by `CLOUDOPTICS_GCP_MAX_BYTES_BILLED` (20 GiB).
 
 | Symptom (check or `sync_run.error_code`) | Cause | Fix |
 |---|---|---|
-| `federation` / `GcpNotConfigured` | The two settings are not set | Set them and redeploy |
-| `federation` / `invalid_grant` or `PERMISSION_DENIED` | The pool's AWS provider does not admit the broker role (wrong account, or the broker role was renamed), or the service account binding is missing | Re-run `infra/gcp/setup.sh`; check the broker works for AWS first (RB-20) |
-| `ownership` / `OwnershipNotProven` | The customer has not run the label command, or labelled another dataset | Ask them to run command 1 exactly as shown (Set up again shows it) |
-| `ownership` / `AccountInUse` | The billing account is proven in another workspace | As for AWS accounts (ADR-017): disconnect it there or invite the person |
-| `query_jobs` error, or `cur.ingest` `accessDenied` | No BigQuery Job User on the query project | Command 3 |
-| `cur.ingest` detail `too_large: ...` | A period's query would scan more than `CLOUDOPTICS_GCP_MAX_BYTES_BILLED` (20 GiB) or return more than 500,000 groups | Check the table is the FOCUS export (partitioned) and not a copy; raise the limit for that environment only after checking the customer's query cost |
+| `federation` / `GcpNotConfigured` | The settings are not set | Set them and redeploy |
+| `federation` / `invalid_grant` or `PERMISSION_DENIED` | The pool's AWS provider does not admit the broker role (wrong account, or the broker role was renamed), or the project-level Workload Identity User binding is missing | Re-run `infra/gcp/setup.sh`; check the broker works for AWS first (RB-20) |
+| `federation`: "still being set up" | A just-created account is not visible yet (Google: 60 s or more) | Check again in a minute |
+| `federation` / `ServiceAccountUnavailable`, or 503 on connect | The service account quota is full, or the broker lacks Create Service Accounts | Raise the quota (above), or re-run setup.sh |
+| `dataset` / `accessDenied`: "finish step 2" | The customer has not shared the dataset with this connection's account (or shared it with another workspace's) | Ask them to follow step 2 with the account the page shows |
+| `billing_account` / `AccountInUse` | The billing account is proven in another workspace | As for AWS accounts (ADR-017): disconnect it there or invite the person |
+| `billing_account` error "finish step 2 for every dataset it reads" | A FOCUS view whose source datasets are not shared with the account | Share the detailed export's dataset too |
+| `query_jobs` error, "on Cloudoptics' side" | Job User for the project's service accounts is missing | Re-run setup.sh (step 4) |
+| `query_jobs` error, "finish step 3" | The connection uses its own query project and has no Job User there | The customer grants BigQuery Job User there, or connects again without a query project |
+| `cur.ingest` `quotaExceeded` | Our custom query quota is reached | Wait for the next day, or raise the quota after checking why |
+| `cur.ingest` detail `too_large: ...` | A period's query would scan more than `CLOUDOPTICS_GCP_MAX_BYTES_BILLED` (20 GiB) or return more than 500,000 groups | Check the table is the FOCUS export (partitioned) and not a copy; raise the limit only after checking the cost |
 | Batch failed with `fx` error | A non-USD bill and no Cloudoptics rate nor Google rate for those days | Staff set the rate (Exchange rates page), then Reload bills |
 | `cost.reconcile` mismatch | BigQuery's total changed since the load (Google restates until the invoice closes) | The next 6-hourly poll reloads it; Reload bills to do it now |
 
-Who pays: queries run in the customer's query project at BigQuery on-demand prices; `sync_run.scope.bytesBilled` and `est_customer_api_cost_usd` show each run's share.
+Who pays: by default queries run in our project; `sync_run.scope.bytesBilled` shows each run's bytes and `est_customer_api_cost_usd` is 0. A connection with its own query project pays for its queries, and the estimate shows its share.
 
 
 ### RB-22: DigitalOcean connections (ADR-021)

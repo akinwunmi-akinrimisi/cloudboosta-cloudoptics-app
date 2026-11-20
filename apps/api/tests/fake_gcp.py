@@ -1,6 +1,14 @@
 """A fake Google Cloud for tests and the E2E server: an ``httpx.MockTransport`` that answers
-the calls the GCP plug-in makes (STS, IAM credentials, BigQuery, Resource Manager, Compute,
-Cloud SQL Admin, Recommender, Monitoring), plus synthetic FOCUS rows (``focus_rows``).
+the calls the GCP plug-in makes (STS, IAM, IAM credentials, BigQuery, Resource Manager,
+Compute, Cloud SQL Admin, Recommender, Monitoring), plus synthetic FOCUS rows (``focus_rows``).
+
+**Identity is enforced** (ADR-019, one service account per connection): the broker's federated
+token creates and deletes service accounts in Cloudoptics' project (``SA_PROJECT``, with a
+count quota) and impersonates any of them; every other call is made as one service account,
+and it sees only what the customer shared with that account (``share``, ``grant``). A dataset
+shared with workspace A's account is a 403 for workspace B's, whatever names B types, and a
+view reads its base tables with the caller's own access. Queries run in ``QUERY_PROJECT``,
+where every service account of ``SA_PROJECT`` may run jobs (setup.sh's principal set).
 
 BigQuery cannot run SQL here: each query the plug-in sends starts with a ``/* co:<name> */``
 marker, and the fake computes that query's answer from the FOCUS rows in Python. Results are
@@ -9,7 +17,7 @@ paged (``PAGE``) so the client's paging is exercised. Nothing here contacts Goog
 The shapes follow Google's documentation (checked 20 Nov 2026, ADR-019 Sources): the FOCUS
 export's columns and types (no ``Credit`` rows, credits inside ``BilledCost`` and listed in
 ``x_Credits``, labels in ``x_Labels``, no ``Tags``); BigQuery's ``Dataset``, ``Table``,
-``QueryResponse``, ``GetQueryResultsResponse`` and dry-run ``Job`` resources; errors as
+``QueryResponse``, ``GetQueryResultsResponse`` resources; IAM's ``ServiceAccount``; errors as
 ``google.rpc.Status`` over HTTP (AIP-193) with BigQuery's ``errors[].reason``, quota errors
 as 403 ``rateLimitExceeded``; Compute ``aggregatedList`` scopes with ``warning`` entries;
 Recommender's idle-disk example (an ``add`` snapshot operation before the ``remove``); and
@@ -35,13 +43,16 @@ EXPORT_PROJECT = "acme-billing"
 DATASET = "billing_export"
 TABLE = "focus"
 PROJECTS = ("acme-shop-prod", "acme-data-dev")
-SERVICE_ACCOUNT = "cloudoptics-reader@cloudoptics-test.iam.gserviceaccount.com"
+#: Cloudoptics' own project: the per-connection service accounts, and the queries.
+SA_PROJECT = "cloudoptics-test"
+QUERY_PROJECT = SA_PROJECT
+ACCOUNT_ID = re.compile(r"[a-z]([-a-z0-9]*[a-z0-9])")
 WORKLOAD_PROVIDER = (
     "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/"
     "cloudoptics/providers/aws-broker"
 )
 FED_TOKEN = "fake-federated-token"  # noqa: S105 - fake
-SA_TOKEN = "fake-service-account-token"  # noqa: S105 - fake
+SA_TOKEN = "fake-sa-token/"  # noqa: S105 - fake; followed by the account's email
 PAGE = 40
 #: The daily query's group keys, in its column order (before the tags).
 KEY = ("ChargePeriodStart", "BillingAccountId", "SubAccountId", "ServiceName", "ChargeCategory",
@@ -316,7 +327,6 @@ class FakeGcp:
     now: datetime = field(default_factory=lambda: datetime.now(UTC))
     #: A fresh billing account per fake: a proven one is reserved for its first workspace.
     billing_account: str = field(default_factory=lambda: new_billing_account())
-    labels: dict[tuple[str, str], dict[str, str]] = field(default_factory=dict)
     datasets: set[tuple[str, str]] = field(default_factory=lambda: {(EXPORT_PROJECT, DATASET)})
     tables: dict[tuple[str, str, str], tuple[str, ...]] = field(
         default_factory=lambda: {(EXPORT_PROJECT, DATASET, TABLE): FOCUS_FIELDS}
@@ -339,8 +349,17 @@ class FakeGcp:
     failures: dict[str, tuple[int, str]] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
     bytes_per_query: int = 5 * 1024**2
-    dataset_access: bool = False
     sts_ok: bool = True
+    #: email -> ServiceAccount resource, in SA_PROJECT; at most ``sa_quota`` of them.
+    service_accounts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    sa_quota: int = 100
+    #: (project, dataset) -> service accounts it is shared with (BigQuery Data Viewer)
+    readers: dict[tuple[str, str], set[str]] = field(default_factory=dict)
+    #: project -> service accounts granted the viewer roles (and Job User) there
+    members: dict[str, set[str]] = field(default_factory=dict)
+    #: (method, path) -> the service account each call was made as
+    callers: list[tuple[str, str | None]] = field(default_factory=list)
+    _caller: str | None = None
     _results: dict[str, tuple[list[dict[str, str]], list[list[Any]]]] = field(default_factory=dict)
 
     def bill(self, currency: str = "USD", rate: float | None = None) -> FakeGcp:
@@ -370,13 +389,40 @@ class FakeGcp:
         }
         for p in (EXPORT_PROJECT, *PROJECTS):
             self.permissions[p] = set(everything)
-        self.dataset_access = True
         self.resources = default_resources(self.now)
         self.recommendations = default_recommendations()
         return self
 
-    def set_label(self, project: str, dataset: str, key: str, value: str) -> None:
-        self.labels.setdefault((project, dataset), {})[key] = value
+    def share(self, email: str, project: str = EXPORT_PROJECT, dataset: str = DATASET) -> None:
+        """Step 2: the customer shares a dataset with one service account."""
+        self.readers.setdefault((project, dataset), set()).add(email)
+
+    def unshare(self, email: str, project: str = EXPORT_PROJECT, dataset: str = DATASET) -> None:
+        self.readers.get((project, dataset), set()).discard(email)
+
+    def grant(self, email: str, *projects: str) -> None:
+        """Step 3: the viewer roles (and Job User) for one service account on projects."""
+        for p in projects or (EXPORT_PROJECT, *PROJECTS):
+            self.members.setdefault(p, set()).add(email)
+
+    def add_account(self, account_id: str = "co-unit00000001") -> str:
+        """A service account made without the API (unit tests of the client)."""
+        email = f"{account_id}@{SA_PROJECT}.iam.gserviceaccount.com"
+        self.service_accounts[email] = {"email": email, "projectId": SA_PROJECT}
+        return email
+
+    def customer_setup(self, email: str) -> None:
+        """Steps 2 and 3, as a customer following the wizard does them."""
+        self.share(email)
+        self.grant(email)
+
+    def _member(self, project: str) -> bool:
+        return self._caller is not None and self._caller in self.members.get(project, set())
+
+    def _reads(self, project: str, dataset: str) -> bool:
+        return self._caller is not None and self._caller in self.readers.get(
+            (project, dataset), set()
+        )
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -398,19 +444,33 @@ class FakeGcp:
                 return _err(status, reason)
         if url.netloc == "sts.googleapis.com":
             return self._sts(request)
+        broker = request.headers.get("authorization") == f"Bearer {FED_TOKEN}"
+        body = json.loads(request.content) if request.content else {}
         if url.netloc == "iamcredentials.googleapis.com":
-            if request.headers.get("authorization") != f"Bearer {FED_TOKEN}":
+            if not broker:
                 return _err(401, "UNAUTHENTICATED")
+            email = path.split("/serviceAccounts/")[1].split(":")[0]
+            if email not in self.service_accounts:
+                return _err(404, "NOT_FOUND")
             return httpx.Response(
                 200,
                 json={
-                    "accessToken": SA_TOKEN,
+                    "accessToken": SA_TOKEN + email,
                     "expireTime": _ts(datetime.now(UTC) + timedelta(hours=1)),
                 },
             )
-        if request.headers.get("authorization") != f"Bearer {SA_TOKEN}":
-            return _err(401, "UNAUTHENTICATED")
-        body = json.loads(request.content) if request.content else {}
+        if url.netloc == "iam.googleapis.com":
+            return self._iam(request.method, path, body) if broker else _err(401, "UNAUTHENTICATED")
+        auth = request.headers.get("authorization", "")
+        caller = (
+            auth.removeprefix(f"Bearer {SA_TOKEN}")
+            if auth.startswith(f"Bearer {SA_TOKEN}")
+            else None
+        )
+        if caller not in self.service_accounts:
+            return _err(401, "UNAUTHENTICATED")  # no token, or the account was deleted
+        self._caller = caller
+        self.callers.append((f"{request.method} {url.netloc}{path}", caller))
         host = url.netloc.split(".")[0]
         handler = getattr(self, f"_{host}", None)
         if handler is None:
@@ -438,9 +498,48 @@ class FakeGcp:
             },
         )
 
+    def _iam(self, method: str, path: str, body: Any) -> httpx.Response:
+        """projects.serviceAccounts.create and .delete, in SA_PROJECT only."""
+        m = re.match(r"/v1/projects/([^/]+)/serviceAccounts(?:/([^/]+))?$", path)
+        if not m:
+            return _err(404, "NOT_FOUND")
+        project, email = m.groups()
+        if method == "DELETE" and email:
+            if self.service_accounts.pop(email, None) is None:
+                return _err(404, "NOT_FOUND")
+            for readers in (*self.readers.values(), *self.members.values()):
+                readers.discard(email)  # the grants stop working (deleted:serviceAccount:)
+            return httpx.Response(200, json={})
+        if method != "POST" or email or project != SA_PROJECT:
+            return _err(403, "PERMISSION_DENIED")
+        account_id = str(body.get("accountId", ""))
+        if not (6 <= len(account_id) <= 30 and ACCOUNT_ID.fullmatch(account_id)):
+            return _err(400, "INVALID_ARGUMENT")
+        email = f"{account_id}@{project}.iam.gserviceaccount.com"
+        if email in self.service_accounts:
+            return _err(409, "ALREADY_EXISTS")
+        if len(self.service_accounts) >= self.sa_quota:
+            # The documented quota is "Service Account Count"; this error's exact shape is
+            # not documented (ADR-019, needs a real account).
+            return _err(429, "RESOURCE_EXHAUSTED")
+        resource = {
+            "name": f"projects/{project}/serviceAccounts/{email}",
+            "projectId": project,
+            "uniqueId": str(100000000000000000000 + len(self.service_accounts)),
+            "email": email,
+            "displayName": (body.get("serviceAccount") or {}).get("displayName", ""),
+            "description": (body.get("serviceAccount") or {}).get("description", ""),
+            "oauth2ClientId": str(200000000000000000000 + len(self.service_accounts)),
+        }
+        self.service_accounts[email] = resource
+        return httpx.Response(200, json=resource)
+
     def _cloudresourcemanager(self, method: str, path: str, q: dict[str, str], body: Any) -> Any:
         project = path.split("/projects/")[1].split(":")[0]
-        held = self.permissions.get(project, set())
+        if project == QUERY_PROJECT:  # every service account of SA_PROJECT runs jobs here
+            held = {"bigquery.jobs.create"}
+        else:
+            held = self.permissions.get(project, set()) if self._member(project) else set()
         return {"permissions": [p for p in body.get("permissions", []) if p in held]}
 
     def _bigquery(self, method: str, path: str, q: dict[str, str], body: Any) -> Any:
@@ -455,7 +554,7 @@ class FakeGcp:
         if kind == "datasets":
             if (project, name) not in self.datasets:
                 return _err(404, "notFound")
-            if not self.dataset_access:
+            if not self._reads(project, name):
                 return _err(403, "accessDenied")
             if table is not None:
                 return self._table(project, name, table)
@@ -466,13 +565,13 @@ class FakeGcp:
                 "location": "US",
                 "type": "DEFAULT",
             }
-            if self.labels.get((project, name)):  # absent, not empty, when there are none
-                dataset["labels"] = dict(self.labels[(project, name)])
             return dataset
-        if "bigquery.jobs.create" not in self.permissions.get(project, set()):
+        if project != QUERY_PROJECT and not (
+            self._member(project) and "bigquery.jobs.create" in self.permissions.get(project, set())
+        ):
             return _err(403, "accessDenied")
-        if kind == "jobs":  # jobs.insert, dry runs only
-            return self._dry_run_job(project, body)
+        if kind == "jobs":
+            return _err(400, "invalid")  # the plug-in runs jobs.query only
         if method == "GET":  # getQueryResults: the next page (or the finished first one)
             schema, rows = self._results[name]
             start = int(q.get("pageToken", "0"))
@@ -489,6 +588,9 @@ class FakeGcp:
             }
         if int(body.get("maximumBytesBilled", "0")) < self.bytes_per_query:
             return _err(400, "bytesBilledLimitExceeded")
+        denied = self._table_access(body["query"])
+        if denied:
+            return denied
         params = {p["name"]: p["parameterValue"]["value"] for p in body.get("queryParameters", [])}
         marker = re.search(r"/\* co:(\w+) \*/", body["query"])
         schema, rows = getattr(self, f"_q_{marker.group(1) if marker else 'none'}")(params)
@@ -523,31 +625,19 @@ class FakeGcp:
             "schema": {"fields": _schema(fields)},
         }
 
-    def _dry_run_job(self, project: str, body: Any) -> Any:
-        conf = body.get("configuration") or {}
-        if not conf.get("dryRun"):
-            return _err(400, "invalid")
-        m = re.search(r"FROM `([^.`]+)\.([^.`]+)\.([^.`]+)`", conf["query"]["query"])
+    def _table_access(self, sql: str) -> httpx.Response | None:
+        """The caller must read the table, or each base table of a view (as BigQuery runs a
+        view with the querying account's own access)."""
+        m = re.search(r"FROM `([^.`]+)\.([^.`]+)\.([^.`]+)`", sql)
         if not m:
-            return _err(400, "invalidQuery")
+            return None
         ref = (m.group(1), m.group(2), m.group(3))
-        tables = self.views.get(ref, [ref])
-        return {
-            "kind": "bigquery#job",
-            "jobReference": {"projectId": project, "location": "US"},
-            "configuration": conf,
-            "status": {"state": "DONE"},
-            "statistics": {
-                "totalBytesProcessed": str(self.bytes_per_query),
-                "query": {
-                    "totalBytesProcessed": str(self.bytes_per_query),
-                    "totalBytesBilled": "0",
-                    "referencedTables": [
-                        {"projectId": p, "datasetId": d, "tableId": t} for p, d, t in tables
-                    ],
-                },
-            },
-        }
+        for project, dataset, _ in self.views.get(ref, [ref]):
+            if not self._reads(project, dataset):
+                return _err(403, "accessDenied")
+        if not self._reads(ref[0], ref[1]):
+            return _err(403, "accessDenied")
+        return None
 
     def _page(
         self,
@@ -669,7 +759,7 @@ class FakeGcp:
         return [], []
 
     def _allowed(self, project: str, permission: str) -> httpx.Response | None:
-        if permission not in self.permissions.get(project, set()):
+        if not self._member(project) or permission not in self.permissions.get(project, set()):
             return _err(403, "accessDenied")
         return None
 
@@ -705,12 +795,16 @@ class FakeGcp:
         project = path.split("/projects/")[1].split("/")[0]
         if project not in self.resources:
             return _err(403, "accessNotConfigured", info="SERVICE_DISABLED")
+        if not self._member(project):
+            return _err(403, "PERMISSION_DENIED")
         return {"kind": "sql#instancesList", "items": self.resources[project].get("sql", [])}
 
     def _recommender(self, method: str, path: str, q: dict[str, str], body: Any) -> Any:
         m = re.match(r"/v1/projects/([^/]+)/locations/([^/]+)/recommenders/([^/]+)/", path)
         if not m:
             return _err(404, "notFound")
+        if not self._member(m.group(1)):
+            return _err(403, "PERMISSION_DENIED")
         return {"recommendations": self.recommendations.get(m.groups(), [])}
 
     def _monitoring(self, method: str, path: str, q: dict[str, str], body: Any) -> Any:
@@ -804,7 +898,8 @@ def install(fake: FakeGcp) -> None:
 
     settings = get_gcp_settings()
     settings.workload_provider = WORKLOAD_PROVIDER
-    settings.service_account = SERVICE_ACCOUNT
+    settings.service_account_project = SA_PROJECT
+    settings.query_project = QUERY_PROJECT
     settings.retry_base_seconds = 0  # retries without waiting
     client.set_transport(fake.transport)
     client.set_aws_credentials(
@@ -818,7 +913,8 @@ def uninstall() -> None:
 
     settings = get_gcp_settings()
     settings.workload_provider = ""
-    settings.service_account = ""
+    settings.service_account_project = ""
+    settings.query_project = ""
     settings.retry_base_seconds = 1.0
     client.set_transport(None)
     client.set_aws_credentials(None)

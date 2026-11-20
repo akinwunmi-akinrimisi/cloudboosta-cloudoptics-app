@@ -4,9 +4,10 @@ Unit of work: (connection, billing period). BigQuery does the aggregation: one q
 period groups the FOCUS rows to the ``cost_daily`` grain (day x project x service x region x
 SKU x charge category x tags), so what Cloudoptics reads is small whatever the bill's size.
 Every query is filtered on ``BillingPeriodStart`` (the invoice month) and capped by
-``maximumBytesBilled``; it runs
-in the connection's query project, which pays for it (BigQuery on-demand pricing; the first
-TiB a month is free, and a month of grouped FOCUS rows is usually a few MB).
+``maximumBytesBilled``. It runs as the connection's own service account, in Cloudoptics'
+query project (which pays), or in the customer's own query project when the connection names
+one (BigQuery on-demand pricing; the first TiB a month is free, and a month of grouped FOCUS
+rows is usually a few MB).
 
 The result's SHA-256 is the period's version. Google rewrites the export several times a day
 and adjusts a month until its invoice closes, so the current and the previous month are read
@@ -60,8 +61,8 @@ from cloudoptics.ingestion.reload import (
 )
 from cloudoptics.platform.db import get_sessionmaker, scope
 from cloudoptics.platform.ids import uuid7
-from cloudoptics.providers.gcp.client import GcpApi, GcpError, bq_cost_usd, param
-from cloudoptics.providers.gcp.connect import GcpSettingsRow, load_settings
+from cloudoptics.providers.gcp.client import GcpApi, GcpError, param
+from cloudoptics.providers.gcp.connect import GcpSettingsRow, api_for, load_settings
 from cloudoptics.providers.gcp.settings import get_gcp_settings
 
 MAPPING_VERSION = "gcp-focus-1"
@@ -513,7 +514,7 @@ async def _columns(api: GcpApi, gs: GcpSettingsRow) -> set[str]:
 
 async def _read(api: GcpApi, gs: GcpSettingsRow, sql: str, period: date) -> list[dict[str, Any]]:
     result = await api.query(
-        gs.query_project_id,
+        gs.query_project,
         sql,
         [param("period", "STRING", period.isoformat())],
         location=gs.dataset_location,
@@ -532,12 +533,12 @@ async def ingest(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> GcpIngestRes
     """Read every period that may have changed; store each new version."""
     started = datetime.now(UTC)
     conn, gs, batches = await _context(tenant_id, connection_id)
-    if conn.status not in INGESTABLE or gs is None:
+    if conn.status not in INGESTABLE or gs is None or not gs.service_account_email:
         return GcpIngestResult("skipped")
     done = {(b.billing_period, b.export_version) for b in batches if not b.reload}
     done |= {(b.billing_period, b.export_version) for b in batches}
     loaded_periods = {b.billing_period for b in batches if b.status != "failed"}
-    api = GcpApi()
+    api = api_for(gs)
     result = GcpIngestResult("up_to_date")
     try:
         sql = daily_sql(gs, await _columns(api, gs))
@@ -606,7 +607,7 @@ async def _record(
                 if result.rejected and not result.errors
                 else ("load_failed" if result.errors else None),
                 "detail": "; ".join(result.errors)[:2000] or None,
-                "cost": bq_cost_usd(api.bytes_billed),
+                "cost": api.customer_cost_usd,
             },
         )
 
@@ -631,11 +632,11 @@ async def reload(
         }
         run_id = await _start_run(session, tenant_id, connection_id, period)
     result = ReloadResult("succeeded", period=period)
-    if conn.status not in INGESTABLE or gs is None:
+    if conn.status not in INGESTABLE or gs is None or not gs.service_account_email:
         result.status = "skipped"
         await _finish_run(maker, tenant_id, run_id, result)
         return result
-    api = GcpApi()
+    api = api_for(gs)
     try:
         sql = daily_sql(gs, await _columns(api, gs))
     except GcpError as exc:
@@ -699,18 +700,18 @@ async def reconcile(tenant_id: uuid.UUID, connection_id: uuid.UUID, billing_peri
             return "skipped"
         gs = await load_settings(session, connection_id)
         ours = (await session.execute(OUR_TOTALS, {"c": connection_id, "p": billing_period})).all()
-    if gs is None or not ours:
+    if gs is None or not gs.service_account_email or not ours:
         return "skipped"
     native = sum(Decimal(r.native) for r in ours)
     usd = sum(Decimal(r.usd) for r in ours)
     ratio = float(usd / native) if native else 1.0  # USD per billing currency unit
     cur = {r.account_id: float(r.usd) for r in ours}
-    api = GcpApi()
+    api = api_for(gs)
     error: str | None = None
     comparison = None
     try:
         result = await api.query(
-            gs.query_project_id,
+            gs.query_project,
             TOTALS_SQL.format(table=gs.table_ref),
             [param("period", "STRING", billing_period.isoformat())],
             location=gs.dataset_location,
@@ -755,7 +756,7 @@ async def reconcile(tenant_id: uuid.UUID, connection_id: uuid.UUID, billing_peri
                 "records": None,
                 "code": error,
                 "detail": None,
-                "cost": bq_cost_usd(api.bytes_billed),
+                "cost": api.customer_cost_usd,
             },
         )
     return status
@@ -767,9 +768,9 @@ async def discover(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> str:
     billed is kept and marked NOT_LISTED, as AWS does for accounts that left."""
     started = datetime.now(UTC)
     conn, gs, _ = await _context(tenant_id, connection_id)
-    if conn.status not in INGESTABLE or gs is None:
+    if conn.status not in INGESTABLE or gs is None or not gs.service_account_email:
         return "skipped"
-    api = GcpApi()
+    api = api_for(gs)
     error: str | None = None
     found: list[OrgAccount] = []
     try:
@@ -777,7 +778,7 @@ async def discover(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> str:
         since = add_months(month_start(started.date()), -1)
         name = "ANY_VALUE(SubAccountName)" if "SubAccountName" in columns else "NULL"
         result = await api.query(
-            gs.query_project_id,
+            gs.query_project,
             PROJECTS_SQL.format(table=gs.table_ref, name=name),
             [param("since", "STRING", since.isoformat())],
             location=gs.dataset_location,
@@ -806,7 +807,7 @@ async def discover(tenant_id: uuid.UUID, connection_id: uuid.UUID) -> str:
                 "records": len(found),
                 "code": error,
                 "detail": None,
-                "cost": bq_cost_usd(api.bytes_billed),
+                "cost": api.customer_cost_usd,
             },
         )
     return "failed" if error else "succeeded"

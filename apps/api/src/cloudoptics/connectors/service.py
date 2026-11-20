@@ -333,6 +333,11 @@ async def mark_disconnected(
         before={"status": previous},
         after={"status": "disconnected"},
     )
+    # A Google Cloud connection's own service account is deleted (ADR-019): what the
+    # customer shared with it stops working at once.
+    from cloudoptics.providers.gcp import identity
+
+    await identity.retire(session, tenant_id, connection_id, actor)
 
 
 # STS answers AccessDenied when the role is gone or no longer trusts Cloudoptics with this

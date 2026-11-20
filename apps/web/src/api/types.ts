@@ -238,7 +238,7 @@ export interface GcpConnectionCreate {
   exportDatasetId: string
   exportTableId: string
   exportKind: GcpExportKind
-  /** Billed for the queries; defaults to exportProjectId. */
+  /** Runs (and pays for) the queries; empty: Cloudoptics' own project. */
   queryProjectId?: string | null
   datasetLocation?: string | null
 }
@@ -249,28 +249,45 @@ export interface GcpSettings {
   exportDatasetId: string
   exportTableId: string
   exportKind: GcpExportKind
-  queryProjectId: string
+  /** The customer's own query project, or null: Cloudoptics runs (and pays for) the queries. */
+  queryProjectId: string | null
   datasetLocation: string | null
 }
 
 export interface GcpCommand {
-  /** 'label', 'dataset', 'jobs' or 'projects'. */
+  /** 'dataset', 'jobs' or 'projects'. */
   id: string
   title: string
   command: string
   optional: boolean
 }
 
-/** What the customer runs to give Cloudoptics read access to the export. */
+/** Google Cloud console pages for the wizard's steps. */
+export interface GcpLinks {
+  billingExport: string
+  dataset: string
+  iamProject: string
+  iamAny: string
+}
+
+export interface GcpRole {
+  role: string
+  title: string
+}
+
+/** The clicks that give Cloudoptics read access to the export (no commands needed). */
 export interface GcpSetup {
   /** provider 'gcp'; awsAccountId holds the billing account ID, roleArn the service account. */
   connection: Connection
   settings: GcpSettings
+  /** This connection's own Cloudoptics account ('' while Google Cloud is switched off). */
   serviceAccount: string
-  labelKey: string
-  labelValue: string
+  links: GcpLinks
+  /** Step 3's roles; BigQuery Job User only when the customer runs the queries. */
+  roles: GcpRole[]
+  customerPaysQueries: boolean
+  /** The same steps as commands ("Prefer commands?"). */
   commands: GcpCommand[]
-  consoleSteps: string[]
   /** False until Google Cloud connections are switched on for this environment. */
   enabled: boolean
 }
