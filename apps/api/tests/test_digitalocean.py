@@ -30,7 +30,6 @@ from cloudoptics.analysis import registry
 from cloudoptics.ingestion import jobs as ingestion_jobs
 from cloudoptics.providers.digitalocean import billing, connect, inventory
 from cloudoptics.providers.digitalocean import client as do_client
-from cloudoptics.providers.digitalocean import jobs as do_jobs
 from cloudoptics.providers.digitalocean.client import Client, DigitalOceanError, RateLimiter
 
 Sql = Callable[..., list[tuple[Any, ...]]]
@@ -370,7 +369,7 @@ async def test_connect_loads_costs_scans_and_recommends(
         "SELECT action FROM audit_log WHERE tenant_id = %s ORDER BY id", tenant)]  # fmt: skip
     assert "connection.created" in actions
 
-    # Idempotent: the daily poll loads nothing new.
+    # Idempotent: the next poll loads nothing new.
     again = await billing.ingest_connection(uuid.UUID(tenant), uuid.UUID(cid))
     assert again.status == "up_to_date"
     assert owner_sql("SELECT count(*) FROM ingest_batch WHERE connection_id = %s", cid)[0][0] == 2
@@ -527,22 +526,6 @@ async def test_jobs_dispatch_to_the_plug_in(
         )[0][0]
         == 2
     )
-
-
-async def test_daily_poll_queues_digitalocean_connections(
-    client: AsyncClient, login: Any, fake_do: FakeDigitalOcean, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tenant, headers = await workspace(client, login)
-    cid = (await _connect(client, tenant, headers, fake_do.add_token())).json()["id"]
-    queued: list[tuple[str, str]] = []
-
-    async def fake_defer(app: Any, t: str, c: str) -> None:
-        queued.append((t, c))
-
-    monkeypatch.setattr(ingestion_jobs, "defer_ingest", fake_defer)
-    monkeypatch.setattr("cloudoptics.platform.jobs.get_job_app", lambda: None)
-    count = await do_jobs.poll(0)
-    assert count >= 1 and (tenant, cid) in queued
 
 
 async def test_reconciliation_flags_a_mismatch(

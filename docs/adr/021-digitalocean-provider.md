@@ -25,12 +25,12 @@ ADR-018 made providers plug-ins. This ADR records how the DigitalOcean plug-in (
 
 | What | Endpoint | Into | When |
 |---|---|---|---|
-| Closed months | `GET /v2/customers/my/invoices`, then `/{uuid}/csv` and `/{uuid}/summary` | `cost_daily` (provider `digitalocean`, USD), `ingest_batch`, `billing_file` | on connect, then daily (`digitalocean:invoices.poll`, 05:29 UTC) |
+| Closed months | `GET /v2/customers/my/invoices`, then `/{uuid}/csv` and `/{uuid}/summary` | `cost_daily` (provider `digitalocean`, USD), `ingest_batch`, `billing_file` | on connect, then the shared 6-hourly `cur.poll` (one list request when nothing is new) |
 | This month (provisional) | `GET /v2/customers/my/balance` (total), `GET /v2/billing/do:team:{uuid}/insights/{start}/{end}` (days and SKUs) | `cost_snapshot_ce` (provider `digitalocean`) | on connect, then the shared daily `ce.poll` |
 | Reconciliation | the invoice list's amount | `cost_reconciliation` | after each new month |
 | Resources | Droplets, volumes, snapshots, reserved IPs, load balancers, managed databases; Droplet CPU from `/v2/monitoring/metrics/droplet/cpu` | `resource` (types `do_droplet`, `do_volume`, `do_snapshot`, `do_reserved_ip`, `do_load_balancer`, `do_database`) | on connect, then the shared `inventory.poll` (12-hourly) |
 
-- **One invoice is one export version** (its UUID), so the daily poll loads a month once and is idempotent; the shared `ingestion.service._store` replaces a month's rows in one transaction, as for AWS. A new connection loads the last 12 closed months.
+- **One invoice is one export version** (its UUID), so the poll loads a month once and is idempotent; the shared `ingestion.service._store` replaces a month's rows in one transaction, as for AWS. A new connection loads the last 12 closed months.
 - **FOCUS mapping** (`do-invoice-csv-1`): `product` → ServiceName (the code is its slug), ServiceCategory by product (Droplets, Kubernetes, App Platform → Compute; Volumes, Spaces, Snapshots, Backups → Storage; Load Balancers, Reserved IPs, Bandwidth → Networking; Managed Databases → Databases; GenAI → AI and Machine Learning; else Other). The usage type is the size slug in brackets in the description, else the product. Each line is spread over the days it covers in proportion to hours, to the micro-dollar, with the remainder on the last day, so a month sums exactly to its lines. Taxes and credits from the summary become `Tax` and `Credit` rows on the month's last day. `project_name` becomes the tag `do:project`, so the breakdown by tag splits by project. Descriptions, resource names and IP addresses are not stored in cost rows, and the summary's name, email and address are dropped as soon as it is read.
 - **Quality checks**: required columns, unreadable amounts (both block the month; the previous good load stays), rows outside the month (warning) and the invoice total (lines + taxes + credits against the invoice, warning).
 - **Month to date**: `month_to_date_usage` is the total; insights give the days and services (SKU parts mapped to products). DigitalOcean's daily data starts on 1 December 2025 and is an estimate; when insights are refused or absent the snapshot shows the balance alone.
@@ -41,13 +41,13 @@ Five rules in `providers/digitalocean/rules.py`, run by the shared engine over D
 
 ### Limits and back-off
 
-DigitalOcean allows 250 requests a minute and 5,000 an hour per token. The client keeps to 200 a minute per token per process, stops when `ratelimit-remaining` reaches 0 until `ratelimit-reset`, waits for `Retry-After` on 429, backs off 1, 2, 4 s on 5xx and network errors, and gives up after three retries. A connect is about 14 requests, a daily invoice poll 1 (3 more per new month), a scan about 7 plus one per running Droplet (at most 100 Droplets' CPU per scan). The HTTP client follows `links.pages.next` only on DigitalOcean's host and under `/v2/`, refuses redirects, and refuses an invoice CSV over 20 MiB.
+DigitalOcean allows 250 requests a minute and 5,000 an hour per token. The client keeps to 200 a minute per token per process, stops when `ratelimit-remaining` reaches 0 until `ratelimit-reset`, waits for `Retry-After` on 429, backs off 1, 2, 4 s on 5xx and network errors, and gives up after three retries. A connect is about 14 requests, an invoice poll 1 (2 more per new month), a scan about 7 plus one per running Droplet (at most 100 Droplets' CPU per scan). The HTTP client follows `links.pages.next` only on DigitalOcean's host and under `/v2/`, refuses redirects, and refuses an invoice CSV over 20 MiB.
 
 ## Consequences
 
 - The customer holds a revocable read-only secret with us. If our database and KMS were both compromised, an attacker could read the bills and resource lists of connected teams, not change them.
 - Costs, budgets, anomalies, forecasts, exports, data deletion and the recommendation workflow carry DigitalOcean data with no change, as ADR-018 intended.
-- Still to do: detection of write scopes other than `droplet:create` and `tag:create`; per-resource costs (`cost_resource_daily`) from the invoice JSON items, for realised savings; the connection alert email says "AWS connection"; Scan now and Reload bills on the Connections page are AWS-only in the UI (the API's `/scan` works for DigitalOcean); App Platform, Kubernetes, Spaces and Functions inventory; rightsizing Droplets.
+- Still to do: detection of write scopes other than `droplet:create` and `tag:create`; per-resource costs (`cost_resource_daily`) from the invoice JSON items, for realised savings; the connection alert email says "AWS connection"; Scan now and Reload bills on the Connections page are AWS-only in the UI (the shared `/scan` and `/reload` routes work for DigitalOcean); App Platform, Kubernetes, Spaces and Functions inventory; rightsizing Droplets.
 
 ## Alternatives
 

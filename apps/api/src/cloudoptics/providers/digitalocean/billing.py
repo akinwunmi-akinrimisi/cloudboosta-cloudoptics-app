@@ -3,7 +3,7 @@
 * **Closed months** come from invoices: ``GET /v2/customers/my/invoices`` lists them, each
   one's CSV (``/csv``) has the line items and its summary (``/summary``) the taxes and
   credits. One invoice is one export version (its UUID), so a month is loaded once and the
-  daily poll is idempotent; the shared ``_store`` replaces the month's rows in one
+  shared poll is idempotent; the shared ``_store`` replaces the month's rows in one
   transaction exactly as it does for AWS.
 * **This month** is provisional, like AWS's Cost Explorer snapshot: the balance endpoint's
   ``month_to_date_usage`` is the total, and the daily "insights" endpoint gives the days and

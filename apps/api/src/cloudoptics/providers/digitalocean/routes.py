@@ -15,9 +15,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Response, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import Field, SecretStr
 from sqlalchemy import text
 from starlette.concurrency import run_in_threadpool

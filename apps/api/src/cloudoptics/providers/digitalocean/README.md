@@ -12,14 +12,13 @@ Design and decisions: [ADR-021](../../../../../../docs/adr/021-digitalocean-prov
 | `billing.py` | Invoices → `cost_daily`, month to date → `cost_snapshot_ce`, reconciliation |
 | `inventory.py` | Resource scan and Droplet CPU → `resource` |
 | `rules.py` | DO1-DO5 |
-| `jobs.py` | `digitalocean:invoices.poll`, daily 05:29 UTC |
 | `apps/api/tests/fake_digitalocean.py` | The fake API (tests and the E2E server) |
 
 ## Jobs
 
 | Job | Schedule | Does |
 |---|---|---|
-| `digitalocean:invoices.poll` | daily 05:29 UTC | queues `ingestion:cur.ingest` for each working DigitalOcean connection |
+| `ingestion:cur.poll` (shared) | every 6 h | loads any invoice DigitalOcean closed since the last poll |
 | `ingestion:ce.poll` (shared) | daily 06:41 UTC | month to date (at most every 6 hours) |
 | `inventory:inventory.poll` (shared) | every 12 h | the resource scan, then the analysis |
 | `connectors:connections.health` (shared) | every 6 h | checks the token again; a worse result emails the admins |
@@ -37,13 +36,7 @@ Design and decisions: [ADR-021](../../../../../../docs/adr/021-digitalocean-prov
 | `sync_run.error_code = too_many_requests` | `sync_run` | The token hit DigitalOcean's limit (250/min, 5,000/h), usually because the customer uses it elsewhere too. The next run catches up; suggest a token for Cloudoptics only. |
 | Month to date shows a total but no daily chart | Overview | The team has no insights data yet (DigitalOcean's starts in December 2025) or `billing:read` does not reach it. Costs from invoices are unaffected. |
 
-Reload a connection's invoices from a Python shell on the worker (the Reload bills button is AWS-only for now):
-
-```python
-from cloudoptics.providers.digitalocean import billing
-
-await billing.reload_connection(tenant_id, connection_id, None)  # every loaded month
-```
+Reload a connection's invoices with the shared reload route (`POST /v1/tenants/{t}/connections/{id}/reload`), which runs the DigitalOcean plug-in.
 
 ## Never
 

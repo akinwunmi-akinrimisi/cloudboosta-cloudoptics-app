@@ -116,7 +116,8 @@ async def test_the_job_re_encrypts_every_legacy_secret_once(
             for row_id, tid, enc in owner_sql(
                 f"SELECT id, tenant_id, external_id_enc FROM {table}"  # noqa: S608 - fixed names
             ):
-                if bytes(enc)[:1] != crypto.VERSION_KMS:
+                # A disconnected DigitalOcean connection has no secret left (ADR-021).
+                if enc is None or bytes(enc)[:1] != crypto.VERSION_KMS:
                     continue
                 try:
                     plain = kms_encryptor.decrypt(bytes(enc), tid)
