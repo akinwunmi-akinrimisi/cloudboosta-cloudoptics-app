@@ -1,12 +1,13 @@
 import { useNavigate } from '@tanstack/react-router'
-import { Check, Copy, ExternalLink } from 'lucide-react'
-import type { FormEvent, ReactNode, TextareaHTMLAttributes } from 'react'
+import { BadgeCheck, Check, Copy, Database, FileText, KeyRound, Receipt, ShieldCheck, Tag, Terminal } from 'lucide-react'
+import type { FormEvent, TextareaHTMLAttributes } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 
 import type { AzureConnection, AzureConnectionCreate, AzureConnectionSetup, AzureScopeType } from '../../api/types'
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
-import { Alert, Button, Card, Field, StatusPill, cx } from '../../components/ui'
+import { Checks, Chips, Disclosure, Flow, NewTab, Next, Todo, TodoItem } from '../../components/onboarding'
+import { Alert, Button, Field, StatusPill, cx } from '../../components/ui'
 import { accountLabel } from '../../lib/providers'
 
 export interface WizardProps {
@@ -146,8 +147,8 @@ const EMPTY: AzureFormValues = {
 }
 
 const SCOPES: { id: AzureScopeType; label: string; hint: string }[] = [
-  { id: 'subscription', label: 'Subscription', hint: 'One subscription and its own cost export.' },
-  { id: 'billing_account', label: 'Billing account', hint: 'Every subscription billed to one account.' },
+  { id: 'subscription', label: 'Subscription', hint: 'One subscription' },
+  { id: 'billing_account', label: 'Billing account', hint: 'All it bills' },
 ]
 
 function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: AzureConnectionSetup) => void }) {
@@ -198,126 +199,133 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
 
   const billing = values.scopeType === 'billing_account'
   return (
-    <Card>
-      <h1 className="text-2xl font-semibold">Connect your Azure subscription</h1>
-      <p className="mt-1 text-sm text-secondary">
-        Cloudoptics reads your Azure costs from a FOCUS cost export in your storage account, with read-only roles. It
-        can never change anything in Azure.
-      </p>
-      <form ref={form} className="mt-6 flex flex-col gap-4" onSubmit={submit} noValidate>
-        <Field
-          label="Directory (tenant) ID"
-          hint="In the Azure portal: Microsoft Entra ID, Overview, Tenant ID."
-          placeholder={GUID_EXAMPLE}
-          autoComplete="off"
-          spellCheck={false}
-          value={values.directoryId}
-          onChange={(e) => set('directoryId')(e.target.value)}
-          error={errors.directoryId}
-        />
-        <fieldset className="min-w-0">
-          <legend className="mb-2 text-sm font-medium text-primary">What do you want to connect?</legend>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {SCOPES.map((s) => (
-              <label
-                key={s.id}
-                className="flex min-h-11 cursor-pointer items-start gap-3 rounded-sm border border-border-strong px-3 py-2 has-[:checked]:border-accent has-[:checked]:bg-accent-soft"
-              >
-                <input
-                  type="radio"
-                  name="azure-scope"
-                  value={s.id}
-                  checked={values.scopeType === s.id}
-                  onChange={() => set('scopeType')(s.id)}
-                  className="mt-1 size-4 shrink-0 accent-accent"
-                  aria-labelledby={`azure-scope-${s.id}-label`}
-                  aria-describedby={`azure-scope-${s.id}`}
-                />
-                <span className="min-w-0">
-                  <span id={`azure-scope-${s.id}-label`} className="block text-sm font-medium">
-                    {s.label}
-                  </span>
-                  <span id={`azure-scope-${s.id}`} className="block text-xs text-secondary">
-                    {s.hint}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
-        {billing && (
+    <div className="max-w-[760px]">
+      <section className="min-w-0">
+        <h1 className="ed-h1">Connect your Azure subscription</h1>
+        <Flow label="How Cloudoptics connects to Azure" {...FLOW} />
+        <form ref={form} className="ed-sheet ed-form mt-7" onSubmit={submit} noValidate>
           <Field
-            label="Billing account ID"
-            hint="In Cost Management: Billing scopes, then Properties, Billing account ID."
-            autoComplete="off"
-            spellCheck={false}
-            value={values.billingAccountId}
-            onChange={(e) => set('billingAccountId')(e.target.value)}
-            error={errors.billingAccountId}
-          />
-        )}
-        {billing ? (
-          <TextArea
-            label="Subscription IDs to scan (optional)"
-            hint={`For resources and recommendations. Separate them with commas or new lines (up to ${MAX_SUBSCRIPTIONS}).`}
-            rows={3}
+            label="Directory (tenant) ID"
+            hint="Entra ID, Overview, Tenant ID"
             placeholder={GUID_EXAMPLE}
             autoComplete="off"
             spellCheck={false}
-            value={values.subscriptionIds}
-            onChange={(e) => set('subscriptionIds')(e.target.value)}
-            error={errors.subscriptionIds}
+            value={values.directoryId}
+            onChange={(e) => set('directoryId')(e.target.value)}
+            error={errors.directoryId}
           />
-        ) : (
+          <fieldset className="min-w-0">
+            <legend className="mb-2 text-sm font-medium text-primary">Connect</legend>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {SCOPES.map((s) => (
+                <label key={s.id} className="ed-tile">
+                  <input
+                    type="radio"
+                    name="azure-scope"
+                    value={s.id}
+                    checked={values.scopeType === s.id}
+                    onChange={() => set('scopeType')(s.id)}
+                    aria-labelledby={`azure-scope-${s.id}-label`}
+                    aria-describedby={`azure-scope-${s.id}`}
+                  />
+                  <span className="min-w-0">
+                    <b id={`azure-scope-${s.id}-label`}>{s.label}</b>
+                    <small id={`azure-scope-${s.id}`}>{s.hint}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {billing && (
+            <Field
+              label="Billing account ID"
+              hint="Cost Management, Billing scopes, Properties"
+              autoComplete="off"
+              spellCheck={false}
+              value={values.billingAccountId}
+              onChange={(e) => set('billingAccountId')(e.target.value)}
+              error={errors.billingAccountId}
+            />
+          )}
+          {billing ? (
+            <TextArea
+              label="Subscription IDs to scan (optional)"
+              hint={`For recommendations. Commas or new lines, up to ${MAX_SUBSCRIPTIONS}.`}
+              rows={3}
+              placeholder={GUID_EXAMPLE}
+              autoComplete="off"
+              spellCheck={false}
+              value={values.subscriptionIds}
+              onChange={(e) => set('subscriptionIds')(e.target.value)}
+              error={errors.subscriptionIds}
+            />
+          ) : (
+            <Field
+              label="Subscription ID"
+              hint="Subscriptions, Subscription ID column"
+              placeholder={GUID_EXAMPLE}
+              autoComplete="off"
+              spellCheck={false}
+              value={values.subscriptionIds}
+              onChange={(e) => set('subscriptionIds')(e.target.value)}
+              error={errors.subscriptionIds}
+            />
+          )}
           <Field
-            label="Subscription ID"
-            hint="In the Azure portal: Subscriptions, then the Subscription ID column."
-            placeholder={GUID_EXAMPLE}
+            label="Storage account name"
+            hint="Holds the cost export"
             autoComplete="off"
             spellCheck={false}
-            value={values.subscriptionIds}
-            onChange={(e) => set('subscriptionIds')(e.target.value)}
-            error={errors.subscriptionIds}
+            value={values.storageAccount}
+            onChange={(e) => set('storageAccount')(e.target.value)}
+            error={errors.storageAccount}
           />
-        )}
-        <Field
-          label="Storage account name"
-          hint="Where the cost export is saved: 3 to 24 lowercase letters and numbers."
-          autoComplete="off"
-          spellCheck={false}
-          value={values.storageAccount}
-          onChange={(e) => set('storageAccount')(e.target.value)}
-          error={errors.storageAccount}
-        />
-        <Field
-          label="Container"
-          hint="3 to 63 lowercase letters, numbers and hyphens."
-          autoComplete="off"
-          spellCheck={false}
-          value={values.container}
-          onChange={(e) => set('container')(e.target.value)}
-          error={errors.container}
-        />
-        <Field
-          label="Export folder path (optional)"
-          hint="The folder inside the container, for example cloudoptics/focus. Leave empty for the top."
-          autoComplete="off"
-          spellCheck={false}
-          value={values.exportPath}
-          onChange={(e) => set('exportPath')(e.target.value)}
-          error={errors.exportPath}
-        />
-        {error && <Alert tone="error">{error}</Alert>}
-        <Button type="submit" disabled={busy}>
-          {busy ? 'Saving…' : 'Continue'}
-        </Button>
-      </form>
-    </Card>
+          <Field
+            label="Container"
+            autoComplete="off"
+            spellCheck={false}
+            value={values.container}
+            onChange={(e) => set('container')(e.target.value)}
+            error={errors.container}
+          />
+          <Field
+            label="Export folder path (optional)"
+            hint="Empty for the top"
+            autoComplete="off"
+            spellCheck={false}
+            value={values.exportPath}
+            onChange={(e) => set('exportPath')(e.target.value)}
+            error={errors.exportPath}
+          />
+          {error && <Alert tone="error">{error}</Alert>}
+          <button type="submit" disabled={busy} className="ed-btn wide">
+            {busy ? 'Saving…' : 'Continue'}
+          </button>
+        </form>
+      </section>
+    </div>
   )
 }
 
+const FLOW = {
+  from: { icon: Database, label: 'FOCUS export' },
+  link: { icon: KeyRound, label: 'Read-only roles' },
+}
+
+const ROLES = ['Reader', 'Cost Management Reader', 'Storage Blob Data Reader']
+
 /** A value to paste somewhere else, wrapped (never scrolled sideways), with a Copy button. */
-export function CopyBlock({ label, value }: { label: string; value: string }) {
+export function CopyBlock({
+  label,
+  value,
+  paper = false,
+}: {
+  label: string
+  value: string
+  /** The onboarding's paper look (pages/onboarding.css). Off for the Connections page, which
+   * does not load that stylesheet. */
+  paper?: boolean
+}) {
   const id = useId()
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const copy = () => {
@@ -325,6 +333,29 @@ export function CopyBlock({ label, value }: { label: string; value: string }) {
     navigator.clipboard.writeText(value).then(
       () => setState('copied'),
       () => setState('failed'),
+    )
+  }
+  const status = state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Select the text and copy it.' : ''
+  const icon = state === 'copied' ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />
+  if (paper) {
+    return (
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="ed-copyhead">
+          <span id={id}>{label}</span>
+          <span className="flex flex-wrap items-center gap-2">
+            <span role="status" className="ed-copied">
+              {status}
+            </span>
+            <button type="button" className="ed-btn ghost sm" onClick={copy} aria-label={`Copy ${label}`}>
+              {icon}
+              Copy
+            </button>
+          </span>
+        </div>
+        <pre aria-labelledby={id} tabIndex={0} className="ed-term scroll">
+          {value}
+        </pre>
+      </div>
     )
   }
   return (
@@ -335,10 +366,10 @@ export function CopyBlock({ label, value }: { label: string; value: string }) {
         </span>
         <span className="flex items-center gap-2">
           <span role="status" className="text-xs text-secondary">
-            {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Select the text and copy it.' : ''}
+            {status}
           </span>
           <Button variant="secondary" onClick={copy} aria-label={`Copy ${label}`}>
-            {state === 'copied' ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
+            {icon}
             Copy
           </Button>
         </span>
@@ -354,34 +385,13 @@ export function CopyBlock({ label, value }: { label: string; value: string }) {
   )
 }
 
-const LINK_BUTTON =
-  'inline-flex min-h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 py-1 text-sm font-medium text-on-accent hover:bg-accent-hover'
-
-function NewTabLink({ href, children, className = LINK_BUTTON }: { href: string; children: ReactNode; className?: string }) {
-  return (
-    <a href={href} target="_blank" rel="noreferrer" className={className}>
-      {children} <ExternalLink size={16} aria-hidden="true" />
-      <span className="sr-only">(opens in a new tab)</span>
-    </a>
-  )
-}
-
 function Steps({ items }: { items: string[] }) {
   return (
-    <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm break-words text-secondary">
+    <ol className="ed-steps">
       {items.map((s) => (
         <li key={s}>{s}</li>
       ))}
     </ol>
-  )
-}
-
-function Disclosure({ summary, children }: { summary: string; children: ReactNode }) {
-  return (
-    <details className="rounded-sm border border-border px-3 py-2">
-      <summary className="flex min-h-6 cursor-pointer items-center text-sm font-medium">{summary}</summary>
-      <div className="mt-2">{children}</div>
-    </details>
   )
 }
 
@@ -432,65 +442,75 @@ function AzureSetupView({ tenantId, setup }: { tenantId: string; setup: AzureCon
       : ''
 
   return (
-    <Card>
-      <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold">
+    <section className="max-w-[760px]">
+      <h1 ref={heading} tabIndex={-1} className="ed-h1">
         {title}
       </h1>
-      <p className="mt-1 text-sm break-all text-secondary">{azureScopeLabel(conn)}</p>
+      <p className="ed-sub break-all">{azureScopeLabel(conn)}</p>
       {conn.status !== 'healthy' && (
-        <>
-          <p className="mt-2 text-sm text-secondary">Three steps in Azure, then check access here.</p>
-          <div className="mt-6 flex flex-col gap-6">
-            <section className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold">1. Grant admin consent</h2>
-              <p className="text-sm text-secondary">
-                A Global Administrator or Privileged Role Administrator of directory{' '}
-                <code className="font-mono text-xs break-all">{conn.directoryId}</code> approves the Cloudoptics app.
-                It asks only to sign in and read.
-              </p>
-              <div>
-                <NewTabLink href={setup.consentUrl}>Grant admin consent</NewTabLink>
+        <Todo label="Three steps in Azure, then check access here">
+          <TodoItem
+            n={1}
+            icon={BadgeCheck}
+            title="Grant admin consent"
+            hint={
+              <>
+                Global or Privileged Role Administrator of <code className="break-all">{conn.directoryId}</code>
+              </>
+            }
+          >
+            <div>
+              <NewTab href={setup.consentUrl} className="ed-btn">
+                Grant admin consent
+              </NewTab>
+            </div>
+          </TodoItem>
+          <TodoItem
+            n={2}
+            icon={Terminal}
+            title="Give Cloudoptics read access"
+            hint="Owner or User Access Administrator, Cloud Shell (Bash)"
+          >
+            <Chips items={ROLES} label="Read-only roles it adds" />
+            <p className="flex items-start gap-2 text-sm text-secondary">
+              <Tag size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+              Also tags your storage account, as proof it is yours.
+            </p>
+            <CopyBlock paper label="Azure CLI command" value={setup.roleAssignmentCommand} />
+            <Disclosure summary="Prefer the Azure portal?" className="mt-0">
+              <Steps items={setup.portalRoleSteps} />
+              <div className="mt-3 flex flex-col gap-3">
+                <CopyBlock paper label="Cloudoptics application (client) ID" value={setup.clientId} />
+                <CopyBlock paper label={`Tag ${setup.ownershipTag}`} value={setup.ownershipCode} />
               </div>
-            </section>
-            <section className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold">2. Give Cloudoptics read access</h2>
-              <p className="text-sm text-secondary">
-                As an Owner or User Access Administrator, run this in Azure Cloud Shell (Bash). It adds read-only
-                roles (Reader, Cost Management Reader, Storage Blob Data Reader on the export container) and tags the
-                export&apos;s storage account with your code, which proves the account is yours.
-              </p>
-              <CopyBlock label="Azure CLI command" value={setup.roleAssignmentCommand} />
-              <Disclosure summary="Prefer the Azure portal?">
-                <Steps items={setup.portalRoleSteps} />
-                <div className="mt-3 flex flex-col gap-3">
-                  <CopyBlock label="Cloudoptics application (client) ID" value={setup.clientId} />
-                  <CopyBlock label={`Tag ${setup.ownershipTag}`} value={setup.ownershipCode} />
-                </div>
-              </Disclosure>
-            </section>
-            <section className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold">3. Create the FOCUS cost export</h2>
-              <p className="text-sm text-secondary">A daily export of FOCUS cost data, saved here:</p>
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
-                <dt className="text-secondary">Storage account</dt>
-                <dd className="font-mono text-xs break-all">{conn.storageAccount}</dd>
-                <dt className="text-secondary">Container</dt>
-                <dd className="font-mono text-xs break-all">{conn.container}</dd>
-                <dt className="text-secondary">Folder</dt>
-                <dd className="font-mono text-xs break-all">{conn.exportPath || 'The top of the container'}</dd>
-              </dl>
-              <div>
-                <NewTabLink href={setup.exportPortalUrl}>Open cost exports in Azure</NewTabLink>
-              </div>
-              <Disclosure summary="How to create the export">
-                <Steps items={setup.exportSteps} />
-              </Disclosure>
-            </section>
-          </div>
-        </>
+            </Disclosure>
+          </TodoItem>
+          <TodoItem n={3} icon={FileText} title="Create a daily FOCUS cost export">
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
+              <dt className="text-secondary">Storage account</dt>
+              <dd className="wrap-anywhere">
+                <code>{conn.storageAccount}</code>
+              </dd>
+              <dt className="text-secondary">Container</dt>
+              <dd className="wrap-anywhere">
+                <code>{conn.container}</code>
+              </dd>
+              <dt className="text-secondary">Folder</dt>
+              <dd className="wrap-anywhere">{conn.exportPath ? <code>{conn.exportPath}</code> : 'The top'}</dd>
+            </dl>
+            <div>
+              <NewTab href={setup.exportPortalUrl} className="ed-btn">
+                Open cost exports in Azure
+              </NewTab>
+            </div>
+            <Disclosure summary="How to create the export" className="mt-0">
+              <Steps items={setup.exportSteps} />
+            </Disclosure>
+          </TodoItem>
+        </Todo>
       )}
 
-      <p role="status" className="mt-6 text-sm font-medium">
+      <p role="status" className="mt-6 font-semibold">
         {announce}
       </p>
       {error && (
@@ -500,43 +520,44 @@ function AzureSetupView({ tenantId, setup }: { tenantId: string; setup: AzureCon
       )}
       {checked && !checking && (
         <>
-          <div className="mt-2 flex items-center gap-2 text-sm">
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
             Connection status: <StatusPill status={conn.status} />
           </div>
-          <ul className="mt-4 divide-y divide-border">
-            {conn.permissionChecks.map((c) => (
-              <li key={c.id} className="flex items-start justify-between gap-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{c.label}</p>
-                  <p className="text-sm break-words text-secondary">{c.message}</p>
-                  {c.hint && <p className="text-xs break-words text-muted">{c.hint}</p>}
-                </div>
-                <StatusPill status={c.status} />
-              </li>
-            ))}
-          </ul>
           {usable && (
-            <p className="mt-4 text-sm text-secondary">
-              Your first Azure costs appear after the export&apos;s first run (up to a day).
-            </p>
+            <Next
+              steps={[
+                { icon: ShieldCheck, label: 'Access checked', done: true },
+                { icon: Receipt, label: 'First Azure costs', when: 'within a day' },
+              ]}
+            />
           )}
+          <Checks checks={conn.permissionChecks} />
         </>
       )}
-      <div className="mt-6 flex flex-wrap justify-end gap-2">
+      <div className="ed-actions end">
         {!checked ? (
-          <Button onClick={() => void check()} disabled={checking}>
+          <button type="button" className="ed-btn" onClick={() => void check()} disabled={checking}>
             Check access
-          </Button>
+          </button>
         ) : (
           conn.status !== 'healthy' && (
-            <Button variant={usable ? 'secondary' : 'primary'} onClick={() => void check()} disabled={checking}>
+            <button
+              type="button"
+              className={cx('ed-btn', usable && 'ghost')}
+              onClick={() => void check()}
+              disabled={checking}
+            >
               Check again
-            </Button>
+            </button>
           )
         )}
-        {usable && <Button onClick={() => void navigate({ to: '/overview' })}>Go to my workspace</Button>}
+        {usable && (
+          <button type="button" className="ed-btn" onClick={() => void navigate({ to: '/overview' })}>
+            Go to my workspace
+          </button>
+        )}
       </div>
-    </Card>
+    </section>
   )
 }
 

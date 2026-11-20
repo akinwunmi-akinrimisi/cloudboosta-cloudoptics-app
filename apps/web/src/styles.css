@@ -2,6 +2,8 @@
 
 /* Design tokens (colours, fonts, radii) live in packages/design-tokens, shared with apps/site. */
 @import '@cloudoptics/design-tokens/tokens.css';
+/* The editorial theme (Direction A), shared with apps/site: onboarding uses it (pages/onboarding.css). */
+@import '@cloudoptics/design-tokens/editorial.css';
 
 body {
   background: var(--bg);

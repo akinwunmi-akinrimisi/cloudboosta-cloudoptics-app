@@ -1,12 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, Database, KeyRound, Tag, Terminal } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import type { GcpConnectionCreate, GcpExportKind, GcpSetup } from '../../api/types'
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
-import { Alert, Button, Card, Field } from '../../components/ui'
+import { Disclosure, Flow, Lede } from '../../components/onboarding'
+import { Alert, Field } from '../../components/ui'
 
 export interface ConnectProps {
   tenantId: string
@@ -78,16 +79,22 @@ function CopyButton({ text, name, label = 'Copy' }: { text: string; name: string
   const [state, copy] = useCopy()
   return (
     <>
-      <Button variant="secondary" aria-label={`Copy ${name}`} onClick={() => copy(text)}>
+      <button type="button" className="ed-btn ghost sm" aria-label={`Copy ${name}`} onClick={() => copy(text)}>
         {state === 'copied' ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
         {state === 'copied' ? 'Copied' : label}
-      </Button>
+      </button>
       <span role="status" className="sr-only">
         {state === 'copied' ? `Copied ${name}` : state === 'failed' ? 'Could not copy. Select the text instead.' : ''}
       </span>
     </>
   )
 }
+
+const FLOW = {
+  from: { icon: Database, label: 'BigQuery export' },
+  link: { icon: KeyRound, label: 'Read-only access' },
+}
+
 
 /** Google Cloud: where the billing export is, then the commands that give read access to it. */
 export function GcpConnect({ tenantId, onConnected, connectionId }: ConnectProps & { connectionId?: string }) {
@@ -104,15 +111,17 @@ export function GcpConnect({ tenantId, onConnected, connectionId }: ConnectProps
   if (connectionId) {
     if (existing.data) return <GrantAccess tenantId={tenantId} setup={existing.data} onConnected={onConnected} />
     return (
-      <Card>
+      <div className="ed-sheet">
         {existing.error ? (
           <Alert tone="error">
             {existing.error instanceof ApiError ? existing.error.message : 'Could not load this connection.'}
           </Alert>
         ) : (
-          <p className="text-sm text-secondary">Loading…</p>
+          <p className="ed-sub" role="status">
+            Loading…
+          </p>
         )}
-      </Card>
+      </div>
     )
   }
   if (created) return <GrantAccess tenantId={tenantId} setup={created} onConnected={onConnected} focus />
@@ -170,111 +179,106 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
   }
 
   return (
-    <Card>
-      <h1 className="text-2xl font-semibold">Connect Google Cloud</h1>
-      <p className="mt-1 text-sm text-secondary">
-        Cloudoptics reads your billing export in BigQuery, read-only. It never changes anything.
-      </p>
-      <form className="mt-6 flex flex-col gap-4" onSubmit={submit} noValidate>
-        <Field
-          label="Billing account ID"
-          hint="In Billing, Account management. Looks like 012345-6789AB-CDEF01."
-          required
-          autoComplete="off"
-          spellCheck={false}
-          value={billingAccountId}
-          onChange={(e) => setBillingAccountId(e.target.value.toUpperCase())}
-          error={fieldErrors.billingAccountId}
-        />
-        <Field
-          label="Project that holds the export"
-          hint="The project ID, such as my-billing-project."
-          required
-          autoComplete="off"
-          spellCheck={false}
-          value={exportProjectId}
-          onChange={(e) => setExportProjectId(e.target.value)}
-          error={fieldErrors.exportProjectId}
-        />
-        <Field
-          label="Dataset"
-          hint="The managed FOCUS export creates gcp_billing_immutable_ followed by the billing account ID and location. For a view, the dataset that holds it."
-          required
-          autoComplete="off"
-          spellCheck={false}
-          value={exportDatasetId}
-          onChange={(e) => setExportDatasetId(e.target.value)}
-          error={fieldErrors.exportDatasetId}
-        />
-        <Field
-          label="Table or view"
-          hint={
-            exportKind === 'focus_export'
-              ? 'Leave empty for the table Google names gcp_billing_export_focus_ followed by the billing account ID.'
-              : 'The FOCUS view you saved.'
-          }
-          placeholder={exportKind === 'focus_export' ? focusTableName(billingAccountId) : undefined}
-          required={exportKind !== 'focus_export'}
-          autoComplete="off"
-          spellCheck={false}
-          value={exportTableId}
-          onChange={(e) => setExportTableId(e.target.value)}
-          error={fieldErrors.exportTableId}
-        />
-        <fieldset className="flex flex-col gap-2">
-          <legend className="mb-1 text-sm font-medium text-primary">Export type</legend>
-          {(
-            [
-              ['focus_export', 'Managed FOCUS export (Preview)'],
-              ['focus_view', 'Detailed export with the FOCUS view'],
-            ] as const
-          ).map(([value, label]) => (
-            <label key={value} className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="gcp-export-kind"
-                value={value}
-                checked={exportKind === value}
-                onChange={() => setExportKind(value)}
+    <div className="max-w-[760px]">
+      <section className="min-w-0">
+        <h1 className="ed-h1">Connect Google Cloud</h1>
+        <Flow label="How Cloudoptics connects to Google Cloud" {...FLOW} />
+        <form className="ed-sheet ed-form mt-7" onSubmit={submit} noValidate>
+          <Field
+            label="Billing account ID"
+            hint="Billing, Account management"
+            placeholder="012345-6789AB-CDEF01"
+            required
+            autoComplete="off"
+            spellCheck={false}
+            value={billingAccountId}
+            onChange={(e) => setBillingAccountId(e.target.value.toUpperCase())}
+            error={fieldErrors.billingAccountId}
+          />
+          <Field
+            label="Project that holds the export"
+            hint="Its project ID"
+            placeholder="my-billing-project"
+            required
+            autoComplete="off"
+            spellCheck={false}
+            value={exportProjectId}
+            onChange={(e) => setExportProjectId(e.target.value)}
+            error={fieldErrors.exportProjectId}
+          />
+          <Field
+            label="Dataset"
+            hint="Managed export: gcp_billing_immutable_<ID>_<location>. View: its dataset."
+            required
+            autoComplete="off"
+            spellCheck={false}
+            value={exportDatasetId}
+            onChange={(e) => setExportDatasetId(e.target.value)}
+            error={fieldErrors.exportDatasetId}
+          />
+          <Field
+            label="Table or view"
+            hint={exportKind === 'focus_export' ? 'Empty: Google’s default table' : 'Your FOCUS view'}
+            placeholder={exportKind === 'focus_export' ? focusTableName(billingAccountId) : undefined}
+            required={exportKind !== 'focus_export'}
+            autoComplete="off"
+            spellCheck={false}
+            value={exportTableId}
+            onChange={(e) => setExportTableId(e.target.value)}
+            error={fieldErrors.exportTableId}
+          />
+          <fieldset className="min-w-0">
+            <legend className="mb-2 text-sm font-medium text-primary">Export type</legend>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {(
+                [
+                  ['focus_export', 'Managed FOCUS export (Preview)'],
+                  ['focus_view', 'Detailed export + FOCUS view'],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value} className="ed-tile">
+                  <input
+                    type="radio"
+                    name="gcp-export-kind"
+                    value={value}
+                    checked={exportKind === value}
+                    onChange={() => setExportKind(value)}
+                  />
+                  <span className="min-w-0 text-sm">{label}</span>
+                </label>
+              ))}
+            </div>
+            {fieldErrors.exportKind && <p className="mt-1 text-xs text-critical-ink">{fieldErrors.exportKind}</p>}
+          </fieldset>
+          <Disclosure summary="More options" className="mt-0" open={moreOpen} onToggle={setMoreOpen}>
+            <div className="mt-4 flex flex-col gap-4">
+              <Field
+                label="Project that runs queries"
+                hint="Empty: the export project. Billed for queries, under a cent a day."
+                autoComplete="off"
+                spellCheck={false}
+                value={queryProjectId}
+                onChange={(e) => setQueryProjectId(e.target.value)}
+                error={fieldErrors.queryProjectId}
               />
-              {label}
-            </label>
-          ))}
-          {fieldErrors.exportKind && <p className="text-xs text-critical-ink">{fieldErrors.exportKind}</p>}
-        </fieldset>
-        <details
-          className="rounded-sm border border-border px-3 py-2"
-          open={moreOpen}
-          onToggle={(e) => setMoreOpen(e.currentTarget.open)}
-        >
-          <summary className="cursor-pointer text-sm font-medium">More options</summary>
-          <div className="mt-3 flex flex-col gap-4">
-            <Field
-              label="Project that runs queries"
-              hint="Leave empty to use the export project. Queries are billed to this project, usually well under a cent a day."
-              autoComplete="off"
-              spellCheck={false}
-              value={queryProjectId}
-              onChange={(e) => setQueryProjectId(e.target.value)}
-              error={fieldErrors.queryProjectId}
-            />
-            <Field
-              label="Dataset location"
-              hint="Such as US, EU or europe-west2. Leave empty if you are not sure."
-              autoComplete="off"
-              spellCheck={false}
-              value={datasetLocation}
-              onChange={(e) => setDatasetLocation(e.target.value)}
-              error={fieldErrors.datasetLocation}
-            />
-          </div>
-        </details>
-        {error && <Alert tone="error">{error}</Alert>}
-        <Button type="submit" disabled={busy} className="self-end">
-          {busy ? 'Saving…' : 'Continue'}
-        </Button>
-      </form>
-    </Card>
+              <Field
+                label="Dataset location"
+                hint="US, EU, europe-west2… Empty if unsure."
+                autoComplete="off"
+                spellCheck={false}
+                value={datasetLocation}
+                onChange={(e) => setDatasetLocation(e.target.value)}
+                error={fieldErrors.datasetLocation}
+              />
+            </div>
+          </Disclosure>
+          {error && <Alert tone="error">{error}</Alert>}
+          <button type="submit" disabled={busy} className="ed-btn self-end">
+            {busy ? 'Saving…' : 'Continue'}
+          </button>
+        </form>
+      </section>
+    </div>
   )
 }
 
@@ -313,69 +317,79 @@ function GrantAccess({
   }
 
   return (
-    <Card>
-      <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold">
-        Give Cloudoptics read access
-      </h1>
-      <p className="mt-1 text-sm text-secondary">
-        Run these commands in Cloud Shell, or in a terminal signed in to Google Cloud. The first adds a label that proves
-        the dataset is yours. For a view, label every dataset it reads too.
-      </p>
-      {!setup.enabled && (
+    <div className="max-w-[760px]">
+      <section className="min-w-0">
+        <h1 ref={heading} tabIndex={-1} className="ed-h1">
+          Give Cloudoptics read access
+        </h1>
+        <Lede icon={Terminal}>Run in Cloud Shell or any signed-in terminal.</Lede>
+        <p className="ed-sub flex items-start gap-2">
+          <Tag size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+          For a view, label every dataset it reads.
+        </p>
+        {!setup.enabled && (
+          <div className="mt-4">
+            <Alert tone="info">Google Cloud connections are not switched on for this Cloudoptics environment yet.</Alert>
+          </div>
+        )}
+        <div className="ed-kv mt-6">
+          <div>
+            <span className="k">Cloudoptics service account</span>
+            <code>{setup.serviceAccount}</code>
+            <CopyButton text={setup.serviceAccount} name="service account" />
+          </div>
+        </div>
+        <ol className="ed-todo" aria-label="Commands to run">
+          {setup.commands.map((c, i) => (
+            <li key={c.id}>
+              <span className="n" aria-hidden="true">
+                {i + 1}
+              </span>
+              <span className="ic" aria-hidden="true">
+                <Terminal size={22} strokeWidth={1.75} />
+              </span>
+              <div className="body">
+                <div className="ed-copyhead">
+                  <h2 className="text-base font-semibold">
+                    <span className="sr-only">{i + 1}. </span>
+                    {c.title}
+                    {c.optional && !/optional/i.test(c.title) && (
+                      <span className="ml-2 text-xs font-normal text-secondary">Optional</span>
+                    )}
+                  </h2>
+                  <CopyButton text={c.command} name={c.title} />
+                </div>
+                <pre className="ed-term">
+                  <code>{c.command}</code>
+                </pre>
+              </div>
+              <span className="tm" aria-hidden="true" />
+            </li>
+          ))}
+        </ol>
         <div className="mt-4">
-          <Alert tone="info">Google Cloud connections are not switched on for this Cloudoptics environment yet.</Alert>
+          <CopyButton text={all} name="all commands" label="Copy all" />
         </div>
-      )}
-      <div className="mt-4 flex flex-col gap-1">
-        <span className="text-xs font-medium text-secondary">Cloudoptics service account</span>
-        <div className="flex items-center gap-2">
-          <code className="min-w-0 flex-1 truncate rounded-sm bg-surface-2 px-3 py-2 font-mono text-xs">
-            {setup.serviceAccount}
-          </code>
-          <CopyButton text={setup.serviceAccount} name="service account" />
+        {setup.consoleSteps.length > 0 && (
+          <Disclosure summary="Prefer the Google Cloud console?">
+            <ol className="ed-steps">
+              {setup.consoleSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </Disclosure>
+        )}
+        {error && (
+          <div className="mt-4">
+            <Alert tone="error">{error}</Alert>
+          </div>
+        )}
+        <div className="ed-actions end">
+          <button type="button" className="ed-btn" onClick={check} disabled={busy || !setup.enabled}>
+            {busy ? 'Checking…' : 'I have run the commands'}
+          </button>
         </div>
-      </div>
-      <ol className="mt-6 flex flex-col gap-4">
-        {setup.commands.map((c, i) => (
-          <li key={c.id} className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-medium">
-                {i + 1}. {c.title}
-                {c.optional && !/optional/i.test(c.title) && (
-                  <span className="ml-2 text-xs font-normal text-muted">Optional</span>
-                )}
-              </h2>
-              <CopyButton text={c.command} name={c.title} />
-            </div>
-            <pre className="whitespace-pre-wrap break-all rounded-sm bg-surface-2 px-3 py-2 font-mono text-xs">
-              <code>{c.command}</code>
-            </pre>
-          </li>
-        ))}
-      </ol>
-      <div className="mt-4">
-        <CopyButton text={all} name="all commands" label="Copy all" />
-      </div>
-      {setup.consoleSteps.length > 0 && (
-        <details className="mt-6 rounded-sm border border-border px-3 py-2">
-          <summary className="cursor-pointer text-sm font-medium">Prefer the Google Cloud console?</summary>
-          <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-secondary">
-            {setup.consoleSteps.map((step) => (
-              <li key={step}>{step}</li>
-            ))}
-          </ol>
-        </details>
-      )}
-      {error && (
-        <div className="mt-4">
-          <Alert tone="error">{error}</Alert>
-        </div>
-      )}
-      <div className="mt-6 flex justify-end">
-        <Button onClick={check} disabled={busy || !setup.enabled}>
-          {busy ? 'Checking…' : 'I have run the commands'}
-        </Button>
-      </div>
-    </Card>
+      </section>
+    </div>
   )
 }

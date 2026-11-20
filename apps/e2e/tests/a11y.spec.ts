@@ -5,7 +5,7 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, test } from '@playwright/test'
 
-import { appPath, openSignedIn, seedSupportGrant, seedWorkspace, signInApi, uniqueEmail } from './support'
+import { API_URL, appPath, openSignedIn, seedSupportGrant, seedWorkspace, signInApi, uniqueEmail } from './support'
 
 // axe-core on each main page with real layout (docs/11f §1.1 "Accessibility"), on a few
 // opened states (inline confirmations, the mobile menu) and at a phone width. Any violation
@@ -183,6 +183,42 @@ test('axe on each main page', async ({ page, browser, request }) => {
   })
 
   await report('summary', results)
+})
+
+// The other clouds' connect steps, in a test of their own so it runs beside the one above
+// (axe is slow on WebKit, and that test is close to its time limit there).
+test('axe on the Google Cloud, Azure and DigitalOcean connect steps', async ({ page, request }) => {
+  test.setTimeout(180_000)
+  const results: PageResult[] = []
+  const newcomer = await signInApi(request, uniqueEmail('clouds'))
+  await openSignedIn(page, newcomer.token, undefined, '/onboarding')
+  await page.getByLabel('Company or team name').fill('A11y Clouds')
+  await page.getByRole('button', { name: 'Create workspace' }).click()
+  await expect(page.getByRole('heading', { name: 'Connect your AWS account' })).toBeVisible()
+  // The other clouds' connect steps, from the same picker.
+  for (const [cloud, heading] of [
+    ['Google Cloud', 'Connect Google Cloud'],
+    ['Azure', 'Connect your Azure subscription'],
+    ['DigitalOcean', 'Connect DigitalOcean'],
+  ]) {
+    await page.getByRole('radio', { name: new RegExp(`^${cloud}`) }).check()
+    await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    results.push(await audit(page, `Onboarding: connect ${cloud}`, `/onboarding (step 2, ${cloud})`))
+  }
+  // Google Cloud's second page: the commands to run (a fake billing account of its own).
+  const fake = await request.post(`${API_URL}/__e2e/gcp/billing-account`)
+  expect(fake.ok()).toBeTruthy()
+  const gcp = (await fake.json()) as { billingAccountId: string; project: string; dataset: string }
+  await page.getByRole('radio', { name: /^Google Cloud/ }).check()
+  await page.getByLabel(/Billing account ID/).fill(gcp.billingAccountId)
+  await page.getByLabel(/Project that holds the export/).fill(gcp.project)
+  await page.getByLabel(/^Dataset/).first().fill(gcp.dataset)
+  await page.getByRole('button', { name: 'Continue' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Give Cloudoptics read access' })).toBeVisible()
+  results.push(await audit(page, 'Onboarding: Google Cloud commands', '/onboarding (step 2, Google Cloud commands)'))
+
+  await report('connect', results)
 })
 
 // The same pages on a phone, and the navigation drawer open: a test of its own so the two run

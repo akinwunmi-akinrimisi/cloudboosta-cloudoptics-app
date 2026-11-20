@@ -77,6 +77,25 @@ describe('Connect step: provider picker', () => {
     await user.click(within(group).getByRole('radio', { name: /^AWS/ }))
     expect(await screen.findByRole('heading', { name: 'Connect your AWS account' })).toBeTruthy()
   })
+
+  it('names the chosen cloud in the progress bar', async () => {
+    const { user } = await reachConnectStep()
+    const group = screen.getByRole('group', { name: 'Which cloud?' })
+    const current = () => within(screen.getByRole('list', { name: 'Setup progress' })).getAllByRole('listitem')[1]!
+    expect(current().getAttribute('aria-current')).toBe('step')
+    expect(current().textContent).toContain('Connect AWS')
+    for (const [radio, name] of [
+      [/^Google Cloud/, 'Connect Google Cloud'],
+      [/^Azure/, 'Connect Azure'],
+      [/^DigitalOcean/, 'Connect DigitalOcean'],
+      [/^AWS/, 'Connect AWS'],
+    ] as const) {
+      await user.click(within(group).getByRole('radio', { name: radio }))
+      expect(current().textContent).toContain(name)
+      // Never the AWS name for another cloud.
+      if (name !== 'Connect AWS') expect(current().textContent).not.toContain('AWS')
+    }
+  })
 })
 
 describe('validateAzureForm', () => {
@@ -138,7 +157,8 @@ describe('validateAzureForm', () => {
   })
 })
 
-describe('Connect Azure wizard', () => {
+// Whole journeys typed key by key: more than the 5 s default when the suite runs in parallel.
+describe('Connect Azure wizard', { timeout: 20_000 }, () => {
   beforeEach(() => {
     localStorage.clear()
     sessionStorage.clear()
@@ -193,7 +213,8 @@ describe('Connect Azure wizard', () => {
     expect(await screen.findByRole('heading', { name: 'Connected' })).toBeTruthy()
     for (const c of DEMO_AZURE_CHECKS) expect(screen.getByText(c.label)).toBeTruthy()
     expect(screen.getByText('Access checked. Connected.')).toBeTruthy()
-    expect(screen.getByText("Your first Azure costs appear after the export's first run (up to a day).")).toBeTruthy()
+    expect(screen.getByText('First Azure costs')).toBeTruthy()
+    expect(screen.getByText('within a day')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Go to my workspace' }))
     expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
   })

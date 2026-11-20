@@ -1,18 +1,43 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Download, ExternalLink } from 'lucide-react'
-import type { FormEvent } from 'react'
+import {
+  Building,
+  Check,
+  Clock,
+  Cloud,
+  Coins,
+  Copy,
+  Download,
+  ExternalLink,
+  FileText,
+  Layers,
+  Link2,
+  LogIn,
+  MousePointerClick,
+  Pencil,
+  Receipt,
+  Search,
+  Server,
+  ShieldCheck,
+  SquareCheck,
+  Trash,
+  Wallet,
+} from 'lucide-react'
+import type { FormEvent, ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 
-import type { Connection, IntentSetup } from '../api/types'
+import type { Connection, IntentSetup, Provider } from '../api/types'
 import { ACCESS_STACK_NAME, ApiError } from '../api/types'
 import { rememberTenant, useApi, useCurrentTenantId, useMe } from '../app/context'
+import type { NextStep } from '../components/onboarding'
+import { AccessPanel, Checks, CopyRow, Disclosure, Flow, Kicker, Lede, Next, Todo, TodoItem } from '../components/onboarding'
 import { PermissionPanel, SiteLinks } from '../components/permissions'
-import { Alert, Button, Card, Field, Logo, StatusPill, cx } from '../components/ui'
-import { connectionLabel, providerOf } from '../lib/providers'
+import { Alert, Button, Field, Logo, StatusPill, cx } from '../components/ui'
+import { PROVIDER_LABEL, connectionLabel, providerOf } from '../lib/providers'
 import { DEMO_URL, HOW_IT_WORKS_STACK, absoluteSiteUrl } from '../lib/site'
 import { GcpConnect } from './connect/GcpConnect'
 import { CONNECT_PROVIDERS, DEFAULT_CONNECT } from './connect/providers'
+import './onboarding.css'
 
 export const COUNTRIES: [string, string][] = [
   ['NG', 'Nigeria'],
@@ -35,14 +60,33 @@ const POLL_MS = 5000
 // After this long with no word from the stack, say so and offer the link again.
 const SLOW_MS = 10 * 60 * 1000
 
-function Progress({ step }: { step: number }) {
+/** The second step's name follows the cloud being connected: "Connect Azure". */
+export function connectStepLabel(provider: Provider): string {
+  return `Connect ${PROVIDER_LABEL[provider]}`
+}
+
+function StepName({ index, provider }: { index: number; provider: Provider }) {
+  if (index !== 1 || provider === 'aws') return <>{STEPS[index]}</>
+  // Below 360 px a long cloud name does not fit a third of the bar: "Connect cloud" there.
   return (
-    <ol className="mb-6 grid grid-cols-3 gap-2" aria-label="Setup progress">
+    <>
+      <span className="min-[360px]:hidden">Connect cloud</span>
+      <span className="hidden min-[360px]:inline">{connectStepLabel(provider)}</span>
+    </>
+  )
+}
+
+function Progress({ step, provider }: { step: number; provider: Provider }) {
+  return (
+    <ol className="ed-progress" aria-label="Setup progress">
       {STEPS.map((label, i) => (
-        <li key={label} aria-current={i === step ? 'step' : undefined}>
-          <div className={cx('h-1.5 rounded-full', i <= step ? 'bg-brand-yellow' : 'bg-surface-2')} />
-          <span className={cx('mt-1 block text-xs', i === step ? 'font-medium text-primary' : 'text-muted')}>
-            {i + 1}. {label}
+        <li key={label} className={cx(i < step && 'done')} aria-current={i === step ? 'step' : undefined}>
+          <span className="pn" aria-hidden="true">
+            {i < step ? <Check size={22} /> : i + 1}
+          </span>
+          <span>
+            <StepName index={i} provider={provider} />
+            {i < step && <span className="sr-only">, done</span>}
           </span>
         </li>
       ))}
@@ -71,9 +115,6 @@ export function CopyValue({ label, value }: { label: string; value: string }) {
   )
 }
 
-const LINK_STYLE =
-  'inline-flex h-9 items-center justify-center gap-2 rounded-sm bg-accent px-4 text-sm font-medium text-on-accent hover:bg-accent-hover'
-
 /** Creating the stack by hand: the alternative to the one-click link, and the only way when links are off. */
 function ByHand({
   templateUrl,
@@ -88,8 +129,8 @@ function ByHand({
   signIn: boolean
 }) {
   return (
-    <div className="flex flex-col gap-3">
-      <ol className="list-decimal space-y-1 pl-5 text-sm text-secondary">
+    <div className="flex min-w-0 flex-col gap-3">
+      <ol className="ed-steps">
         {signIn && (
           <li>
             In this browser, sign in to{' '}
@@ -98,7 +139,6 @@ function ByHand({
         )}
         <li>Download the template.</li>
         <li>
-          In AWS, open{' '}
           <a
             className="text-accent underline"
             href="https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks/create"
@@ -106,18 +146,21 @@ function ByHand({
             rel="noreferrer"
           >
             CloudFormation → Create stack
-          </a>
-          , choose <strong>Upload a template file</strong> and name the stack{' '}
-          <code className="font-mono text-xs">{ACCESS_STACK_NAME}</code>.
+          </a>{' '}
+          → <strong>Upload a template file</strong> → name it <code className="text-sm">{ACCESS_STACK_NAME}</code>
         </li>
-        <li>Copy the values below into the matching boxes, tick the acknowledgement and choose Submit.</li>
+        <li>Paste the values below, tick the acknowledgement, Submit.</li>
       </ol>
-      <a href={templateUrl} download="cloudoptics-access.yaml" target="_blank" rel="noreferrer" className={LINK_STYLE}>
-        Download template <Download size={16} />
-      </a>
-      {values.map((v) => (
-        <CopyValue key={v.label} label={v.label} value={v.value} />
-      ))}
+      <div>
+        <a href={templateUrl} download="cloudoptics-access.yaml" target="_blank" rel="noreferrer" className="ed-btn ghost">
+          Download template <Download size={18} aria-hidden="true" />
+        </a>
+      </div>
+      <div className="ed-kv">
+        {values.map((v) => (
+          <CopyRow key={v.label} label={v.label} value={v.value} />
+        ))}
+      </div>
     </div>
   )
 }
@@ -140,6 +183,25 @@ function handValues(s: {
   ]
 }
 
+/** What the person does in AWS: sign in, press one button, tick one box, come back. */
+function AwsSteps({ accountId, button }: { accountId?: string; button: ReactNode }) {
+  return (
+    <Todo label="What to do in AWS">
+      <TodoItem
+        n={1}
+        icon={LogIn}
+        title={accountId ? `Sign in to AWS account ${accountId}` : 'Sign in to your billing AWS account'}
+        hint="in this browser"
+      />
+      <TodoItem n={2} icon={MousePointerClick} title="Press the button" hint="AWS opens, filled in" go>
+        {button}
+      </TodoItem>
+      <TodoItem n={3} icon={SquareCheck} title="Tick “I acknowledge”, then Create stack" hint="at the bottom" />
+      <TodoItem n={4} icon={Clock} title="Come back here" time={`~${AWS_MINUTES} min`} />
+    </Todo>
+  )
+}
+
 /**
  * The one-click link is the way to connect. Deploying the template by hand is offered as an
  * alternative underneath (for teams that review templates first), and is the only way when
@@ -153,6 +215,7 @@ function ConnectOptions({
   opened,
   onOpened,
   colleagueMessage,
+  waiting,
 }: {
   quickCreateUrl: string | null
   templateUrl: string
@@ -162,33 +225,45 @@ function ConnectOptions({
   onOpened: () => void
   /** Offers "Copy link for a colleague" with this text (docs/14 §6.2). */
   colleagueMessage?: string
+  /** The "Waiting for AWS" line, shown under the steps once the link is used. */
+  waiting?: ReactNode
 }) {
   const byHand = (
     <>
       <ByHand templateUrl={templateUrl} values={values} accountId={accountId} signIn={!quickCreateUrl} />
       {!opened && (
-        <div className="flex justify-end">
-          <Button onClick={onOpened}>I have created the stack</Button>
+        <div className="ed-actions">
+          <button type="button" className="ed-btn" onClick={onOpened}>
+            I have created the stack
+          </button>
         </div>
       )}
     </>
   )
-  if (!quickCreateUrl) return byHand
+  if (!quickCreateUrl) {
+    return (
+      <div className="ed-sheet mt-7">
+        {byHand}
+        {waiting}
+      </div>
+    )
+  }
   return (
     <>
-      <div className="flex flex-wrap items-center gap-2">
-        <a href={quickCreateUrl} target="_blank" rel="noreferrer" className={LINK_STYLE} onClick={onOpened}>
-          Open AWS and connect <ExternalLink size={16} />
-        </a>
-        {colleagueMessage && <ForColleague message={colleagueMessage} onCopied={onOpened} />}
-      </div>
-      <details className="rounded-sm border border-border px-3 py-2">
-        <summary className="cursor-pointer text-sm font-medium">Prefer to deploy the template yourself?</summary>
-        <p className="mt-2 text-sm text-secondary">
-          For teams that review a template before running it. It creates the same read-only stack.
-        </p>
+      <AwsSteps
+        accountId={accountId}
+        button={
+          <a href={quickCreateUrl} target="_blank" rel="noreferrer" className="ed-btn wide" onClick={onOpened}>
+            Open AWS and connect <ExternalLink size={18} aria-hidden="true" />
+            <span className="sr-only">(opens in a new tab)</span>
+          </a>
+        }
+      />
+      {colleagueMessage && <ForColleague message={colleagueMessage} onCopied={onOpened} />}
+      {waiting}
+      <Disclosure summary="Prefer to deploy the template yourself?">
         <div className="mt-3 flex flex-col gap-4">{byHand}</div>
-      </details>
+      </Disclosure>
     </>
   )
 }
@@ -210,14 +285,16 @@ function ForColleague({ message, onCopied }: { message: string; onCopied: () => 
     navigator.clipboard.writeText(message).then(done, () => setState('failed'))
   }
   return (
-    <>
-      <Button variant="secondary" onClick={copy}>
-        {state === 'copied' ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
-        Copy link for a colleague
-      </Button>
-      <span role="status" className="text-xs text-secondary">
-        {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Copy the text below.' : ''}
-      </span>
+    <div className="mt-4 flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+        <button type="button" className="ed-linkbtn" onClick={copy}>
+          {state === 'copied' ? <Check size={18} aria-hidden="true" /> : <Link2 size={18} aria-hidden="true" />}
+          Copy link for a colleague
+        </button>
+        <span role="status" className="ed-copied">
+          {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Copy the text below.' : ''}
+        </span>
+      </div>
       {state === 'failed' && (
         <textarea
           readOnly
@@ -228,7 +305,7 @@ function ForColleague({ message, onCopied }: { message: string; onCopied: () => 
           onFocus={(e) => e.currentTarget.select()}
         />
       )}
-    </>
+    </div>
   )
 }
 
@@ -248,36 +325,31 @@ export function colleagueMessage(quickCreateUrl: string, expiresAt?: string | nu
   ].join('\n')
 }
 
-/** Permissions and the public pages, under the connect options on both AWS steps. */
-function AccessDetails() {
+/** What the AWS stack lets Cloudoptics read, at a glance, with every permission one click away. */
+function AwsAccess() {
   return (
-    <div className="mt-6 flex flex-col gap-3">
+    <AccessPanel
+      title="Read-only access"
+      reads={[
+        { icon: Receipt, label: 'Bills and costs' },
+        { icon: Wallet, label: 'Budgets, Savings Plans' },
+        { icon: Server, label: 'Resources and metrics' },
+      ]}
+      never={[
+        { icon: Pencil, label: 'Change anything' },
+        { icon: FileText, label: 'Files, databases, secrets' },
+      ]}
+    >
       <PermissionPanel />
       <SiteLinks />
-    </div>
+    </AccessPanel>
   )
 }
 
-/** What the person does in AWS: sign in, press one button, tick one box. */
-function AwsSteps({ accountId }: { accountId?: string }) {
-  return (
-    <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-secondary">
-      <li>
-        In this browser, sign in to{' '}
-        {accountId ? (
-          <>AWS account {accountId}</>
-        ) : (
-          <>your main AWS account, the one that receives the bill for all your accounts</>
-        )}
-        .
-      </li>
-      <li>Press the button below. AWS opens with everything filled in.</li>
-      <li>
-        At the bottom of that page, tick the box that starts “I acknowledge” and choose <strong>Create stack</strong>.
-      </li>
-      <li>Come back here. This page moves on by itself when AWS is done, in about {AWS_MINUTES} minutes.</li>
-    </ol>
-  )
+/** The flow diagram for AWS: your account, the read-only stack, Cloudoptics. */
+const AWS_FLOW = {
+  from: { icon: Cloud, label: 'AWS account' },
+  link: { icon: Layers, label: 'Read-only stack' },
 }
 
 function Waiting({ since, onRetry, error }: { since: number; onRetry: () => void; error: string | null }) {
@@ -291,24 +363,45 @@ function Waiting({ since, onRetry, error }: { since: number; onRetry: () => void
       <div className="mt-6 flex flex-col gap-3">
         <Alert tone="error">{error}</Alert>
         <div>
-          <Button variant="secondary" onClick={onRetry}>
+          <button type="button" className="ed-btn ghost" onClick={onRetry}>
             Start again with a new link
-          </Button>
+          </button>
         </div>
       </div>
     )
   }
   const slow = now - since > SLOW_MS
   return (
-    <div className="mt-6 flex flex-col gap-2" role="status">
-      <p className="text-sm font-medium">Waiting for AWS…</p>
-      <p className="text-sm text-secondary">
+    <div className="ed-wait" role="status">
+      <span className="dot" aria-hidden="true" />
+      <p className="font-semibold">Waiting for AWS…</p>
+      <p>
         {slow
           ? 'Nothing from AWS yet. In CloudFormation, check that the cloudoptics-access stack exists and is not showing an error, or open the link again.'
           : 'AWS is creating read-only access for CloudOptics. Keep this page open.'}
       </p>
     </div>
   )
+}
+
+/** What happens after a healthy check, per cloud. */
+function nextSteps(provider: string): NextStep[] {
+  const checked: NextStep = { icon: ShieldCheck, label: 'Access checked', done: true }
+  if (provider === 'gcp') {
+    return [checked, { icon: Receipt, label: 'First costs', when: 'in minutes' }]
+  }
+  if (provider === 'digitalocean') {
+    return [
+      checked,
+      { icon: Receipt, label: 'Invoices loaded', when: 'this month provisional', done: true },
+      { icon: Search, label: 'Recommendations', when: 'after the first scan' },
+    ]
+  }
+  return [
+    checked,
+    { icon: Search, label: 'Recommendations', when: 'in minutes' },
+    { icon: Receipt, label: 'First costs', when: 'within a day' },
+  ]
 }
 
 /** Shows the access check as it runs, then where to go next. */
@@ -343,12 +436,10 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
   }
 
   return (
-    <Card>
-      <h1 className="text-2xl font-semibold">
-        {running ? 'Checking access' : conn?.status === 'healthy' ? 'Connected' : 'Almost there'}
-      </h1>
+    <section className="max-w-[760px]">
+      <h1 className="ed-h1">{running ? 'Checking access' : conn?.status === 'healthy' ? 'Connected' : 'Almost there'}</h1>
       {conn && (
-        <p className="mt-1 text-sm text-secondary">
+        <p className="ed-sub">
           {providerOf(conn.provider) !== 'aws' ? (
             connectionLabel(conn)
           ) : (
@@ -360,7 +451,12 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
           .
         </p>
       )}
-      {running && <p className="mt-2 text-sm text-secondary">Testing each permission…</p>}
+      {running && (
+        <div className="ed-wait" role="status">
+          <span className="dot" aria-hidden="true" />
+          <p>Testing each permission…</p>
+        </div>
+      )}
       {error && (
         <div className="mt-4">
           <Alert tone="error">{error}</Alert>
@@ -368,41 +464,24 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
       )}
       {conn && !running && (
         <>
-          <div className="mt-2 flex items-center gap-2 text-sm">
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
             Connection status: <StatusPill status={conn.status} />
           </div>
-          <ul className="mt-4 divide-y divide-border">
-            {conn.permissionChecks.map((c) => (
-              <li key={c.id} className="flex items-start justify-between gap-4 py-3">
-                <div>
-                  <p className="text-sm font-medium">{c.label}</p>
-                  <p className="text-sm text-secondary">{c.message}</p>
-                  {c.hint && <p className="text-xs text-muted">{c.hint}</p>}
-                </div>
-                <StatusPill status={c.status} />
-              </li>
-            ))}
-          </ul>
-          {conn.status === 'healthy' && (
-            <p className="mt-4 text-sm text-secondary">
-              {conn.provider === 'gcp'
-                ? 'Your first costs appear in a few minutes, once Cloudoptics has read the export.'
-                : conn.provider === 'digitalocean'
-                  ? "Your invoices are loaded and this month's spend shows as provisional. Recommendations follow the first resource scan."
-                  : 'Your first costs appear within a day, when AWS delivers the first bill. Recommendations follow the first resource scan, a few minutes from now.'}
-            </p>
-          )}
-          <div className="mt-6 flex justify-end gap-2">
+          {conn.status === 'healthy' && <Next steps={nextSteps(providerOf(conn.provider))} />}
+          <Checks checks={conn.permissionChecks} />
+          <div className="ed-actions end">
             {conn.status !== 'healthy' && (
-              <Button variant="secondary" onClick={() => void again()} disabled={checking}>
+              <button type="button" className="ed-btn ghost" onClick={() => void again()} disabled={checking}>
                 Check again
-              </Button>
+              </button>
             )}
-            <Button onClick={() => void navigate({ to: '/overview' })}>Go to my workspace</Button>
+            <button type="button" className="ed-btn" onClick={() => void navigate({ to: '/overview' })}>
+              Go to my workspace
+            </button>
           </div>
         </>
       )}
-    </Card>
+    </section>
   )
 }
 
@@ -442,21 +521,21 @@ export function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConn
   }, [connectedId, onConnected])
 
   return (
-    <Card>
-      <h1 className="text-2xl font-semibold">Connect your AWS account</h1>
-      <p className="mt-1 text-sm text-secondary">
-        One click in AWS gives CloudOptics read-only access to your bill and your resources. It can never change
-        anything in your account.
-      </p>
-      {setup?.quickCreateUrl && <AwsSteps />}
-      {error && (
-        <div className="mt-4">
-          <Alert tone="error">{error}</Alert>
-        </div>
-      )}
-      {!setup && !error && <p className="mt-6 text-sm text-secondary">Preparing your link…</p>}
-      {setup && (
-        <div className="mt-6 flex flex-col gap-4">
+    <div className="ed-grid">
+      <section className="min-w-0">
+        <h1 className="ed-h1">Connect your AWS account</h1>
+        <Flow label="How Cloudoptics connects to AWS" {...AWS_FLOW} />
+        {error && (
+          <div className="mt-4">
+            <Alert tone="error">{error}</Alert>
+          </div>
+        )}
+        {!setup && !error && (
+          <p className="ed-sub mt-6" role="status">
+            Preparing your link…
+          </p>
+        )}
+        {setup && (
           <ConnectOptions
             quickCreateUrl={setup.quickCreateUrl}
             templateUrl={setup.templateDownloadUrl}
@@ -466,12 +545,14 @@ export function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConn
             colleagueMessage={
               setup.quickCreateUrl ? colleagueMessage(setup.quickCreateUrl, setup.intent.expiresAt) : undefined
             }
+            waiting={
+              openedAt !== null && <Waiting since={openedAt} onRetry={start} error={intent.data?.error ?? null} />
+            }
           />
-          {openedAt !== null && <Waiting since={openedAt} onRetry={start} error={intent.data?.error ?? null} />}
-        </div>
-      )}
-      <AccessDetails />
-    </Card>
+        )}
+      </section>
+      <AwsAccess />
+    </div>
   )
 }
 
@@ -509,43 +590,47 @@ function ConnectExisting({
 
   if (!setup.data) {
     return (
-      <Card>
+      <div className="ed-sheet">
         {setup.error ? (
           <Alert tone="error">
             {setup.error instanceof ApiError ? setup.error.message : 'Could not load this connection.'}
           </Alert>
         ) : (
-          <p className="text-sm text-secondary">Loading…</p>
+          <p className="ed-sub" role="status">
+            Loading…
+          </p>
         )}
-      </Card>
+      </div>
     )
   }
   const s = setup.data
   const onSingleStack = s.connection.stackName === ACCESS_STACK_NAME
   return (
-    <Card>
-      <h1 className="text-2xl font-semibold">
-        {onSingleStack ? 'Set up AWS access again' : 'Move to the single CloudOptics stack'}
-      </h1>
-      <p className="mt-1 text-sm text-secondary">
+    <div className="ed-grid">
+      <section className="min-w-0">
+        <Kicker>AWS account {s.connection.awsAccountId}</Kicker>
+        <h1 className="ed-h1">{onSingleStack ? 'Set up AWS access again' : 'Move to the single CloudOptics stack'}</h1>
         {onSingleStack ? (
-          <>
-            First open your <code className="font-mono text-xs">{ACCESS_STACK_NAME}</code> stack in AWS and choose{' '}
-            <strong>Delete</strong>. When it is gone, follow the steps below. Your costs and history stay.
-          </>
+          <div className="ed-sheet mt-6">
+            <p className="flex items-start gap-3">
+              <Trash size={20} aria-hidden="true" className="mt-0.5 shrink-0" />
+              <span>
+                First open your <code className="text-sm">{ACCESS_STACK_NAME}</code> stack in AWS and choose{' '}
+                <strong>Delete</strong>. When it is gone, follow the steps below. Your costs and history stay.
+              </span>
+            </p>
+            <div className="mt-2 pl-8">
+              <a className="text-accent underline" href={s.stackConsoleUrl} target="_blank" rel="noreferrer">
+                Open the stack in AWS
+              </a>
+            </div>
+          </div>
         ) : (
-          'One stack now covers your bill, recommendations and every member account, and future updates. Your costs and history stay. CloudOptics removes the old stacks for you.'
+          <Lede icon={Layers}>One stack for bills, recommendations and every member account. History stays.</Lede>
         )}
-      </p>
-      {onSingleStack && (
-        <div className="mt-3">
-          <a className="text-sm text-accent underline" href={s.stackConsoleUrl} target="_blank" rel="noreferrer">
-            Open the stack in AWS
-          </a>
-        </div>
-      )}
-      {s.accessQuickCreateUrl && <AwsSteps accountId={s.connection.awsAccountId} />}
-      <div className="mt-6 flex flex-col gap-4">
+        {!onSingleStack && (
+          <p className="ed-sub">CloudOptics removes the old stacks for you, and future updates come through the new one.</p>
+        )}
         <ConnectOptions
           quickCreateUrl={s.accessQuickCreateUrl}
           templateUrl={s.accessTemplateDownloadUrl}
@@ -560,48 +645,47 @@ function ConnectExisting({
           accountId={s.connection.awsAccountId}
           opened={openedAt !== null}
           onOpened={() => setOpenedAt((t) => t ?? Date.now())}
+          waiting={openedAt !== null && <Waiting since={openedAt} onRetry={() => setOpenedAt(Date.now())} error={null} />}
         />
-        {openedAt !== null && <Waiting since={openedAt} onRetry={() => setOpenedAt(Date.now())} error={null} />}
-      </div>
-      <AccessDetails />
-      <div className="mt-6">
-        <Link to="/settings/connections" className="text-sm text-secondary underline">
-          Back to Connections
-        </Link>
-      </div>
-    </Card>
+        <div className="mt-6">
+          <Link to="/settings/connections" className="inline-flex min-h-11 items-center text-secondary underline">
+            Back to Connections
+          </Link>
+        </div>
+      </section>
+      <AwsAccess />
+    </div>
   )
 }
 
 /** A new connection: "Which cloud?", then that provider's connect step (AWS by default). */
-function ConnectStep({ tenantId, onConnected }: { tenantId: string; onConnected: (connectionId: string) => void }) {
-  const [providerId, setProviderId] = useState<string>('aws')
+function ConnectStep({
+  tenantId,
+  onConnected,
+  providerId,
+  onProvider,
+}: {
+  tenantId: string
+  onConnected: (connectionId: string) => void
+  providerId: Provider
+  onProvider: (provider: Provider) => void
+}) {
   const Selected = (CONNECT_PROVIDERS.find((p) => p.id === providerId) ?? DEFAULT_CONNECT).Component
   return (
     <>
-      <fieldset className="mb-4">
-        <legend className="mb-2 text-sm font-medium">Which cloud?</legend>
-        <div className="grid gap-2 sm:grid-cols-2">
+      <fieldset className="ed-picker">
+        <legend className="ed-kicker">Which cloud?</legend>
+        <div className="tiles">
           {CONNECT_PROVIDERS.map((p) => (
-            <label
-              key={p.id}
-              className={cx(
-                'flex cursor-pointer items-start gap-2 rounded-sm border p-3 text-sm',
-                p.id === providerId ? 'border-accent bg-accent-soft' : 'border-border bg-surface-1',
-              )}
-            >
+            <label key={p.id} className="ed-tile">
               <input
                 type="radio"
                 name="connect-provider"
-                className="mt-0.5"
                 value={p.id}
                 checked={p.id === providerId}
-                onChange={() => setProviderId(p.id)}
+                onChange={() => onProvider(p.id)}
               />
-              <span>
-                <span className="block font-medium">{p.label}</span>
-                <span className="block text-xs text-secondary">{p.description}</span>
-              </span>
+              <b className="min-w-0">{p.label}</b>
             </label>
           ))}
         </div>
@@ -629,12 +713,58 @@ function ConnectAgain({
   }
   if (list.isPending) {
     return (
-      <Card>
-        <p className="text-sm text-secondary">Loading…</p>
-      </Card>
+      <p className="ed-sub" role="status">
+        Loading…
+      </p>
     )
   }
   return <ConnectExisting tenantId={tenantId} connectionId={connectionId} onConnected={onConnected} />
+}
+
+// What a workspace's country sets, as the API does (apps/api identity/routes.py COUNTRY_DEFAULTS):
+// shown beside the form, so the sentence that explained it is not needed.
+const COUNTRY_DEFAULTS: Record<string, [currency: string, timeZone: string]> = {
+  NG: ['NGN', 'Africa/Lagos'],
+  KE: ['KES', 'Africa/Nairobi'],
+  GH: ['GHS', 'Africa/Accra'],
+  ZA: ['ZAR', 'Africa/Johannesburg'],
+  EG: ['EGP', 'Africa/Cairo'],
+  RW: ['RWF', 'Africa/Kigali'],
+  UG: ['UGX', 'Africa/Kampala'],
+  TZ: ['TZS', 'Africa/Dar_es_Salaam'],
+  GB: ['GBP', 'Europe/London'],
+}
+
+/** A small statement slip: the workspace's name, the currencies its costs show in, its time zone. */
+function WorkspaceSlip({ name, country }: { name: string; country: string }) {
+  const local = COUNTRY_DEFAULTS[country]
+  return (
+    <div className="ed-slip" aria-label="Currency and time zone" role="group">
+      {name.trim() && (
+        <p className="mb-3 truncate font-semibold" aria-hidden="true">
+          {name.trim()}
+        </p>
+      )}
+      <dl>
+        <dt>
+          <Coins size={18} aria-hidden="true" />
+          <span className="sr-only">Costs in</span>
+        </dt>
+        <dd>
+          USD{local && <> · <mark>{local[0]}</mark></>}
+        </dd>
+        {local && (
+          <>
+            <dt>
+              <Clock size={18} aria-hidden="true" />
+              <span className="sr-only">Time zone</span>
+            </dt>
+            <dd>{local[1]}</dd>
+          </>
+        )}
+      </dl>
+    </div>
+  )
 }
 
 /** ``connectionId`` opens the AWS step for an existing connection (move or set up again). */
@@ -655,6 +785,17 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
   // Already in a workspace: this is "New workspace" from the menu (the route guard sees to it).
   // Fixed on arrival, so creating the first workspace does not flip the heading.
   const [another] = useState(() => !!me?.memberships.length)
+  // The cloud being connected: picked on the connect step, or the existing connection's.
+  const [picked, setPicked] = useState<Provider>('aws')
+  const existing = useQuery({
+    queryKey: ['connections', tid],
+    queryFn: () => api.listConnections(tid as string),
+    enabled: Boolean(connectionId && tid),
+  })
+  const provider = connectionId
+    ? providerOf(existing.data?.find((c) => c.id === connectionId)?.provider)
+    : picked
+  const workspaceName = step > 0 ? me?.memberships.find((m) => m.tenantId === tid)?.tenantName : undefined
 
   const createWorkspace = (e: FormEvent) => {
     e.preventDefault()
@@ -687,71 +828,80 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
-      <div className="mb-6 flex items-center gap-2 text-lg font-semibold">
-        <Logo /> Cloudoptics
-      </div>
-      <Progress step={step} />
+    <div className="ed">
+      <header className="ed-top">
+        <div>
+          <span className="ed-brand">
+            <Logo size={30} /> Cloudoptics
+          </span>
+          {workspaceName && <span className="ed-who">{workspaceName}</span>}
+        </div>
+      </header>
+      <main className={cx('ed-main', step === 0 && 'narrow')}>
+        <Progress step={step} provider={provider} />
 
-      {step === 0 && (
-        <Card>
-          <h1 className="text-2xl font-semibold">{another ? 'Create another workspace' : 'Create your workspace'}</h1>
-          <p className="mt-1 text-sm text-secondary">
-            {another && 'One workspace per company, with its own members and AWS accounts. '}
-            Your country sets the local currency and time zone.
-          </p>
-          <form className="mt-6 flex flex-col gap-4" onSubmit={createWorkspace}>
-            <Field
-              label="Company or team name"
-              required
-              maxLength={120}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              error={fieldErrors.name}
-            />
-            <div className="flex flex-col gap-1">
-              <label htmlFor="country" className="text-sm font-medium">
-                Country
-              </label>
-              <select
-                id="country"
-                className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 text-sm"
-                value={country}
-                onChange={(e) => setCountry(e.target.value)}
-              >
-                {COUNTRIES.map(([code, label]) => (
-                  <option key={code} value={code}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+        {step === 0 && (
+          <section>
+            <h1 className="ed-h1">{another ? 'Create another workspace' : 'Create your workspace'}</h1>
+            {another && <Lede icon={Building}>One workspace per company, with its own members and clouds.</Lede>}
+            <div className="ed-ws">
+              <form className="ed-sheet ed-form" onSubmit={createWorkspace}>
+                <Field
+                  label="Company or team name"
+                  required
+                  maxLength={120}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  error={fieldErrors.name}
+                />
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="country" className="text-sm font-medium">
+                    Country
+                  </label>
+                  <select
+                    id="country"
+                    className="h-9 rounded-sm border border-border-strong bg-surface-1 px-3 text-sm"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                  >
+                    {COUNTRIES.map(([code, label]) => (
+                      <option key={code} value={code}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {error && <Alert tone="error">{error}</Alert>}
+                <button type="submit" className="ed-btn wide" disabled={busy}>
+                  {busy ? 'Creating…' : 'Create workspace'}
+                </button>
+                {another && (
+                  <Link to="/overview" className="inline-flex min-h-11 items-center self-start text-accent underline">
+                    Back to {me?.memberships.find((m) => m.tenantId === currentTenant)?.tenantName ?? 'your workspace'}
+                  </Link>
+                )}
+              </form>
+              <WorkspaceSlip name={name} country={country} />
             </div>
-            {error && <Alert tone="error">{error}</Alert>}
-            <Button type="submit" disabled={busy}>
-              {busy ? 'Creating…' : 'Create workspace'}
-            </Button>
-            {another && (
-              <Link to="/overview" className="self-start text-sm text-accent underline">
-                Back to {me?.memberships.find((m) => m.tenantId === currentTenant)?.tenantName ?? 'your workspace'}
-              </Link>
+            {api.mode !== 'demo' && (
+              <p className="mt-8 flex flex-wrap items-center gap-x-2 text-secondary">
+                Not ready?
+                <a className="inline-flex min-h-11 items-center text-accent underline" href={DEMO_URL}>
+                  Explore the sample workspace
+                </a>
+              </p>
             )}
-          </form>
-          {api.mode !== 'demo' && (
-            <p className="mt-4 text-sm text-secondary">
-              Not ready?{' '}
-              <a className="text-accent underline" href={DEMO_URL}>
-                Explore the sample workspace
-              </a>
-            </p>
-          )}
-        </Card>
-      )}
+          </section>
+        )}
 
-      {step === 1 && tid && !connectionId && <ConnectStep tenantId={tid} onConnected={connected} />}
-      {step === 1 && tid && connectionId && (
-        <ConnectAgain tenantId={tid} connectionId={connectionId} onConnected={() => connected(connectionId)} />
-      )}
-      {step === 2 && tid && checking && <CheckAccess tenantId={tid} connectionId={checking} />}
-    </main>
+        {step === 1 && tid && !connectionId && (
+          <ConnectStep tenantId={tid} onConnected={connected} providerId={picked} onProvider={setPicked} />
+        )}
+        {step === 1 && tid && connectionId && (
+          <ConnectAgain tenantId={tid} connectionId={connectionId} onConnected={() => connected(connectionId)} />
+        )}
+        {step === 2 && tid && checking && <CheckAccess tenantId={tid} connectionId={checking} />}
+      </main>
+    </div>
   )
 }

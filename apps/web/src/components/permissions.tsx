@@ -1,4 +1,4 @@
-import { Ban, ExternalLink, Receipt, Server, ShieldCheck, Wrench } from 'lucide-react'
+import { Ban, ChevronDown, ExternalLink, Receipt, Server, ShieldCheck, Wrench } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 import permissions from '../data/permissions.json'
@@ -35,10 +35,10 @@ function RoleSection({ role, note }: { role: Role; note: string }) {
   const Icon = ICONS[role.logicalId] ?? ShieldCheck
   return (
     <section>
-      <h2 className="flex items-center gap-2 text-sm font-semibold">
+      <h3 className="flex flex-wrap items-center gap-2 text-sm font-semibold">
         <Icon size={16} aria-hidden="true" /> {role.title}
         <span className="font-normal text-muted">· {note}</span>
-      </h2>
+      </h3>
       <ul className="mt-2 flex flex-col gap-3">
         {role.groups.map((g) => (
           <li key={g.usedFor}>
@@ -59,9 +59,9 @@ function RoleSection({ role, note }: { role: Role; note: string }) {
 
 /** Links to the public pages, opened in a new tab so the wizard stays put (docs/14 §6.3). */
 export function SiteLinks() {
-  const link = 'inline-flex min-h-6 items-center gap-1 text-sm text-accent underline'
+  const link = 'text-accent underline'
   return (
-    <p className="flex flex-wrap gap-x-4 gap-y-1">
+    <p className="foot">
       <a className={link} href={siteUrl(HOW_IT_WORKS_STACK)} target="_blank" rel="noreferrer">
         What will this create? <ExternalLink size={14} aria-hidden="true" />
         <span className="sr-only">(opens in a new tab)</span>
@@ -77,19 +77,22 @@ export function SiteLinks() {
 /** Collapsed by default: one line until opened, then every action grouped by what it is for. */
 export function PermissionPanel() {
   return (
-    <details className="rounded-sm border border-border px-3 py-2">
-      <summary className="cursor-pointer text-sm font-medium">
-        <ShieldCheck size={16} aria-hidden="true" className="mr-1 inline align-text-bottom" />
-        What Cloudoptics can read
+    <details className="ed-details">
+      <summary>
+        <span className="flex items-center gap-2">
+          <ShieldCheck size={18} aria-hidden="true" className="shrink-0" />
+          <span>What Cloudoptics can read</span>
+        </span>
+        <ChevronDown size={20} className="chev" aria-hidden="true" />
       </summary>
-      <div className="mt-3 flex flex-col gap-5">
+      <div className="inner mt-1 flex flex-col gap-5 pt-4">
         {readRoles.map((r) => (
           <RoleSection key={r.logicalId} role={r} note="read-only" />
         ))}
         <section>
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
             <Ban size={16} aria-hidden="true" /> Never
-          </h2>
+          </h3>
           <ul className="mt-2 flex flex-col gap-1 text-sm text-secondary">
             {permissions.cannot.map((c) => (
               <li key={c}>{noStop(c)}</li>

@@ -1,12 +1,13 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Check, ExternalLink, KeyRound, ListChecks, ShieldCheck } from 'lucide-react'
-import type { FormEvent, ReactNode } from 'react'
+import { Check, Cloud, KeyRound, ListChecks, LogIn } from 'lucide-react'
+import type { FormEvent } from 'react'
 import { useState } from 'react'
 
 import type { Connection } from '../../api/types'
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
-import { Alert, Button, Card, Field } from '../../components/ui'
+import { Chips, Flow, Todo, TodoItem } from '../../components/onboarding'
+import { Alert, Button, Field } from '../../components/ui'
 
 /** DigitalOcean's page for a new personal access token. */
 /** Account → API in DigitalOcean's control panel: the Tokens tab, with Generate New Token. */
@@ -31,50 +32,35 @@ function message(err: unknown): string {
   return err instanceof ApiError ? err.message : 'Something went wrong. Try again.'
 }
 
-function Step({ icon, children }: { icon: ReactNode; children: ReactNode }) {
-  return (
-    <li className="flex gap-3">
-      <span className="mt-0.5 shrink-0 text-accent" aria-hidden="true">
-        {icon}
-      </span>
-      <div className="min-w-0 text-sm text-secondary">{children}</div>
-    </li>
-  )
-}
-
-function Scopes({ names }: { names: string[] }) {
-  return (
-    <ul className="mt-1 flex flex-wrap gap-1">
-      {names.map((s) => (
-        <li key={s}>
-          <code className="rounded-sm bg-surface-2 px-1.5 py-0.5 font-mono text-xs">{s}</code>
-        </li>
-      ))}
-    </ul>
-  )
+const FLOW = {
+  from: { icon: Cloud, label: 'Billing team' },
+  link: { icon: KeyRound, label: 'Read-only token' },
 }
 
 /** The three customer steps: make a token, tick the read scopes, paste it. */
 export function TokenSteps() {
   return (
-    <ol className="mt-4 flex flex-col gap-3">
-      <Step icon={<ExternalLink size={16} />}>
-        In DigitalOcean, switch to the team that gets the bill, open{' '}
-        <a className="text-accent underline" href={DO_TOKEN_PAGE} target="_blank" rel="noreferrer">
-          Account → API
-        </a>{' '}
-        and choose <strong>Generate New Token</strong>.
-      </Step>
-      <Step icon={<ListChecks size={16} />}>
-        Choose <strong>Custom Scopes</strong> and tick only these:
-        <Scopes names={DO_REQUIRED_SCOPES} />
-        <span className="mt-2 block">For recommendations, also:</span>
-        <Scopes names={DO_RESOURCE_SCOPES} />
-      </Step>
-      <Step icon={<KeyRound size={16} />}>
-        Pick an expiry, choose <strong>Generate Token</strong>, copy the token (it is shown once) and paste it below.
-      </Step>
-    </ol>
+    <Todo label="What to do in DigitalOcean">
+      <TodoItem
+        n={1}
+        icon={LogIn}
+        title="Generate New Token"
+        hint={
+          <>
+            Billing team,{' '}
+            <a className="text-accent underline" href={DO_TOKEN_PAGE} target="_blank" rel="noreferrer">
+              Account → API
+            </a>
+          </>
+        }
+      />
+      <TodoItem n={2} icon={ListChecks} title="Custom Scopes: tick only these">
+        <Chips items={DO_REQUIRED_SCOPES} label="Scopes for costs" code />
+        <span className="text-sm text-secondary">For recommendations, also:</span>
+        <Chips items={DO_RESOURCE_SCOPES} label="Scopes for recommendations" code />
+      </TodoItem>
+      <TodoItem n={3} icon={KeyRound} title="Generate, copy, paste below" />
+    </Todo>
   )
 }
 
@@ -83,11 +69,13 @@ function TokenField({
   value,
   onChange,
   error,
+  hint = 'Shown once by DigitalOcean. Cloudoptics stores it encrypted and never shows it again.',
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   error?: string
+  hint?: string
 }) {
   return (
     <Field
@@ -99,7 +87,7 @@ function TokenField({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       error={error}
-      hint="Shown once by DigitalOcean. Cloudoptics stores it encrypted and never shows it again."
+      hint={hint}
     />
   )
 }
@@ -136,26 +124,26 @@ export function DigitalOceanConnect({
     connect.mutate(token.trim())
   }
   return (
-    <Card>
-      <h1 className="text-2xl font-semibold">Connect DigitalOcean</h1>
-      <p className="mt-1 flex items-start gap-2 text-sm text-secondary">
-        <ShieldCheck size={16} className="mt-0.5 shrink-0" aria-hidden="true" />A read-only token lets Cloudoptics read
-        your bill and resources. It cannot change anything.
-      </p>
-      <TokenSteps />
-      <form className="mt-6 flex flex-col gap-4" onSubmit={submit}>
-        <TokenField
-          label="DigitalOcean token"
-          value={token}
-          onChange={setToken}
-          error={touched ? formatError(token) : undefined}
-        />
-        {connect.error && <Alert tone="error">{message(connect.error)}</Alert>}
-        <Button type="submit" disabled={connect.isPending || !token.trim()}>
-          {connect.isPending ? 'Checking the token…' : 'Connect'}
-        </Button>
-      </form>
-    </Card>
+    <div className="max-w-[760px]">
+      <section className="min-w-0">
+        <h1 className="ed-h1">Connect DigitalOcean</h1>
+        <Flow label="How Cloudoptics connects to DigitalOcean" {...FLOW} />
+        <TokenSteps />
+        <form className="ed-sheet ed-form mt-7" onSubmit={submit}>
+          <TokenField
+            label="DigitalOcean token"
+            value={token}
+            onChange={setToken}
+            error={touched ? formatError(token) : undefined}
+            hint="Stored encrypted, never shown again"
+          />
+          {connect.error && <Alert tone="error">{message(connect.error)}</Alert>}
+          <button type="submit" className="ed-btn wide" disabled={connect.isPending || !token.trim()}>
+            {connect.isPending ? 'Checking the token…' : 'Connect'}
+          </button>
+        </form>
+      </section>
+    </div>
   )
 }
 
