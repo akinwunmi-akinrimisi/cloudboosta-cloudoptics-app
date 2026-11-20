@@ -164,6 +164,57 @@ export interface IntentSetup {
   stackRegion: string
 }
 
+/** Azure: what a connection reads, a list of subscriptions or a whole billing account. */
+export type AzureScopeType = 'subscription' | 'billing_account'
+
+export interface AzureConnection {
+  id: string
+  provider: 'azure'
+  status: ConnectionStatus
+  /** The Microsoft Entra directory (tenant) ID. */
+  directoryId: string
+  scopeType: AzureScopeType
+  /** ARM scope, e.g. "/subscriptions/<id>" or "/providers/Microsoft.Billing/billingAccounts/<id>". */
+  scope: string
+  subscriptionIds: string[]
+  billingAccountId: string | null
+  storageAccount: string
+  container: string
+  exportPath: string
+  permissionChecks: PermissionCheck[]
+  lastError: Record<string, unknown> | null
+  lastValidatedAt: string | null
+  createdAt: string
+}
+
+export interface AzureConnectionCreate {
+  directoryId: string
+  scopeType: AzureScopeType
+  /** Exactly one when scopeType is 'subscription'; optional subscriptions to scan for a billing account. */
+  subscriptionIds: string[]
+  billingAccountId: string | null
+  storageAccount: string
+  container: string
+  /** Folder inside the container; '' for the top, no leading slash. */
+  exportPath: string
+}
+
+/** What the person does in Azure: consent, role assignments and the FOCUS cost export. */
+export interface AzureConnectionSetup {
+  connection: AzureConnection
+  /** Cloudoptics' multi-tenant app (client) ID. */
+  clientId: string
+  consentUrl: string
+  /** The storage account tag that proves the account is the customer's, and its value. */
+  ownershipTag: string
+  ownershipCode: string
+  /** Multi-line az CLI script that assigns the read-only roles and sets the tag. */
+  roleAssignmentCommand: string
+  portalRoleSteps: string[]
+  exportPortalUrl: string
+  exportSteps: string[]
+}
+
 export interface ConnectionCreate {
   awsAccountId: string
   accountType: 'management' | 'standalone'
@@ -1206,6 +1257,12 @@ export interface Api {
   connectDigitalOcean(tenantId: string, token: string): Promise<Connection>
   /** Admins only. The new token must read the same DigitalOcean team. */
   replaceDigitalOceanToken(tenantId: string, connectionId: string, token: string): Promise<Connection>
+  /** Azure: creates the connection and returns the steps to run in Azure (409 if already connected). */
+  createAzureConnection(tenantId: string, body: AzureConnectionCreate): Promise<AzureConnectionSetup>
+  /** Azure, admins only. */
+  getAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup>
+  /** Azure: checks access now (a few seconds); 409 if disconnected. */
+  validateAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnection>
   /** Admins only, once disconnected: `confirm` is the connection's AWS account ID. */
   deleteConnectionData(tenantId: string, connectionId: string, confirm: string): Promise<DataDeletion>
   /** Admins only: every deletion request, newest first, with its verification. */

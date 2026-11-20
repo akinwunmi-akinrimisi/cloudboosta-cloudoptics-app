@@ -139,6 +139,12 @@ RULE_IDS = [
     "DO3_old_snapshot",
     "DO4_idle_droplet",
     "DO5_idle_load_balancer",
+    # Azure (providers/azure/rules.py, ADR-020)
+    "AZ1_unattached_disk",
+    "AZ2_idle_public_ip",
+    "AZ3_stopped_vm",
+    "AZ4_old_snapshot",
+    "AZ5_underused_vm",
 ]
 
 

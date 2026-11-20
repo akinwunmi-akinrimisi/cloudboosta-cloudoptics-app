@@ -2,6 +2,9 @@ import type { CurrencyMode } from '../lib/currency'
 import { read, write } from '../lib/storage'
 import type {
   AccountList,
+  AzureConnection,
+  AzureConnectionCreate,
+  AzureConnectionSetup,
   AlertSettings,
   AlertSettingsView,
   Anomaly,
@@ -75,6 +78,7 @@ import type {
 import { ApiError } from './types'
 import { demoAdvisory, demoCommitments, demoR8 } from './demoCommitments'
 import { demoCsv } from './demoExports'
+import { DEMO_AZURE_CHECKS, demoAzureConnection, demoAzureSetup } from './demoAzure'
 
 // In-browser stand-in for the API, used by the public GitHub Pages build. Nothing leaves
 // the browser and no AWS call is made; state lives in this viewer's localStorage only.
@@ -885,6 +889,9 @@ export class DemoApi implements Api {
   /** This session's exports (not kept across reloads): the file, and when a "large" one is ready. */
   private readonly exports = new Map<string, { tenantId: string; job: ExportJob; csv: string; startedAt: number; readyAt: number }>()
 
+  /** This session's Azure connections (not kept across reloads). */
+  private readonly azure = new Map<string, { tenantId: string; conn: AzureConnection }>()
+
   constructor(latencyMs = 250) {
     this.latencyMs = latencyMs
     this.scanMs = latencyMs * 32
@@ -1383,6 +1390,47 @@ export class DemoApi implements Api {
     }
     conn.lastValidatedAt = new Date().toISOString()
     this.save()
+    return structuredClone(conn)
+  }
+
+  async createAzureConnection(tenantId: string, body: AzureConnectionCreate): Promise<AzureConnectionSetup> {
+    await this.tick()
+    this.tenant(tenantId)
+    const taken = [...this.azure.values()].some(
+      ({ tenantId: t, conn }) =>
+        t === tenantId &&
+        conn.status !== 'disconnected' &&
+        (body.scopeType === 'billing_account'
+          ? conn.billingAccountId === body.billingAccountId
+          : conn.subscriptionIds.some((id) => body.subscriptionIds.includes(id))),
+    )
+    if (taken) throw new ApiError(409, 'This Azure subscription or billing account is already connected to this workspace.')
+    const conn = demoAzureConnection(randomId(), body)
+    this.azure.set(conn.id, { tenantId, conn })
+    return demoAzureSetup(conn)
+  }
+
+  private azureConnection(tenantId: string, connectionId: string): AzureConnection {
+    const found = this.azure.get(connectionId)
+    if (!found || found.tenantId !== tenantId) throw new ApiError(404, 'Connection not found')
+    return found.conn
+  }
+
+  async getAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup> {
+    await this.tick()
+    return demoAzureSetup(this.azureConnection(tenantId, connectionId))
+  }
+
+  async validateAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnection> {
+    await delay(this.latencyMs * 4)
+    const conn = this.azureConnection(tenantId, connectionId)
+    if (conn.status === 'disconnected') throw new ApiError(409, 'This connection is disconnected.')
+    Object.assign(conn, {
+      status: 'healthy',
+      permissionChecks: structuredClone(DEMO_AZURE_CHECKS),
+      lastError: null,
+      lastValidatedAt: new Date().toISOString(),
+    })
     return structuredClone(conn)
   }
 

@@ -23,6 +23,9 @@ import type {
   AuditPage,
   AuthConfig,
   AuthProvider,
+  AzureConnection,
+  AzureConnectionCreate,
+  AzureConnectionSetup,
   SignInOptions,
   Connection,
   ConnectionCreate,
@@ -280,6 +283,18 @@ export class HttpApi implements Api {
 
   getIntent(tenantId: string, intentId: string): Promise<ConnectionIntent> {
     return this.request('GET', `/v1/tenants/${tenantId}/connections/intents/${intentId}`)
+  }
+
+  createAzureConnection(tenantId: string, body: AzureConnectionCreate): Promise<AzureConnectionSetup> {
+    return this.request('POST', `/v1/tenants/${tenantId}/providers/azure/connections`, body)
+  }
+
+  getAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnectionSetup> {
+    return this.request('GET', `/v1/tenants/${tenantId}/providers/azure/connections/${connectionId}`)
+  }
+
+  validateAzureConnection(tenantId: string, connectionId: string): Promise<AzureConnection> {
+    return this.request('POST', `/v1/tenants/${tenantId}/providers/azure/connections/${connectionId}/validate`)
   }
 
   getSetup(tenantId: string, connectionId: string): Promise<ConnectionSetup> {

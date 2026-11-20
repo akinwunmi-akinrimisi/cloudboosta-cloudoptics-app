@@ -19,6 +19,9 @@ What it does, in order:
    (a fresh billing account for the test's export) and ``POST /__e2e/gcp/label`` (the
    ``bq update --set_label`` command). The DigitalOcean API is the fake in
    ``apps/api/tests/fake_digitalocean.py``. Then it serves the app with uvicorn on 127.0.0.1.
+   ``bq update --set_label`` command). Every Azure call goes to the fake Azure
+   (apps/api/tests/fake_azure.py, ADR-020); ``/e2e/azure`` and ``/e2e/azure/tag`` stand in for
+   the customer there. Then it serves the app with uvicorn on 127.0.0.1.
 
 Every workspace's connection reads the same bills; the stack callback, validation, the
 resource scan, metrics and analysis all run for real against the fakes.
@@ -31,6 +34,7 @@ import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -196,6 +200,49 @@ def install_gcp(app: object) -> None:
     app.add_api_route("/__e2e/gcp/label", label, methods=["POST"])  # type: ignore[attr-defined]
 
 
+def install_azure_fake(today: datetime) -> Any:
+    """The fake Azure (apps/api/tests/fake_azure.py, ADR-020): one customer directory and
+    subscription that has consented, given the roles and created the FOCUS export, with last
+    month's and this month's runs delivered. Only the ownership tag is left: the spec sets it
+    through ``/e2e/azure/tag`` with the code the page shows, as the customer's script would."""
+    sys.path.insert(0, str(REPO / "apps" / "api" / "tests"))
+    from datetime import timedelta
+
+    import fake_azure
+
+    fake, _ = fake_azure.install()
+    fake.grant_all()
+    fake.add_storage(None)
+    fake.add_export()
+    fake.add_resources(today)
+    this = today.date().replace(day=1)
+    last = (this - timedelta(days=1)).replace(day=1)
+    fake.deliver(last, this - timedelta(days=1))
+    fake.deliver(this, max(this, today.date() - timedelta(days=1)))
+    return fake
+
+
+def add_azure_routes(app: Any, fake: Any) -> None:
+    """Test-only routes for the Azure spec (this server never runs outside the E2E stack)."""
+    import fake_azure
+    from fastapi import Body
+
+    @app.get("/e2e/azure", include_in_schema=False)
+    async def azure_customer() -> dict[str, str]:
+        return {
+            "directoryId": fake_azure.DIRECTORY,
+            "subscriptionId": fake.subscription,
+            "storageAccount": fake_azure.STORAGE,
+            "container": fake_azure.CONTAINER,
+            "exportPath": fake_azure.FOLDER,
+        }
+
+    @app.post("/e2e/azure/tag", include_in_schema=False)
+    async def azure_tag(code: str = Body(embed=True)) -> dict[str, str]:
+        fake.storage[fake_azure.STORAGE].tags["cloudoptics-verify"] = code
+        return {"status": "tagged"}
+
+
 def main() -> None:
     urls = configure()
     sys.path.insert(0, str(HERE))
@@ -206,6 +253,7 @@ def main() -> None:
 
         shutil.rmtree(bills)
     install_fakes(bills, write_bills(bills, datetime.now(UTC)))
+    azure = install_azure_fake(datetime.now(UTC))
 
     import uvicorn
 
@@ -214,6 +262,7 @@ def main() -> None:
     port = int(os.environ.get("CLOUDOPTICS_E2E_PORT", "8000"))
     app = create_app()
     install_gcp(app)
+    add_azure_routes(app, azure)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     # psycopg's async driver needs a selector event loop (Windows defaults to proactor).
     asyncio.run(uvicorn.Server(config).serve(), loop_factory=asyncio.SelectorEventLoop)
