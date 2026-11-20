@@ -131,6 +131,7 @@ def test_periods_tags_versions_prices_and_rows() -> None:
     assert billing.add_months(date(2026, 12, 1), 1) == date(2027, 1, 1)
     assert billing.parse_tags('{"env":"prod"}') == [("env", "prod")]
     assert billing.parse_tags('[{"key":"team","value":"core"}]') == [("team", "core")]
+    assert billing.parse_tags('[{"Key":"env","Value":"prod"}]') == [("env", "prod")]  # x_Labels
     assert billing.parse_tags(None) == [] and billing.parse_tags("null") == []
     rows = [{"a": 1}, {"b": Decimal("2.5")}]
     assert billing.version_of(rows) == billing.version_of(list(reversed(rows)))
@@ -262,6 +263,30 @@ async def test_connect_failures_are_specific(client: AsyncClient, login, gcp: Fa
     assert body["status"] == "failed" and body["lastError"]["check"] == "federation"
 
 
+async def test_a_view_must_prove_the_datasets_it_reads(
+    client: AsyncClient, login, gcp: FakeGcp
+) -> None:
+    """A label on the view's own dataset is not enough: the view could read another
+    customer's export through the shared service account (confused deputy)."""
+    victim = ("victim-billing", "victim_export", "gcp_billing_export_focus_x")
+    gcp.views[(EXPORT_PROJECT, DATASET, TABLE)] = [victim]
+    gcp.datasets.add(victim[:2])
+    tenant, headers = await workspace(client, login, "Attacker Ltd")
+    setup = await gcp_connection(client, tenant, headers, gcp)  # labels its own dataset only
+    conn = setup["connection"]["id"]
+    body = await validate(client, tenant, headers, conn)
+    assert body["status"] == "failed" and body["lastError"] == {
+        "code": "OwnershipNotProven",
+        "check": "view_sources",
+    }
+    assert not any("co:daily" in c for c in gcp.calls)
+    # The owner of the source dataset labels it too: the view is proven.
+    gcp.set_label(*victim[:2], "cloudoptics", setup["labelValue"])
+    body = await validate(client, tenant, headers, conn)
+    assert body["status"] == "healthy", body["permissionChecks"]
+    assert {c["id"]: c["status"] for c in body["permissionChecks"]}["view_sources"] == "ok"
+
+
 async def test_not_switched_on(client: AsyncClient, login, gcp: FakeGcp) -> None:
     tenant, headers = await workspace(client, login)
     uninstall()
@@ -313,8 +338,8 @@ async def test_bills_load_into_the_shared_cost_tables(
         expected = sum(r["BilledCost"] for r in period_rows)
         loaded = sum(r[4] for r in rows if r[1] == period)
         assert loaded == pytest.approx(expected)
-        credits = sum(r[4] for r in rows if r[1] == period and r[3] == "Credit")
-        assert credits < 0
+    # Google's export has no Credit rows: credits are inside BilledCost (cost + credits).
+    assert {r[3] for r in rows} == {"Usage", "Tax"}
     assert all(r[4] == r[5] and r[6] == "USD" for r in rows)
     projects = owner_sql(
         "SELECT provider_account_id, name, account_type FROM cloud_account "
@@ -470,6 +495,13 @@ async def test_scan_metrics_and_recommendations(
     mine = {r[0]: r for r in recs if r[1] == "gcp" and "acme-shop-prod" in r[2]}
     assert {"GCP1_idle_vm", "GCP2_unattached_disk", "GCP3_unused_address", "GCP4_old_snapshot",
             "GCP5_rightsize_vm", "GCP6_idle_cloudsql"} <= set(mine)  # fmt: skip
+    disk_config = owner_sql(
+        "SELECT config FROM resource WHERE connection_id = %s "
+        "AND resource_id = 'disks/orphan-disk'",
+        conn,
+    )[0][0]
+    assert disk_config["recommendations"][0]["subtype"] == "SNAPSHOT_AND_DELETE_DISK"
+    assert not any("global/recommenders/google.compute.disk" in c for c in gcp.calls)
     idle = mine["GCP1_idle_vm"]
     assert idle[2] == "gcp:GCP1_idle_vm:acme-shop-prod:europe-west2-a:instances/web-idle-1"
     assert idle[3]["steps"][0].startswith("gcloud compute instances stop web-idle-1")
@@ -586,3 +618,49 @@ async def test_client_pages_and_caps_rows(gcp: FakeGcp) -> None:
         api.settings.max_bytes_billed = 20 * 1024**3
     sql_missing = billing.daily_sql(gs, {"BilledCost"})
     assert "CAST(NULL AS STRING) AS tags" in sql_missing and "NULL AS list_cost" in sql_missing
+    assert "TO_JSON_STRING(x_Labels) AS tags" in sql  # the FOCUS export has no Tags column
+    assert "TO_JSON_STRING(Tags) AS tags" in billing.daily_sql(gs, {"Tags"})
+    assert "INTERVAL 1 DAY" in sql and "BillingPeriodStart = " not in sql
+
+    # A query still running: the client waits on getQueryResults; bytes billed come from
+    # jobs.query (GetQueryResultsResponse has none).
+    gcp.slow_jobs = True
+    slow = await api.query(EXPORT_PROJECT, sql, [client.param("period", "STRING", period)])
+    assert slow.rows == result.rows and slow.bytes_billed == gcp.bytes_per_query
+
+
+async def test_transient_errors_are_retried_and_quota_is_not_denial(gcp: FakeGcp) -> None:
+    api = client.GcpApi()
+    api.settings.retry_base_seconds = 0
+    try:
+        gcp.flaky["bigquery.googleapis.com/bigquery/v2/projects/acme-billing/datasets"] = [
+            (503, "backendError"),
+            (403, "rateLimitExceeded"),
+            (429, "RATE_LIMIT_EXCEEDED"),
+        ]
+        dataset = await api.dataset(EXPORT_PROJECT, DATASET)
+        assert dataset["datasetReference"]["datasetId"] == DATASET
+        gcp.flaky["compute.googleapis.com"] = [(403, "rateLimitExceeded")] * 9
+        with pytest.raises(client.GcpError) as err:
+            await api.request("GET", f"{api.settings.compute_url}/projects/p/global/snapshots")
+        assert err.value.code == "rateLimitExceeded" and not err.value.denied
+        assert err.value.retryable
+        gcp.flaky.clear()
+        gcp.failures["bigquery.googleapis.com/bigquery/v2/projects/nope"] = (403, "accessDenied")
+        with pytest.raises(client.GcpError) as err:
+            await api.dataset("nope", DATASET)
+        assert err.value.denied and not err.value.retryable
+    finally:
+        api.settings.retry_base_seconds = 1.0
+
+
+def test_recommendations_find_their_target() -> None:
+    from fake_gcp import default_recommendations
+
+    recs = default_recommendations()
+    disk = next(v for k, v in recs.items() if k[2].endswith("disk.IdleResourceRecommender"))[0]
+    # The idle-disk recommendation adds a snapshot before removing the disk.
+    assert inventory.target_names(disk)[0] == "orphan-disk"
+    summary = inventory.recommendation_summary(disk, "google.compute.disk.IdleResourceRecommender")
+    assert summary["savingsMonthly"] == pytest.approx(85 * 30.4167 / 30, rel=1e-3)
+    assert inventory._seconds({"seconds": 2592000}) == 2592000

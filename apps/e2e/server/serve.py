@@ -166,7 +166,14 @@ def install_fakes(bills: Path, totals: dict[str, dict[str, float]]) -> None:
 def install_gcp(app: object) -> None:
     """The fake Google Cloud, and the routes a test uses to act as the customer there."""
     sys.path.insert(0, str(REPO / "apps" / "api" / "tests"))
-    from fake_gcp import DATASET, EXPORT_PROJECT, FakeGcp, install, new_billing_account
+    from fake_gcp import (
+        DATASET,
+        EXPORT_PROJECT,
+        FOCUS_FIELDS,
+        FakeGcp,
+        install,
+        new_billing_account,
+    )
     from fastapi import Body
 
     fake = FakeGcp().bill().grant_all()
@@ -175,6 +182,9 @@ def install_gcp(app: object) -> None:
     def billing_account() -> dict[str, str]:
         fake.billing_account = new_billing_account()
         fake.bill()
+        # The managed FOCUS export's table name, which the wizard fills in when left empty.
+        table = "gcp_billing_export_focus_" + fake.billing_account.replace("-", "_")
+        fake.tables[(EXPORT_PROJECT, DATASET, table)] = FOCUS_FIELDS
         return {"billingAccountId": fake.billing_account, "project": EXPORT_PROJECT,
                 "dataset": DATASET}  # fmt: skip
 

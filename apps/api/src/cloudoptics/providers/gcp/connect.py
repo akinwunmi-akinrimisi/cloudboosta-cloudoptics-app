@@ -6,8 +6,15 @@ cannot tell workspaces apart: anyone could type someone else's dataset into Clou
 The connection's **label value** plays the part of AWS's External ID. It is random, stored
 encrypted (``cloud_connection.external_id_enc``) and shown only to the workspace's admins;
 the customer sets it as the label ``cloudoptics`` on the dataset Cloudoptics reads, which
-only someone who can change that dataset can do. Cloudoptics reads no bill until the label
-matches, and only then reserves the billing account for the workspace (migration 0017).
+only someone who can change that dataset can do (``bigquery.datasets.update``: BigQuery Data
+Owner or Admin). Cloudoptics reads no bill until the label matches, and only then reserves
+the billing account for the workspace (migration 0017).
+
+A label on the dataset that holds a **view** proves nothing about the data the view reads:
+anyone can write a view over another customer's export, and BigQuery would run it with the
+service account's own access. So when the table is not a plain table, a dry run lists the
+base tables the view reads (``referencedTables``) and every dataset among them must carry the
+same label; until then the check fails (``OwnershipNotProven``) and nothing is read.
 
 Projects come from the bill itself (``SubAccountId``), never from what a user types, so a
 workspace scans only projects billed to its own proven billing account.
@@ -63,12 +70,18 @@ PROJECT_PERMISSIONS = [
     "monitoring.timeSeries.list",
     "recommender.computeInstanceIdleResourceRecommendations.list",
 ]
+#: Least privilege: the Compute and Cloud SQL Recommender viewers rather than Recommender
+#: Viewer, which reads every recommender's findings (IAM, security, ...).
 PROJECT_ROLES = (
     "roles/compute.viewer",
     "roles/monitoring.viewer",
-    "roles/recommender.viewer",
+    "roles/recommender.computeViewer",
+    "roles/recommender.cloudsqlViewer",
     "roles/cloudsql.viewer",
 )
+#: Table types read directly; anything else (a view) must prove its sources (module doc).
+PLAIN_TABLES = frozenset({"TABLE"})
+SOURCES_SQL = "/* co:sources */ SELECT 1 FROM `{table}` LIMIT 1"
 PROJECTS_CHECKED = 20
 
 SELECT_GCP = text(
@@ -153,12 +166,13 @@ def commands(
     )
     scanned = " ".join(_q(p) for p in (projects or [gs.export_project_id]))
     roles = " ".join(PROJECT_ROLES)
+    label_title = (
+        "Label the dataset, and each dataset the view reads (proves they are yours)"
+        if gs.export_kind == "focus_view"
+        else "Label the dataset (proves it is yours)"
+    )
     return [
-        Command(
-            "label",
-            "Label the dataset (proves it is yours)",
-            f"bq update --set_label {LABEL_KEY}:{label} {_q(dataset)}",
-        ),
+        Command("label", label_title, f"bq update --set_label {LABEL_KEY}:{label} {_q(dataset)}"),
         Command(
             "dataset",
             "Let Cloudoptics read the dataset",
@@ -182,16 +196,22 @@ def commands(
 
 
 def console_steps(gs: GcpSettingsRow, *, service_account: str, label: str) -> list[str]:
+    view = (
+        " If the table is a view, add the same label to every dataset the view reads, such "
+        "as the detailed and pricing export datasets."
+        if gs.export_kind == "focus_view"
+        else ""
+    )
     return [
         f"In BigQuery, open dataset {gs.export_dataset_id} in project {gs.export_project_id}, "
-        f"choose Edit details, add the label {LABEL_KEY} with the value {label}, and save.",
+        f"choose Edit details, add the label {LABEL_KEY} with the value {label}, and save." + view,
         f"On the same dataset choose Sharing, then Permissions, then Add principal: "
         f"{service_account} with the role BigQuery Data Viewer.",
         f"In IAM and admin for project {gs.query_project_id}, choose Grant access: "
         f"{service_account} with the role BigQuery Job User.",
         "Optional, for resources and recommendations: in each project (or once on a folder or "
         "the organization) grant the same account Compute Viewer, Monitoring Viewer, "
-        "Recommender Viewer and Cloud SQL Viewer.",
+        "Compute Recommender Viewer, Cloud SQL Recommender Viewer and Cloud SQL Viewer.",
     ]
 
 
@@ -237,7 +257,8 @@ class _Run:
 
 BILLING_ACCOUNTS_SQL = (
     "/* co:billing_accounts */ SELECT BillingAccountId AS billing_account_id, COUNT(*) AS n "
-    "FROM `{table}` WHERE BillingPeriodStart >= TIMESTAMP(@since) GROUP BY 1 "
+    "FROM `{table}` WHERE BillingPeriodStart >= TIMESTAMP_SUB(TIMESTAMP(@since), INTERVAL 1 DAY) "
+    "GROUP BY 1 "
     "ORDER BY n DESC LIMIT 10"
 )
 
@@ -304,8 +325,10 @@ async def check_access(
     run.ok("ownership", "Prove the dataset is yours", "The label matches this workspace.")
 
     table_ok = False
+    table_type = "TABLE"
     try:
         table = await api.table(gs.export_project_id, gs.export_dataset_id, gs.export_table_id)
+        table_type = str(table.get("type") or "TABLE")
         columns = {f.get("name") for f in (table.get("schema") or {}).get("fields") or []}
         missing_cols = [c for c in REQUIRED_COLUMNS if c not in columns]
         if missing_cols:
@@ -362,10 +385,70 @@ async def check_access(
             fatal=False,
         )
 
+    sources_ok = True
+    if table_ok and query_ok and table_type not in PLAIN_TABLES:
+        sources_ok = await _view_sources(api, gs, label, run)
+        if not sources_ok:
+            return _finish(run, api, export=False)
     if table_ok and query_ok:
         await _billing_account(api, gs, run, today)
     await _projects(api, projects, run)
-    return _finish(run, api, export=table_ok and query_ok)
+    return _finish(run, api, export=table_ok and query_ok and sources_ok)
+
+
+async def _view_sources(api: GcpApi, gs: GcpSettingsRow, label: str, run: _Run) -> bool:
+    """A view: every dataset it reads must carry this connection's label (module doc)."""
+    name = "Prove the view's sources are yours"
+    hint = "Add the label from the first command to each dataset the view reads."
+    try:
+        tables = await api.referenced_tables(
+            gs.query_project_id,
+            SOURCES_SQL.format(table=gs.table_ref),
+            location=gs.dataset_location,
+        )
+    except GcpError as exc:
+        run.fail(
+            "view_sources",
+            name,
+            "Cloudoptics could not list the tables the view reads.",
+            exc.message[:200],
+            exc.code,
+            fatal=True,
+        )
+        return False
+    datasets = sorted({(p, d) for p, d, _ in tables})
+    if not datasets:
+        run.fail(
+            "view_sources",
+            name,
+            "BigQuery did not say which tables the view reads.",
+            hint,
+            "OwnershipNotProven",
+            fatal=True,
+        )
+        return False
+    unproven: list[str] = []
+    for project, dataset in datasets:
+        if (project, dataset) == (gs.export_project_id, gs.export_dataset_id):
+            continue  # checked above
+        try:
+            labels = (await api.dataset(project, dataset)).get("labels") or {}
+        except GcpError:
+            labels = {}
+        if not secrets.compare_digest(str(labels.get(LABEL_KEY, "")), label):
+            unproven.append(f"{project}:{dataset}")
+    if unproven:
+        run.fail(
+            "view_sources",
+            name,
+            f"The view reads datasets without this connection's label: {', '.join(unproven[:5])}.",
+            hint,
+            "OwnershipNotProven",
+            fatal=True,
+        )
+        return False
+    run.ok("view_sources", name, f"All {len(datasets)} datasets the view reads carry the label.")
+    return True
 
 
 async def _billing_account(api: GcpApi, gs: GcpSettingsRow, run: _Run, today: date) -> None:
@@ -394,7 +477,8 @@ async def _billing_account(api: GcpApi, gs: GcpSettingsRow, run: _Run, today: da
             "billing_account",
             label,
             "The export has no rows for this month or last month yet.",
-            "Google fills a new export within a day; Cloudoptics loads it as it arrives.",
+            "A new export starts to fill within a few hours, and the first backfill can take "
+            "up to five days; Cloudoptics loads it as it arrives.",
         )
     elif gs.billing_account_id in found:
         run.ok("billing_account", label, f"The export is billing account {gs.billing_account_id}.")

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { DemoApi } from '../../api/demo'
 import { ApiProvider } from '../../app/context'
 import { createAppRouter } from '../../app/router'
-import { validateGcp } from './GcpConnect'
+import { focusTableName, validateGcp } from './GcpConnect'
 import { CONNECT_PROVIDERS } from './providers'
 
 const BILLING = '0A1B2C-3D4E5F-6A7B8C'
@@ -81,6 +81,8 @@ describe('Connect Google Cloud', () => {
       exportKind: 'focus_export' as const,
     }
     expect(validateGcp(ok)).toEqual({})
+    expect(focusTableName('01a2b3-c4d5e6-f7a8b9')).toBe('gcp_billing_export_focus_01A2B3_C4D5E6_F7A8B9')
+    expect(focusTableName('nope')).toBe('')
     expect(Object.keys(validateGcp({ ...ok, queryProjectId: 'X', datasetLocation: 'a b' }))).toEqual([
       'queryProjectId',
       'datasetLocation',

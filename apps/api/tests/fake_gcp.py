@@ -5,6 +5,15 @@ Cloud SQL Admin, Recommender, Monitoring), plus synthetic FOCUS rows (``focus_ro
 BigQuery cannot run SQL here: each query the plug-in sends starts with a ``/* co:<name> */``
 marker, and the fake computes that query's answer from the FOCUS rows in Python. Results are
 paged (``PAGE``) so the client's paging is exercised. Nothing here contacts Google.
+
+The shapes follow Google's documentation (checked 20 Nov 2026, ADR-019 Sources): the FOCUS
+export's columns and types (no ``Credit`` rows, credits inside ``BilledCost`` and listed in
+``x_Credits``, labels in ``x_Labels``, no ``Tags``); BigQuery's ``Dataset``, ``Table``,
+``QueryResponse``, ``GetQueryResultsResponse`` and dry-run ``Job`` resources; errors as
+``google.rpc.Status`` over HTTP (AIP-193) with BigQuery's ``errors[].reason``, quota errors
+as 403 ``rateLimitExceeded``; Compute ``aggregatedList`` scopes with ``warning`` entries;
+Recommender's idle-disk example (an ``add`` snapshot operation before the ``remove``); and
+Monitoring ``timeSeries`` with points newest first.
 """
 
 from __future__ import annotations
@@ -37,12 +46,22 @@ PAGE = 40
 #: The daily query's group keys, in its column order (before the tags).
 KEY = ("ChargePeriodStart", "BillingAccountId", "SubAccountId", "ServiceName", "ChargeCategory",
        "BillingCurrency", "RegionId", "SkuId")  # fmt: skip
-FOCUS_FIELDS = (
-    "BillingAccountId", "BillingPeriodStart", "ChargePeriodStart", "ChargeCategory",
-    "BillingCurrency", "BilledCost", "EffectiveCost", "ListCost", "ConsumedQuantity",
-    "SubAccountId", "SubAccountName", "ServiceName", "ServiceCategory", "RegionId", "SkuId",
-    "Tags", "x_CurrencyConversionRate",
-)  # fmt: skip
+#: Columns of Google's managed FOCUS export the plug-in may read, with their BigQuery types
+#: (Structure of FOCUS data export). There is no ServiceCategory and no Tags column.
+FOCUS_TYPES: dict[str, tuple[str, str]] = {
+    "BillingAccountId": ("STRING", "NULLABLE"), "BillingPeriodStart": ("TIMESTAMP", "NULLABLE"),
+    "BillingPeriodEnd": ("TIMESTAMP", "NULLABLE"), "ChargePeriodStart": ("TIMESTAMP", "NULLABLE"),
+    "ChargePeriodEnd": ("TIMESTAMP", "NULLABLE"), "ChargeCategory": ("STRING", "NULLABLE"),
+    "BillingCurrency": ("STRING", "NULLABLE"), "BilledCost": ("NUMERIC", "NULLABLE"),
+    "EffectiveCost": ("NUMERIC", "NULLABLE"), "ListCost": ("NUMERIC", "NULLABLE"),
+    "ConsumedQuantity": ("NUMERIC", "NULLABLE"), "SubAccountId": ("STRING", "NULLABLE"),
+    "SubAccountName": ("STRING", "NULLABLE"), "ServiceName": ("STRING", "NULLABLE"),
+    "RegionId": ("STRING", "NULLABLE"), "SkuId": ("STRING", "NULLABLE"),
+    "x_Credits": ("RECORD", "REPEATED"), "x_CurrencyConversionRate": ("FLOAT", "NULLABLE"),
+    "x_ExportTime": ("TIMESTAMP", "NULLABLE"), "x_Labels": ("RECORD", "REPEATED"),
+    "x_Tags": ("RECORD", "REPEATED"),
+}  # fmt: skip
+FOCUS_FIELDS = tuple(FOCUS_TYPES)
 
 # service, category, sku, region, daily cost per project index
 SERVICES = (
@@ -62,9 +81,10 @@ def focus_rows(
     rate: float | None = None,
     through: date | None = None,
 ) -> list[dict[str, Any]]:
-    """A month of FOCUS rows: four services a day in each project, a daily Compute credit
-    (free-tier style) and one tax line without a project. ``rate`` is units of ``currency``
-    per USD (amounts are multiplied by it, as Google bills in the local currency)."""
+    """A month of FOCUS rows: four services a day in each project, a free-tier credit on
+    each day's Compute line (inside ``BilledCost``, as Google's export has no Credit rows)
+    and one tax line without a project. ``rate`` is units of ``currency`` per USD (amounts
+    are multiplied by it, as Google bills in the local currency)."""
     nxt = (period.replace(day=28) + timedelta(days=4)).replace(day=1)
     last = min(nxt - timedelta(days=1), through or nxt - timedelta(days=1))
     scale = Decimal(str(rate or 1))
@@ -77,15 +97,11 @@ def focus_rows(
                 cost = Decimal(str(costs[i % 2])) * scale
                 if cost == 0:
                     continue
+                credit = -Decimal("1.25") * scale if name == "Compute Engine" else Decimal(0)
                 rows.append(
                     _row(period, day, billing_account, currency, rate, "Usage", cost, project,
-                         name, category, sku, region, {"env": env, "team": "core"})
+                         name, category, sku, region, {"env": env, "team": "core"}, credit)
                 )  # fmt: skip
-            credit = -Decimal("1.25") * scale
-            rows.append(
-                _row(period, day, billing_account, currency, rate, "Credit", credit, project,
-                     "Compute Engine", "Compute", "6E2B-1A5C-9C1F", "europe-west2", {})
-            )  # fmt: skip
         day += timedelta(days=1)
     rows.append(
         _row(period, last, billing_account, currency, rate, "Tax", Decimal("7.50") * scale, None,
@@ -107,25 +123,42 @@ def _row(
     category: str,
     sku: str | None,
     region: str | None,
-    tags: dict[str, str],
+    labels: dict[str, str],
+    credit: Decimal = Decimal(0),
 ) -> dict[str, Any]:
+    """One FOCUS row. ``BilledCost`` and ``EffectiveCost`` are cost + credits; ``ListCost``
+    is ``cost_at_list``. ``BillingPeriodStart`` is the invoice month at midnight US Pacific
+    time here: Google does not document the hour, and the plug-in must not depend on it."""
+    del category  # the FOCUS export has no ServiceCategory
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     return {
         "BillingAccountId": account,
-        "BillingPeriodStart": period,
-        "ChargePeriodStart": day,
+        "BillingPeriodStart": datetime(period.year, period.month, 1, 8, tzinfo=UTC),
+        "ChargePeriodStart": start,
+        "ChargePeriodEnd": start + timedelta(hours=1),
         "ChargeCategory": charge,
         "BillingCurrency": currency,
-        "BilledCost": cost,
-        "EffectiveCost": cost,
+        "BilledCost": cost + credit,
+        "EffectiveCost": cost + credit,
         "ListCost": cost * Decimal("1.1") if charge == "Usage" else None,
         "ConsumedQuantity": Decimal(24) if charge == "Usage" else None,
         "SubAccountId": project,
         "SubAccountName": project.replace("-", " ").title() if project else None,
         "ServiceName": service,
-        "ServiceCategory": category,
         "RegionId": region,
         "SkuId": sku,
-        "Tags": tags,
+        "x_Labels": [{"Key": k, "Value": v} for k, v in sorted(labels.items())],
+        "x_Credits": [
+            {
+                "Id": "FreeTier",
+                "FullName": "Free tier",
+                "Type": "FREE_TIER",
+                "Name": "Free tier",
+                "Amount": credit,
+            }
+        ]
+        if credit
+        else [],
         "x_CurrencyConversionRate": rate,
     }
 
@@ -192,24 +225,63 @@ def default_resources(now: datetime) -> dict[str, dict[str, list[dict[str, Any]]
 
 def default_recommendations() -> dict[tuple[str, str, str], list[dict[str, Any]]]:
     project, zone, region = PROJECTS[0], "europe-west2-a", "europe-west2"
+    compute = f"//compute.googleapis.com/projects/{project}"
     return {
+        # Google's idle-disk example: a snapshot "add" first, then the disk "remove".
+        (project, zone, "google.compute.disk.IdleResourceRecommender"): [
+            {
+                "name": f"projects/{project}/locations/{zone}/recommenders/"
+                "google.compute.disk.IdleResourceRecommender/recommendations/r3",
+                "description": "Save cost by snapshotting and then deleting idle persistent "
+                "disk 'orphan-disk'.",
+                "recommenderSubtype": "SNAPSHOT_AND_DELETE_DISK",
+                "priority": "P4",
+                "stateInfo": {"state": "ACTIVE"},
+                "lastRefreshTime": "2026-11-18T07:00:00Z",
+                "primaryImpact": {
+                    "category": "COST",
+                    "costProjection": {
+                        "cost": {"currencyCode": "USD", "units": "-85"},
+                        "duration": "2592000s",
+                    },
+                },
+                "content": {
+                    "operationGroups": [
+                        {"operations": [
+                            {"action": "add", "resourceType": "compute.googleapis.com/Snapshot",
+                             "resource": f"{compute}/global/snapshots/orphan-disk-snap",
+                             "path": "/", "value": {
+                                 "name": "orphan-disk-snap",
+                                 "sourceDisk": f"projects/{project}/zones/{zone}/disks/orphan-disk",
+                                 "storageLocations": [region]}},
+                            {"action": "remove", "resourceType": "compute.googleapis.com/Disk",
+                             "resource": f"{compute}/zones/{zone}/disks/orphan-disk", "path": "/"},
+                        ]}
+                    ]
+                },
+            }
+        ],
         (project, zone, "google.compute.instance.MachineTypeRecommender"): [
             {
                 "name": f"projects/{project}/locations/{zone}/recommenders/x/recommendations/r1",
                 "description": "Save cost by changing machine type from n2-standard-8 to "
                 "n2-standard-4.",
                 "priority": "P2",
+                "stateInfo": {"state": "ACTIVE"},
                 "primaryImpact": {
+                    "category": "COST",
                     "costProjection": {
                         "cost": {"currencyCode": "USD", "units": "-120", "nanos": -500000000},
                         "duration": "2628000s",
-                    }
+                    },
                 },
                 "content": {
                     "overview": {"resourceName": f"//compute.googleapis.com/projects/{project}/"
                                  f"zones/{zone}/instances/api-1"},
                     "operationGroups": [
                         {"operations": [{"action": "replace", "path": "/machineType",
+                                         "resourceType": "compute.googleapis.com/Instance",
+                                         "resource": f"{compute}/zones/{zone}/instances/api-1",
                                          "value": f"zones/{zone}/machineTypes/n2-standard-4"}]}
                     ],
                 },
@@ -220,11 +292,13 @@ def default_recommendations() -> dict[tuple[str, str, str], list[dict[str, Any]]
                 "name": f"projects/{project}/locations/{region}/recommenders/y/recommendations/r2",
                 "description": "Stop idle instance reports-db.",
                 "priority": "P3",
+                "stateInfo": {"state": "ACTIVE"},
                 "primaryImpact": {
+                    "category": "COST",
                     "costProjection": {
                         "cost": {"currencyCode": "USD", "units": "-80"},
                         "duration": "2628000s",
-                    }
+                    },
                 },
                 "content": {
                     "overview": {"resourceName": f"//sqladmin.googleapis.com/projects/{project}/"
@@ -247,6 +321,12 @@ class FakeGcp:
     tables: dict[tuple[str, str, str], tuple[str, ...]] = field(
         default_factory=lambda: {(EXPORT_PROJECT, DATASET, TABLE): FOCUS_FIELDS}
     )
+    #: (project, dataset, view) -> the base tables it reads (``referencedTables``)
+    views: dict[tuple[str, str, str], list[tuple[str, str, str]]] = field(default_factory=dict)
+    #: path fragment -> errors answered once each, in order, before normal answers (retries)
+    flaky: dict[str, list[tuple[int, str]]] = field(default_factory=dict)
+    #: jobs.query answers ``jobComplete: false`` first, as for a query still running
+    slow_jobs: bool = False
     #: billing period -> FOCUS rows; filled by ``bill`` (last month and this month).
     rows: dict[date, list[dict[str, Any]]] = field(default_factory=dict)
     #: project -> permissions the service account holds (testIamPermissions).
@@ -312,6 +392,10 @@ class FakeGcp:
         for fragment, (status, reason) in self.failures.items():
             if fragment in f"{url.netloc}{path}":
                 return _err(status, reason)
+        for fragment, queue in self.flaky.items():
+            if fragment in f"{url.netloc}{path}" and queue:
+                status, reason = queue.pop(0)
+                return _err(status, reason)
         if url.netloc == "sts.googleapis.com":
             return self._sts(request)
         if url.netloc == "iamcredentials.googleapis.com":
@@ -319,7 +403,10 @@ class FakeGcp:
                 return _err(401, "UNAUTHENTICATED")
             return httpx.Response(
                 200,
-                json={"accessToken": SA_TOKEN, "expireTime": _ts(self.now + timedelta(hours=1))},
+                json={
+                    "accessToken": SA_TOKEN,
+                    "expireTime": _ts(datetime.now(UTC) + timedelta(hours=1)),
+                },
             )
         if request.headers.get("authorization") != f"Bearer {SA_TOKEN}":
             return _err(401, "UNAUTHENTICATED")
@@ -342,7 +429,13 @@ class FakeGcp:
         ).startswith("AWS4-HMAC-SHA256"):
             return httpx.Response(400, json={"error": "invalid_grant"})
         return httpx.Response(
-            200, json={"access_token": FED_TOKEN, "expires_in": 3600, "token_type": "Bearer"}
+            200,
+            json={
+                "access_token": FED_TOKEN,
+                "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+            },
         )
 
     def _cloudresourcemanager(self, method: str, path: str, q: dict[str, str], body: Any) -> Any:
@@ -352,7 +445,8 @@ class FakeGcp:
 
     def _bigquery(self, method: str, path: str, q: dict[str, str], body: Any) -> Any:
         m = re.match(
-            r"/bigquery/v2/projects/([^/]+)/(datasets|queries)(?:/([^/]+))?(?:/tables/([^/]+))?",
+            r"/bigquery/v2/projects/([^/]+)/(datasets|queries|jobs)(?:/([^/]+))?"
+            r"(?:/tables/([^/]+))?",
             path,
         )
         if not m:
@@ -364,20 +458,35 @@ class FakeGcp:
             if not self.dataset_access:
                 return _err(403, "accessDenied")
             if table is not None:
-                fields = self.tables.get((project, name, table))
-                if fields is None:
-                    return _err(404, "notFound")
-                return {"schema": {"fields": [{"name": f, "type": "STRING"} for f in fields]}}
-            return {"datasetReference": {"datasetId": name}, "location": "US",
-                    "labels": self.labels.get((project, name), {})}  # fmt: skip
+                return self._table(project, name, table)
+            dataset: dict[str, Any] = {
+                "kind": "bigquery#dataset",
+                "id": f"{project}:{name}",
+                "datasetReference": {"projectId": project, "datasetId": name},
+                "location": "US",
+                "type": "DEFAULT",
+            }
+            if self.labels.get((project, name)):  # absent, not empty, when there are none
+                dataset["labels"] = dict(self.labels[(project, name)])
+            return dataset
         if "bigquery.jobs.create" not in self.permissions.get(project, set()):
             return _err(403, "accessDenied")
-        if method == "GET":  # getQueryResults: the next page
+        if kind == "jobs":  # jobs.insert, dry runs only
+            return self._dry_run_job(project, body)
+        if method == "GET":  # getQueryResults: the next page (or the finished first one)
             schema, rows = self._results[name]
             start = int(q.get("pageToken", "0"))
-            return self._page(name, schema, rows, start)
+            page = self._page(name, schema, rows, start)
+            page["kind"] = "bigquery#getQueryResultsResponse"
+            page.pop("totalBytesBilled")  # GetQueryResultsResponse has no totalBytesBilled
+            return page
         if body.get("dryRun"):
-            return {"jobComplete": True, "totalBytesProcessed": str(self.bytes_per_query)}
+            return {
+                "kind": "bigquery#queryResponse",
+                "jobComplete": True,
+                "totalBytesProcessed": str(self.bytes_per_query),
+                "schema": {"fields": []},
+            }
         if int(body.get("maximumBytesBilled", "0")) < self.bytes_per_query:
             return _err(400, "bytesBilledLimitExceeded")
         params = {p["name"]: p["parameterValue"]["value"] for p in body.get("queryParameters", [])}
@@ -385,16 +494,75 @@ class FakeGcp:
         schema, rows = getattr(self, f"_q_{marker.group(1) if marker else 'none'}")(params)
         job = f"job{len(self.calls)}"
         self._results[job] = (schema, rows)
-        return self._page(job, schema, rows, 0)
+        if self.slow_jobs:
+            return {
+                "kind": "bigquery#queryResponse",
+                "jobComplete": False,
+                "jobReference": {"projectId": project, "jobId": job, "location": "US"},
+                "totalBytesBilled": str(self.bytes_per_query),
+            }
+        page = self._page(job, schema, rows, 0, project)
+        page["kind"] = "bigquery#queryResponse"
+        return page
+
+    def _table(self, project: str, dataset: str, table: str) -> Any:
+        ref = {"projectId": project, "datasetId": dataset, "tableId": table}
+        if (project, dataset, table) in self.views:
+            return {"kind": "bigquery#table", "id": f"{project}:{dataset}.{table}",
+                    "tableReference": ref, "type": "VIEW",
+                    "view": {"query": "SELECT ...", "useLegacySql": False},
+                    "schema": {"fields": _schema(FOCUS_FIELDS)}}  # fmt: skip
+        fields = self.tables.get((project, dataset, table))
+        if fields is None:
+            return _err(404, "notFound")
+        return {
+            "kind": "bigquery#table",
+            "id": f"{project}:{dataset}.{table}",
+            "tableReference": ref,
+            "type": "TABLE",
+            "schema": {"fields": _schema(fields)},
+        }
+
+    def _dry_run_job(self, project: str, body: Any) -> Any:
+        conf = body.get("configuration") or {}
+        if not conf.get("dryRun"):
+            return _err(400, "invalid")
+        m = re.search(r"FROM `([^.`]+)\.([^.`]+)\.([^.`]+)`", conf["query"]["query"])
+        if not m:
+            return _err(400, "invalidQuery")
+        ref = (m.group(1), m.group(2), m.group(3))
+        tables = self.views.get(ref, [ref])
+        return {
+            "kind": "bigquery#job",
+            "jobReference": {"projectId": project, "location": "US"},
+            "configuration": conf,
+            "status": {"state": "DONE"},
+            "statistics": {
+                "totalBytesProcessed": str(self.bytes_per_query),
+                "query": {
+                    "totalBytesProcessed": str(self.bytes_per_query),
+                    "totalBytesBilled": "0",
+                    "referencedTables": [
+                        {"projectId": p, "datasetId": d, "tableId": t} for p, d, t in tables
+                    ],
+                },
+            },
+        }
 
     def _page(
-        self, job: str, schema: list[dict[str, str]], rows: list[list[Any]], start: int
+        self,
+        job: str,
+        schema: list[dict[str, str]],
+        rows: list[list[Any]],
+        start: int,
+        project: str = EXPORT_PROJECT,
     ) -> Any:
         chunk = rows[start : start + PAGE]
         page: dict[str, Any] = {
             "jobComplete": True,
-            "jobReference": {"jobId": job, "location": "US"},
+            "jobReference": {"projectId": project, "jobId": job, "location": "US"},
             "schema": {"fields": schema},
+            "totalRows": str(len(rows)),
             "totalBytesProcessed": str(self.bytes_per_query),
             "totalBytesBilled": str(self.bytes_per_query),
             "rows": [{"f": [{"v": None if v is None else str(v)} for v in r]} for r in chunk],
@@ -404,7 +572,17 @@ class FakeGcp:
         return page
 
     def _period_rows(self, value: str | None) -> list[dict[str, Any]]:
-        return self.rows.get(date.fromisoformat(str(value)[:10]), []) if value else []
+        """Rows whose BillingPeriodStart is within a day of the period's midnight UTC (the
+        plug-in's filter), whatever hour the fake stores."""
+        if not value:
+            return []
+        at = datetime.fromisoformat(str(value)[:10]).replace(tzinfo=UTC)
+        return [
+            r
+            for rows in self.rows.values()
+            for r in rows
+            if abs(r["BillingPeriodStart"] - at) < timedelta(days=1)
+        ]
 
     def _q_daily(self, params: dict[str, Any]) -> tuple[list[dict[str, str]], list[list[Any]]]:
         cols = [
@@ -418,15 +596,15 @@ class FakeGcp:
         ]  # fmt: skip
         groups: dict[tuple[Any, ...], list[Any]] = {}
         for r in self._period_rows(params.get("period")):
-            tags = json.dumps(r["Tags"], sort_keys=True) if r["Tags"] else None
-            key = (*(r[c] for c in KEY), tags)
+            tags = json.dumps(r["x_Labels"]) if r["x_Labels"] else "[]"  # TO_JSON_STRING
+            key = (r["ChargePeriodStart"].date(), *(r[c] for c in KEY[1:]), tags)
             rate = r["x_CurrencyConversionRate"]
             g = groups.setdefault(key, [Decimal(0), Decimal(0), None, None, Decimal(0), 0,
                                         Decimal(0), 0, rate, 0])  # fmt: skip
             g[0] += r["BilledCost"]
             g[1] += r["EffectiveCost"]
             g[2] = g[2] or r["SubAccountName"]
-            g[3] = g[3] or r["ServiceCategory"]
+            g[3] = None  # no ServiceCategory in the FOCUS export: the query reads NULL
             if r["ListCost"] is not None:
                 g[4] += r["ListCost"]
                 g[5] += 1
@@ -460,8 +638,13 @@ class FakeGcp:
         return schema, [[k, v] for k, v in totals.items()]
 
     def _since(self, params: dict[str, Any]) -> list[dict[str, Any]]:
-        since = date.fromisoformat(str(params["since"])[:10])
-        return [r for p, rows in self.rows.items() if p >= since for r in rows]
+        since = datetime.fromisoformat(str(params["since"])[:10]).replace(tzinfo=UTC)
+        return [
+            r
+            for rows in self.rows.values()
+            for r in rows
+            if r["BillingPeriodStart"] >= since - timedelta(days=1)
+        ]
 
     def _q_projects(self, params: dict[str, Any]) -> tuple[list[dict[str, str]], list[list[Any]]]:
         found = {
@@ -501,19 +684,28 @@ class FakeGcp:
         items = self.resources.get(project, {})
         if scope == "global":
             if kind == "addresses":
-                return {"items": []}
-            return {"items": items.get(kind, [])}
-        scoped: dict[str, Any] = {}
+                return {"kind": "compute#addressList", "items": []}
+            return {"kind": f"compute#{kind[:-1]}List", "items": items.get(kind, [])}
+        # Every scope is listed; one without resources carries a warning instead.
+        scoped: dict[str, Any] = {
+            "zones/us-central1-a": {
+                "warning": {
+                    "code": "NO_RESULTS_ON_PAGE",
+                    "message": "There are no results for scope 'zones/us-central1-a' on this page.",
+                    "data": [{"key": "scope", "value": "zones/us-central1-a"}],
+                }
+            }
+        }
         for item in items.get(kind, []):
             where = f"regions/{item['region']}" if "region" in item else "zones/europe-west2-a"
             scoped.setdefault(where, {kind: []})[kind].append(item)
-        return {"items": scoped}
+        return {"kind": f"compute#{kind[:-1]}AggregatedList", "items": scoped}
 
     def _sqladmin(self, method: str, path: str, q: dict[str, str], body: Any) -> Any:
         project = path.split("/projects/")[1].split("/")[0]
         if project not in self.resources:
-            return _err(403, "accessNotConfigured")
-        return {"items": self.resources[project].get("sql", [])}
+            return _err(403, "accessNotConfigured", info="SERVICE_DISABLED")
+        return {"kind": "sql#instancesList", "items": self.resources[project].get("sql", [])}
 
     def _recommender(self, method: str, path: str, q: dict[str, str], body: Any) -> Any:
         m = re.match(r"/v1/projects/([^/]+)/locations/([^/]+)/recommenders/([^/]+)/", path)
@@ -542,18 +734,67 @@ class FakeGcp:
             points = []
             t = start
             while t < end:
+                points.append(
+                    {
+                        "interval": {"startTime": _ts(t), "endTime": _ts(t + timedelta(hours=1))},
+                        "value": {"doubleValue": value},
+                    }
+                )
                 t += timedelta(hours=1)
-                points.append({"interval": {"endTime": _ts(t)}, "value": {"doubleValue": value}})
-            label = "database_id" if sql else "instance_id"
-            series.append({"resource": {"labels": {label: key}}, "points": points})
-        return {"timeSeries": series}
+            points.reverse()  # newest first, as Monitoring returns them
+            if sql:
+                resource = {
+                    "type": "cloudsql_database",
+                    "labels": {"project_id": project, "database_id": key, "region": "europe-west2"},
+                }
+                metric = "cloudsql.googleapis.com/database/cpu/utilization"
+            else:
+                resource = {
+                    "type": "gce_instance",
+                    "labels": {"project_id": project, "instance_id": key, "zone": "europe-west2-a"},
+                }
+                metric = "compute.googleapis.com/instance/cpu/utilization"
+            series.append(
+                {
+                    "metric": {"type": metric, "labels": {}},
+                    "resource": resource,
+                    "metricKind": "GAUGE",
+                    "valueType": "DOUBLE",
+                    "points": points,
+                }
+            )
+        return {"timeSeries": series, "unit": "10^2.%"}
 
 
-def _err(status: int, reason: str) -> httpx.Response:
-    return httpx.Response(
-        status,
-        json={"error": {"code": status, "message": reason, "errors": [{"reason": reason}]}},
-    )
+#: HTTP status -> google.rpc.Code name (AIP-193's mapping)
+CANONICAL = {400: "INVALID_ARGUMENT", 401: "UNAUTHENTICATED", 403: "PERMISSION_DENIED",
+             404: "NOT_FOUND", 409: "ALREADY_EXISTS", 429: "RESOURCE_EXHAUSTED",
+             500: "INTERNAL", 503: "UNAVAILABLE", 504: "DEADLINE_EXCEEDED"}  # fmt: skip
+
+
+def _schema(fields: tuple[str, ...]) -> list[dict[str, str]]:
+    return [
+        {"name": f, "type": FOCUS_TYPES.get(f, ("STRING", ""))[0],
+         "mode": FOCUS_TYPES.get(f, ("", "NULLABLE"))[1]}
+        for f in fields
+    ]  # fmt: skip
+
+
+def _err(status: int, reason: str, info: str | None = None) -> httpx.Response:
+    """A ``google.rpc.Status`` error as Google's REST APIs send it: ``code``, ``message`` and
+    ``status``, BigQuery's and Compute's ``errors[].reason``, and an ErrorInfo for ``info``."""
+    error: dict[str, Any] = {
+        "code": status,
+        "message": reason,
+        "errors": [{"message": reason, "domain": "global", "reason": reason}],
+        "status": CANONICAL.get(status, "UNKNOWN"),
+    }
+    if info:
+        error["details"] = [
+            {"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": info,
+             "domain": "googleapis.com"}
+        ]  # fmt: skip
+    return httpx.Response(status, json={"error": error})
 
 
 def install(fake: FakeGcp) -> None:
@@ -564,6 +805,7 @@ def install(fake: FakeGcp) -> None:
     settings = get_gcp_settings()
     settings.workload_provider = WORKLOAD_PROVIDER
     settings.service_account = SERVICE_ACCOUNT
+    settings.retry_base_seconds = 0  # retries without waiting
     client.set_transport(fake.transport)
     client.set_aws_credentials(
         lambda: client.AwsCredentials("AKIDEXAMPLE", "fake-secret-key", "fake-session-token")
@@ -577,5 +819,6 @@ def uninstall() -> None:
     settings = get_gcp_settings()
     settings.workload_provider = ""
     settings.service_account = ""
+    settings.retry_base_seconds = 1.0
     client.set_transport(None)
     client.set_aws_credentials(None)

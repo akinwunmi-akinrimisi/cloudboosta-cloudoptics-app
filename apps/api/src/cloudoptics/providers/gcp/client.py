@@ -9,7 +9,10 @@ Cloudoptics' AWS broker identity, then the Cloudoptics service account, then pla
 3. The federated token impersonates ``CLOUDOPTICS_GCP_SERVICE_ACCOUNT`` for one hour
    (``iamcredentials.generateAccessToken``). Customers grant that service account read roles.
 
-The token is cached until five minutes before it expires. REST over httpx keeps Google's
+The token is cached until five minutes before it expires (``expireTime``). Transient errors
+(429, 5xx, and BigQuery's ``rateLimitExceeded`` / ``backendError``, which BigQuery returns
+as 403) are retried with truncated exponential backoff; jobs.query carries a ``requestId``
+so a retried query is not run twice. REST over httpx keeps Google's
 SDKs (google-auth, google-cloud-bigquery and their gRPC stacks) out of the image; the few
 calls Cloudoptics makes are small JSON requests. Tests and the E2E server swap the transport
 (``set_transport``) and the AWS credentials (``set_aws_credentials``) for fakes.
@@ -17,11 +20,14 @@ calls Cloudoptics makes are small JSON requests. Tests and the E2E server swap t
 
 from __future__ import annotations
 
+import asyncio
 import json
+import random
 import time
+import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from urllib.parse import quote
@@ -33,6 +39,14 @@ from cloudoptics.providers.gcp.settings import GcpSettings, get_gcp_settings
 SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 REFRESH_BEFORE_SECONDS = 300
 PAGE_ROWS = 10_000
+#: HTTP statuses worth retrying (AIP-194: UNAVAILABLE; 429 RESOURCE_EXHAUSTED for rate
+#: limits; 500/502/504 from front ends), and BigQuery's transient reasons. BigQuery returns
+#: rate and quota errors as 403, so a 403 is "denied" only when its reason is not one of these.
+RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+RETRY_REASONS = frozenset(
+    {"rateLimitExceeded", "backendError", "internalError", "RATE_LIMIT_EXCEEDED"}
+)
+QUOTA_REASONS = frozenset({"rateLimitExceeded", "quotaExceeded", "RATE_LIMIT_EXCEEDED"})
 
 
 class GcpError(Exception):
@@ -46,7 +60,13 @@ class GcpError(Exception):
 
     @property
     def denied(self) -> bool:
+        if self.code in QUOTA_REASONS or self.api_disabled:
+            return False
         return self.status == 403 or self.code in {"PERMISSION_DENIED", "accessDenied"}
+
+    @property
+    def retryable(self) -> bool:
+        return self.status in RETRY_STATUSES or self.code in RETRY_REASONS
 
     @property
     def not_found(self) -> bool:
@@ -138,10 +158,31 @@ def _error(response: httpx.Response) -> GcpError:
     if isinstance(err, str):  # OAuth-style errors (STS)
         return GcpError(response.status_code, err, str(body.get("error_description") or err))
     err = err or {}
+    # google.rpc.Status over HTTP (AIP-193): ``status`` is the canonical code and
+    # ``details[]`` may hold an ErrorInfo with a machine ``reason``. BigQuery and Compute v1
+    # also send the older ``errors[].reason`` (accessDenied, rateLimitExceeded, ...).
     reasons = [e.get("reason") for e in err.get("errors") or [] if e.get("reason")]
     details = [d.get("reason") for d in err.get("details") or [] if d.get("reason")]
     code = (details or reasons or [err.get("status") or f"HTTP{response.status_code}"])[0]
     return GcpError(response.status_code, str(code), str(err.get("message") or code)[:500])
+
+
+def _retry_after(response: httpx.Response | None) -> float | None:
+    value = response.headers.get("retry-after") if response is not None else None
+    try:
+        return None if value is None else max(0.0, float(value))
+    except ValueError:
+        return None
+
+
+def _expiry(expire_time: str | None) -> float:
+    """``expireTime`` of generateAccessToken (RFC 3339) as epoch seconds; an hour if absent."""
+    if expire_time:
+        try:
+            return datetime.fromisoformat(expire_time.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            pass
+    return time.time() + 3600
 
 
 class GcpApi:
@@ -153,6 +194,30 @@ class GcpApi:
 
     def _client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(transport=_transport, timeout=self.settings.http_timeout_seconds)
+
+    async def _send(
+        self, http: httpx.AsyncClient, method: str, url: str, **kwargs: Any
+    ) -> httpx.Response:
+        """One call, retried on transient errors with truncated exponential backoff and
+        jitter (honouring ``Retry-After``). The last response is returned, error or not."""
+        attempts = max(0, self.settings.retries) + 1
+        for attempt in range(attempts):
+            last = attempt + 1 == attempts
+            response: httpx.Response | None = None
+            try:
+                response = await http.request(method, url, **kwargs)
+            except httpx.TransportError as exc:
+                if last:
+                    raise GcpError(0, "Unreachable", type(exc).__name__) from exc
+            else:
+                if response.status_code < 400 or last or not _error(response).retryable:
+                    return response
+            base = self.settings.retry_base_seconds
+            delay = _retry_after(response)
+            if delay is None:
+                delay = min(32.0, base * 2**attempt) * (0.5 + random.random() / 2)  # noqa: S311
+            await asyncio.sleep(min(delay, 60.0) if base > 0 else 0)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     async def token(self) -> str:
         global _token
@@ -170,7 +235,9 @@ class GcpApi:
         subject = signed_caller_identity(creds, s.workload_provider, s.aws_region)
         async with self._client() as http:
             try:
-                sts = await http.post(
+                sts = await self._send(
+                    http,
+                    "POST",
                     s.sts_url,
                     data={
                         "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -185,7 +252,9 @@ class GcpApi:
                     raise _error(sts)
                 federated = sts.json()["access_token"]
                 sa = quote(s.service_account, safe="@.")
-                impersonated = await http.post(
+                impersonated = await self._send(
+                    http,
+                    "POST",
                     f"{s.iamcredentials_url}/projects/-/serviceAccounts/{sa}:generateAccessToken",
                     headers={"Authorization": f"Bearer {federated}"},
                     json={"scope": [SCOPE], "lifetime": "3600s"},
@@ -194,7 +263,8 @@ class GcpApi:
                 raise GcpError(0, "Unreachable", type(exc).__name__) from exc
             if impersonated.status_code != 200:
                 raise _error(impersonated)
-            _token = (impersonated.json()["accessToken"], time.time() + 3600)
+            granted = impersonated.json()
+            _token = (granted["accessToken"], _expiry(granted.get("expireTime")))
         return _token[0]
 
     async def request(
@@ -203,7 +273,8 @@ class GcpApi:
         token = await self.token()
         async with self._client() as http:
             try:
-                response = await http.request(
+                response = await self._send(
+                    http,
                     method,
                     url,
                     params=params,
@@ -295,6 +366,8 @@ class GcpApi:
             "timeoutMs": 30_000,
             "dryRun": dry_run,
             "labels": {"cloudoptics": "billing"},
+            # Idempotency: a retried request with the same id is not run twice.
+            "requestId": str(uuid.uuid4()),
         }
         if location:
             body["location"] = location
@@ -306,7 +379,10 @@ class GcpApi:
         job = page.get("jobReference") or {}
         rows: list[dict[str, Any]] = []
         schema: list[dict[str, Any]] = []
+        billed: int | None = None
         for _ in range(10_000):
+            if billed is None and page.get("totalBytesBilled") is not None:
+                billed = int(page["totalBytesBilled"])  # in jobs.query's answer only
             if page.get("jobComplete", True):
                 schema = (page.get("schema") or {}).get("fields") or schema
                 rows.extend(decode_rows(schema, page.get("rows") or []))
@@ -322,9 +398,34 @@ class GcpApi:
             page = await self.request(
                 "GET", f"{url}/{quote(str(job.get('jobId', '')))}", params=params_
             )
-        billed = int(page.get("totalBytesBilled") or processed)
+        if billed is None:
+            billed = int(page.get("totalBytesProcessed") or processed)
         self.bytes_billed += billed
         return QueryResult(rows, processed, billed)
+
+    async def referenced_tables(
+        self, project: str, sql: str, *, location: str | None = None
+    ) -> list[tuple[str, str, str]]:
+        """The base tables a query would read, from a dry run (``jobs.insert`` with
+        ``configuration.dryRun``): ``statistics.query.referencedTables``. Views are listed
+        apart (``referencedLogicalViews``). Dry runs are not billed."""
+        body: dict[str, Any] = {
+            "configuration": {
+                "dryRun": True,
+                "labels": {"cloudoptics": "ownership"},
+                "query": {"query": sql, "useLegacySql": False},
+            }
+        }
+        if location:
+            body["jobReference"] = {"projectId": project, "location": location}
+        job = await self.request(
+            "POST", f"{self.settings.bigquery_url}/projects/{quote(project)}/jobs", body=body
+        )
+        tables = ((job.get("statistics") or {}).get("query") or {}).get("referencedTables") or []
+        return [
+            (str(t.get("projectId")), str(t.get("datasetId")), str(t.get("tableId")))
+            for t in tables
+        ]
 
 
 @dataclass(frozen=True)

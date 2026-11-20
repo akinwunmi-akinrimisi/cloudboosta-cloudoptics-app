@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Cloudoptics' own Google Cloud side of the GCP connector (ADR-019). Run by the owner, once
 # per environment, in Cloud Shell or with gcloud signed in as a project owner. Nothing here
-# touches a customer's project. It is idempotent: re-running it changes nothing that exists.
+# touches a customer's project. It is idempotent: re-running it brings what exists to the state
+# below (an older principalSet binding by full role ARN is left for the owner to remove).
 #
 #   PROJECT_ID=cloudoptics-staging AWS_ACCOUNT_ID=<broker account> ./infra/gcp/setup.sh
 #
 # What it creates in PROJECT_ID (a project of Cloudoptics' own, with no customer data):
-#   1. The APIs the token exchange needs: IAM, IAM Credentials, STS.
+#   1. The APIs the token exchange needs: IAM, Resource Manager, IAM Service Account
+#      Credentials and Security Token Service.
 #   2. A workload identity pool "cloudoptics" with an AWS provider "aws-broker" that admits
 #      only the broker role (CloudopticsBroker, ADR-007) of AWS_ACCOUNT_ID.
 #   3. The service account "cloudoptics-reader" customers grant read roles to. It has no
@@ -43,14 +45,23 @@ if ! gcloud iam workload-identity-pools describe "$POOL" --location=global >/dev
   gcloud iam workload-identity-pools create "$POOL" --location=global \
     --display-name="Cloudoptics" --description="Cloudoptics workers, from the AWS broker"
 fi
-# The condition admits the broker role's sessions only (Roles Anywhere sessions of
-# CloudopticsBroker), not any other identity in the broker account.
-CONDITION="attribute.aws_role == 'arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${BROKER_ROLE}'"
-MAPPING="google.subject=assertion.arn,attribute.aws_account=assertion.account,attribute.aws_role=assertion.arn.extract('{account_arn}assumed-role/') + 'assumed-role/' + assertion.arn.extract('assumed-role/{role_name}/')"
+# Google's documented AWS mapping (Workload Identity Federation with AWS): the subject is the
+# caller's ARN and attribute.aws_role is the role *name* taken from the assumed-role ARN
+# (arn:aws:sts::<account>:assumed-role/<role>/<session>). The provider only accepts callers
+# from AWS_ACCOUNT_ID (--account-id), and the condition admits sessions of the broker role
+# only (Roles Anywhere sessions of CloudopticsBroker), not any other identity in that account.
+# If CLOUDOPTICS_GCP_FEDERATION_ROLE_ARN names a dedicated role, set BROKER_ROLE to its name.
+MAPPING="google.subject=assertion.arn,attribute.account=assertion.account,attribute.aws_role=assertion.arn.extract('assumed-role/{role_name}/')"
+CONDITION="assertion.arn.startsWith('arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${BROKER_ROLE}/')"
 if ! gcloud iam workload-identity-pools providers describe "$PROVIDER" \
     --workload-identity-pool="$POOL" --location=global >/dev/null 2>&1; then
   gcloud iam workload-identity-pools providers create-aws "$PROVIDER" \
     --workload-identity-pool="$POOL" --location=global --account-id="$AWS_ACCOUNT_ID" \
+    --attribute-mapping="$MAPPING" --attribute-condition="$CONDITION"
+else
+  # Re-running brings an existing provider to the current mapping and condition.
+  gcloud iam workload-identity-pools providers update-aws "$PROVIDER" \
+    --workload-identity-pool="$POOL" --location=global \
     --attribute-mapping="$MAPPING" --attribute-condition="$CONDITION"
 fi
 
@@ -61,7 +72,8 @@ if ! gcloud iam service-accounts describe "$SA" >/dev/null 2>&1; then
 fi
 
 echo "4/4 The broker role may impersonate it"
-MEMBER="principalSet://iam.googleapis.com/projects/${NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.aws_role/arn:aws:sts::${AWS_ACCOUNT_ID}:assumed-role/${BROKER_ROLE}"
+# Service account impersonation needs Workload Identity User for the pool's principal set.
+MEMBER="principalSet://iam.googleapis.com/projects/${NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.aws_role/${BROKER_ROLE}"
 gcloud iam service-accounts add-iam-policy-binding "$SA" \
   --role=roles/iam.workloadIdentityUser --member="$MEMBER" --condition=None >/dev/null
 
