@@ -142,8 +142,9 @@ describe('Demo exports', () => {
     const csv = await (await api.downloadExport(tenantId, made.id)).text()
     const [header] = csv.replace('﻿', '').split('\r\n')
     expect(header).toBe(
-      'period_start,period_end,service_code,service_name,amortised_cost_usd,amortised_cost_zar,fx_rate_avg',
+      'period_start,period_end,service_code,service_name,amortised_cost_usd,amortised_cost_zar,fx_rate_avg,provider',
     )
+    expect(csv.replace('﻿', '').split('\r\n')[1]?.endsWith(',aws')).toBe(true)
     expect((await api.listExports(tenantId)).exports.map((e) => e.id)).toEqual([made.id])
     const recs = await api.createExport(tenantId, { kind: 'recommendations' })
     expect(await (await api.downloadExport(tenantId, recs.id)).text()).toContain('evidence_summary')

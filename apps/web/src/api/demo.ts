@@ -57,6 +57,7 @@ import type {
   MonthState,
   PeriodReload,
   PermissionCheck,
+  ProviderRemoval,
   Recommendation,
   ReloadStatus,
   RecommendationChange,
@@ -1544,11 +1545,76 @@ export class DemoApi implements Api {
   private tenantDeletionView(tenantId: string, deletion: DataDeletion | undefined): TenantDeletion {
     return {
       deletion: deletion ? structuredClone(deletion) : null,
-      stacks: (this.state.connections[tenantId] ?? []).map(demoStackSteps),
+      stacks: (this.state.connections[tenantId] ?? [])
+        .filter((c) => (c.provider ?? 'aws') === 'aws')
+        .map(demoStackSteps),
+      removals: (this.state.connections[tenantId] ?? []).flatMap((c) => this.demoRemoval(c)),
       stacksConsoleUrl:
         'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1#/stacks?filteringText=cloudoptics',
       graceDays: DEMO_GRACE_DAYS,
     }
+  }
+
+  /** As the API (privacy/removal.py): what to remove in the other clouds. */
+  private demoRemoval(c: Connection): ProviderRemoval[] {
+    const label = connectionLabel(c)
+    if (c.provider === 'gcp') {
+      const s = this.state.gcp?.[c.id]?.settings
+      if (!s) return []
+      const member = `serviceAccount:${DEMO_GCP_SERVICE_ACCOUNT}`
+      return [
+        {
+          provider: 'gcp',
+          label,
+          steps: [
+            `Remove the IAM bindings you gave the Cloudoptics service account ${DEMO_GCP_SERVICE_ACCOUNT} (BigQuery Data Viewer on the dataset ${s.exportProjectId}.${s.exportDatasetId}, BigQuery Job User on the project ${s.queryProjectId}, and the optional project roles for resources), and the dataset label cloudoptics. Run these in Cloud Shell; a binding you never added says it is not found, which is fine.`,
+          ],
+          commands: [
+            `bq query --nouse_legacy_sql 'REVOKE \`roles/bigquery.dataViewer\` ON SCHEMA \`${s.exportProjectId}.${s.exportDatasetId}\` FROM "${member}"'`,
+            `gcloud projects remove-iam-policy-binding ${s.queryProjectId} --member=${member} --role=roles/bigquery.jobUser --condition=None`,
+            `bq update --clear_label cloudoptics ${s.exportProjectId}:${s.exportDatasetId}`,
+          ],
+        },
+      ]
+    }
+    if (c.provider === 'azure') {
+      const found = this.state.azure?.[c.id]
+      if (!found) return []
+      const a = found.conn
+      return [
+        {
+          provider: 'azure',
+          label,
+          steps: [
+            `In directory ${a.directoryId}, as an Owner or User Access Administrator, remove the role assignments of the Cloudoptics app (on the scope and on the storage account ${a.storageAccount} and its container ${a.container}).`,
+            `Remove the tag cloudoptics-verify from the storage account ${a.storageAccount} (Tags in the portal, or the az tag command below).`,
+            'Last, delete the Cloudoptics enterprise application (its service principal) from the directory: Microsoft Entra ID, Enterprise applications, Cloudoptics, Properties, Delete (or az ad sp delete below). This also withdraws the admin consent. Skip it if another Cloudoptics workspace still reads this directory.',
+          ],
+          commands: [
+            "APP_ID='00000000-0000-4000-8000-00000000c0de'",
+            `az role assignment delete --assignee "$APP_ID" --scope ${a.scope}`,
+            `STORAGE_ID=$(az storage account list --query "[?name=='${a.storageAccount}'].id" -o tsv)`,
+            `az role assignment delete --assignee "$APP_ID" --scope "$STORAGE_ID/blobServices/default/containers/${a.container}"`,
+            'az role assignment delete --assignee "$APP_ID" --scope "$STORAGE_ID"',
+            `az tag update --resource-id "$STORAGE_ID" --operation Delete --tags cloudoptics-verify=${found.code}`,
+            'az ad sp delete --id "$APP_ID"',
+          ],
+        },
+      ]
+    }
+    if (c.provider === 'digitalocean') {
+      return [
+        {
+          provider: 'digitalocean',
+          label,
+          steps: [
+            'Cloudoptics deletes its copy of the token. Revoke the token itself in DigitalOcean: API, Tokens (https://cloud.digitalocean.com/account/api/tokens), then Delete next to the read-only token you made for Cloudoptics.',
+          ],
+          commands: [],
+        },
+      ]
+    }
+    return []
   }
 
   async getTenantDeletion(tenantId: string): Promise<TenantDeletion> {

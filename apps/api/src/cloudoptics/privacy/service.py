@@ -25,6 +25,7 @@ from cloudoptics.notifications.email import Email, EmailError, get_mailer
 from cloudoptics.platform.ids import uuid7
 from cloudoptics.platform.settings import get_settings
 from cloudoptics.privacy.deletion import delete_connection_data, delete_tenant_data
+from cloudoptics.privacy.removal import Removal, removal_lines, removal_steps
 from cloudoptics.providers.naming import connection_label, provider_label
 
 log = logging.getLogger(__name__)
@@ -143,8 +144,14 @@ def _email(to: list[str], subject: str, lines: list[str], tag: str) -> Email:
 
 
 def scheduled_email(
-    to: list[str], workspace: str, when: datetime, by: str, steps: list[StackSteps]
+    to: list[str],
+    workspace: str,
+    when: datetime,
+    by: str,
+    steps: list[StackSteps],
+    removals: list[Removal] | None = None,
 ) -> Email:
+    """``steps``: the AWS stacks; ``removals``: what to remove in the other clouds."""
     link = f"{get_settings().app_url.rstrip('/')}/settings?section=workspace"
     lines = [
         f"{by} asked to delete the Cloudoptics workspace {workspace} and all of its data.",
@@ -153,6 +160,7 @@ def scheduled_email(
         f"cancel it in Settings, Workspace: {link}",
         "",
         *stack_lines(steps),
+        *_then(removal_lines(removals or [])),
         "",
         "If you did not expect this, cancel the deletion and check who has the admin role.",
     ]
@@ -170,7 +178,11 @@ def cancelled_email(to: list[str], workspace: str, by: str) -> Email:
 
 
 def tenant_deleted_email(
-    to: list[str], workspace: str, verification: dict[str, Any], steps: list[StackSteps]
+    to: list[str],
+    workspace: str,
+    verification: dict[str, Any],
+    steps: list[StackSteps],
+    removals: list[Removal] | None = None,
 ) -> Email:
     lines = [
         f"The Cloudoptics workspace {workspace} has been deleted: "
@@ -181,8 +193,14 @@ def tenant_deleted_email(
         "retention period as a security record.",
         "",
         *stack_lines(steps),
+        *_then(removal_lines(removals or [])),
     ]
     return _email(to, f"Workspace {workspace} deleted", lines, "deletion")
+
+
+def _then(lines: list[str]) -> list[str]:
+    """A blank line before a block that is there."""
+    return ["", *lines] if lines else []
 
 
 def connection_deleted_email(
@@ -374,6 +392,7 @@ async def run_due(
     name = tenant.name if tenant is not None else row.target_label
     recipients = await admin_emails(session, tenant_id)
     steps = await stack_steps(session)
+    removals = await removal_steps(session, tenant_id)
     verification = await delete_tenant_data(session, tenant_id)
     await _complete(session, deletion_id, verification)
     await audit.record(
@@ -385,4 +404,5 @@ async def run_due(
         target_id=str(tenant_id),
         after=verification,
     )
-    return Outcome("completed", tenant_deleted_email(recipients, name, verification, steps), False)
+    email = tenant_deleted_email(recipients, name, verification, steps, removals)
+    return Outcome("completed", email, False)

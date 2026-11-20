@@ -244,3 +244,34 @@ describe('Workspace wording for other clouds', () => {
     expect(await screen.findByText(/Commitments are AWS-only; your other clouds are not shown here/)).toBeTruthy()
   })
 })
+
+describe('Deleting a workspace with other clouds', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+  })
+
+  it('lists what to remove in each cloud the workspace had, and only those', async () => {
+    const { api } = await workspace(['gcp', 'azure', 'digitalocean'])
+    open(api, '/settings?section=workspace')
+    expect(await screen.findByRole('heading', { name: 'Remove Cloudoptics from your other clouds' })).toBeTruthy()
+    // No AWS connection: no CloudFormation stacks to delete.
+    expect(screen.queryByRole('heading', { name: 'Remove Cloudoptics from your AWS accounts' })).toBeNull()
+    const gcp = screen.getByRole('region', { name: `Commands for Google Cloud billing account ${BILLING}` })
+    expect(gcp.textContent).toMatch(/bq update --clear_label cloudoptics abuja-billing:billing_export/)
+    expect(gcp.textContent).toMatch(/remove-iam-policy-binding/)
+    const azure = screen.getByRole('region', { name: `Commands for Azure subscription ${SUBSCRIPTION}` })
+    expect(azure.textContent).toMatch(/az role assignment delete/)
+    expect(azure.textContent).toMatch(/--operation Delete --tags cloudoptics-verify=co-/)
+    expect(azure.textContent).toMatch(/az ad sp delete/)
+    expect(screen.getByText(/delete the Cloudoptics enterprise application/)).toBeTruthy()
+    expect(screen.getByText(/Revoke the token itself in DigitalOcean/)).toBeTruthy()
+  })
+
+  it('shows only the AWS stacks for an AWS workspace', async () => {
+    const { api } = await workspace(['aws'])
+    open(api, '/settings?section=workspace')
+    expect(await screen.findByRole('heading', { name: 'Remove Cloudoptics from your AWS accounts' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Remove Cloudoptics from your other clouds' })).toBeNull()
+  })
+})

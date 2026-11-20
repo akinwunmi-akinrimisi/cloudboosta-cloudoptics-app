@@ -901,3 +901,41 @@ async def test_reconnect_keeps_the_settings_and_issues_a_new_code(
         tenant,
         cid,
     ) == [("connection.reconnected",)]
+
+
+async def test_workspace_deletion_says_what_to_remove_in_azure(
+    client: AsyncClient, login, azure
+) -> None:
+    """Role assignments of the Cloudoptics app, the ownership tag, then its enterprise
+    application (service principal), in that order; nothing about AWS stacks."""
+    from test_data_deletion import Outbox
+
+    from cloudoptics.notifications.email import set_mailer
+
+    tenant, headers = await workspace(client, login, "Azure Leaving Ltd")
+    setup = await connect(client, tenant, headers, azure.subscription)
+    code = setup["ownershipCode"]
+    url = f"/v1/tenants/{tenant}/deletion"
+    view = (await client.get(url, headers=headers)).json()
+    assert view["stacks"] == []
+    [removal] = view["removals"]
+    assert removal["label"] == f"Azure subscription {azure.subscription}"
+    commands = removal["commands"]
+    text_ = "\n".join(commands)
+    assert f"--scope /subscriptions/{azure.subscription}" in text_
+    assert f"containers/{CONTAINER}" in text_
+    assert f"--operation Delete --tags cloudoptics-verify={code}" in text_
+    assert commands[-1] == 'az ad sp delete --id "$APP_ID"'
+    deletes = [c for c in commands if c.startswith("az role assignment delete")]
+    assert len(deletes) == 3 and "az role assignment create" not in text_
+    assert any("Enterprise applications" in s for s in removal["steps"])
+    box = Outbox()
+    set_mailer(box)
+    try:
+        r = await client.post(url, json={"confirmName": "Azure Leaving Ltd"}, headers=headers)
+        assert r.status_code == 202, r.text
+    finally:
+        set_mailer(None)
+    [mail] = box.sent
+    assert f"Azure subscription {azure.subscription}:" in mail.text
+    assert "az ad sp delete" in mail.text and "CloudFormation" not in mail.text

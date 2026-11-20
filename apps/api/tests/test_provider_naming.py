@@ -311,3 +311,36 @@ def test_exports_filter_by_an_account_of_any_provider() -> None:
         )
     with pytest.raises(ValidationError):
         RecommendationsExport(kind="recommendations", account_id="1; DROP")
+
+
+def test_deletion_email_lists_each_provider_it_had() -> None:
+    from cloudoptics.privacy.removal import digitalocean_removal, gcp_removal
+    from cloudoptics.privacy.service import StackSteps, scheduled_email
+
+    removals = [
+        gcp_removal(
+            "012345-6789AB-CDEF01",
+            export_project_id="billing-proj",
+            export_dataset_id="billing_export",
+            export_kind="focus_view",
+            query_project_id="billing-proj",
+            dataset_location="EU",
+            projects=["app-1"],
+            service_account="reader@cloudoptics.iam.gserviceaccount.com",
+        ),
+        digitalocean_removal("team-1"),
+    ]
+    when = datetime(2026, 11, 27, tzinfo=UTC)
+    aws_only = scheduled_email(["a@example.com"], "Acme", when, "Ada", [])
+    assert "Google Cloud" not in aws_only.text and "DigitalOcean" not in aws_only.text
+    steps = [StackSteps("123456789012", "standalone", ["cloudoptics-access"])]
+    email = scheduled_email(["a@example.com"], "Acme", when, "Ada", steps, removals)
+    text_ = email.text
+    assert "AWS account 123456789012: cloudoptics-access" in text_
+    assert "Google Cloud billing account 012345-6789AB-CDEF01:" in text_
+    assert "--location=EU" in text_ and "app-1" in text_
+    assert "each dataset the view reads" in text_
+    assert "DigitalOcean team team-1:" in text_
+    assert "https://cloud.digitalocean.com/account/api/tokens" in text_
+    assert "Azure" not in text_
+    assert "<li>bq update --clear_label cloudoptics billing-proj:billing_export</li>" in email.html

@@ -1005,10 +1005,22 @@ export interface StackSteps {
   stacks: string[]
 }
 
-/** The workspace's scheduled deletion (null when none), and what to delete in AWS. */
+/** What to remove in another cloud for one connection: steps, then commands to paste. */
+export interface ProviderRemoval {
+  provider: Provider
+  /** "Google Cloud billing account …", "Azure subscription …", "DigitalOcean team …". */
+  label: string
+  steps: string[]
+  commands: string[]
+}
+
+/** The workspace's scheduled deletion (null when none), what to delete in AWS, and what to
+ * remove in the other clouds it connected. */
 export interface TenantDeletion {
   deletion: DataDeletion | null
   stacks: StackSteps[]
+  /** Absent from older API versions. */
+  removals?: ProviderRemoval[]
   stacksConsoleUrl: string
   graceDays: number
 }

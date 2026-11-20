@@ -4,6 +4,9 @@ Every query runs inside a tenant-scoped transaction, so row-level security limit
 to the workspace it was asked for. Cells that hold text from the bills, tags or people
 (account names, tag values, notes) are neutralised so a spreadsheet does not run them as
 formulas (OWASP "CSV injection"). The file is written gzip-compressed, as it is stored.
+
+Every export ends with the row's cloud, ``provider`` (budgets: ``providers``, the clouds a
+budget covers): last, so the columns before it keep their positions and names (docs/09 §3.2).
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloudoptics.fx import service as fx
 from cloudoptics.platform.api import ApiModel
+from cloudoptics.providers.base import PROVIDER_NAMES
 from cloudoptics.recommendations.queries import OPEN
 
 #: Up to this many rows the file is made during the request; more goes to the worker
@@ -162,13 +166,14 @@ SELECT count(*) FROM (
          CASE WHEN CAST(:by_region AS boolean) THEN coalesce(c.region_id, 'global') END,
          CASE WHEN CAST(:by_usage_type AS boolean) THEN coalesce(c.usage_type, '') END,
          CASE WHEN CAST(:tag_key AS text) IS NOT NULL
-              THEN coalesce(t.tags ->> CAST(:tag_key AS text), '') END
+              THEN coalesce(t.tags ->> CAST(:tag_key AS text), '') END,
+         c.provider
   FROM cost_daily c
   LEFT JOIN tag_set t ON t.tenant_id = c.tenant_id AND t.hash = c.tag_set_hash
   WHERE c.usage_date BETWEEN :first AND :last
     AND (CAST(:include_tax AS boolean) OR c.charge_category <> 'Tax')
     AND (CAST(:account AS text) IS NULL OR c.provider_account_id = :account)
-  GROUP BY 1, 2, 3, 4, 5, 6
+  GROUP BY 1, 2, 3, 4, 5, 6, 7
 ) q
 """
 # Local amounts convert each day at that day's rate (FR-FX-01): the rates come in as two
@@ -183,6 +188,7 @@ SELECT CASE WHEN CAST(:monthly AS boolean)
          AS usage_type,
        CASE WHEN CAST(:tag_key AS text) IS NOT NULL
             THEN coalesce(t.tags ->> CAST(:tag_key AS text), '') END AS tag_value,
+       c.provider,
        max(c.service_name) AS service_name,
        max(a.name) AS account_name,
        sum(c.effective_cost_usd) AS amortised_usd,
@@ -198,8 +204,8 @@ LEFT JOIN unnest(CAST(:fx_days AS date[]), CAST(:fx_rates AS numeric[])) AS fx(d
 WHERE c.usage_date BETWEEN :first AND :last
   AND (CAST(:include_tax AS boolean) OR c.charge_category <> 'Tax')
   AND (CAST(:account AS text) IS NULL OR c.provider_account_id = :account)
-GROUP BY 1, 2, 3, 4, 5, 6
-ORDER BY 1, sum(c.effective_cost_usd) DESC, 2, 3, 4, 5, 6
+GROUP BY 1, 2, 3, 4, 5, 6, 7
+ORDER BY 1, sum(c.effective_cost_usd) DESC, 2, 3, 4, 5, 6, 7
 """
 COST_DAYS_SQL = (
     "SELECT DISTINCT usage_date FROM cost_daily WHERE usage_date BETWEEN :first AND :last"
@@ -242,6 +248,8 @@ def _cost_header(spec: CostsExport, currency: str) -> Row:
         "billed_cost_usd",
         f"amortised_cost_{currency.lower()}",
         "fx_rate_avg",
+        # Last, so the columns before it keep their positions (multi-cloud, ADR-018).
+        "provider",
     ]
 
 
@@ -289,7 +297,7 @@ async def _cost_rows(
         usd = float(r.amortised_usd)
         local = float(r.amortised_local) if r.converted and r.amortised_local is not None else None
         rate = local / usd if local is not None and abs(usd) >= 0.005 else None
-        line += [cell(usd), cell(r.billed_usd), cell(local), cell(rate, 4)]
+        line += [cell(usd), cell(r.billed_usd), cell(local), cell(rate, 4), cell(r.provider)]
         yield line
 
 
@@ -305,6 +313,7 @@ WHERE (NOT :open_only OR r.status = ANY(:open))
 """
 REC_ROWS_SQL = """
 SELECT r.id, r.title, r.rule_id, r.type, r.status, r.provider_account_id AS account_id,
+       r.provider,
        a.name AS account_name,
        r.region_id, r.resource_id, r.savings_usd_month, r.cost_now_usd_month,
        r.cost_after_usd_month, r.savings_basis, r.confidence, r.risk_level, r.effort,
@@ -377,6 +386,7 @@ def _rec_header(currency: str) -> Row:
         "verified_at",
         "realised_savings_usd_month",
         "evidence_summary",
+        "provider",
     ]
 
 
@@ -417,6 +427,7 @@ async def _rec_rows(
             cell(r.verified_at),
             cell(r.realised_savings_usd_month),
             cell(evidence_summary(r.evidence)),
+            cell(r.provider),
         ]
 
 
@@ -438,6 +449,7 @@ ANOMALY_HEADER = [
     "top_usage_types",
     "detected_at",
     "alerted",
+    "provider",
 ]
 
 
@@ -469,6 +481,7 @@ async def _anomaly_rows(
             cell(top),
             cell(a["detected_at"]),
             cell(a["alerted"]),
+            cell(a["provider"]),
         ]
 
 
@@ -489,7 +502,11 @@ BUDGET_HEADER = [
     "data_through",
     "active",
     "thresholds",
+    # The clouds the budget covers ("aws gcp"), last so earlier columns keep their places.
+    "providers",
 ]
+BUDGET_ACCOUNTS_SQL = "SELECT provider, provider_account_id FROM cloud_account"
+BUDGET_PROVIDERS_SQL = "SELECT DISTINCT provider FROM cloud_connection"
 
 
 async def _budget_rows(
@@ -497,8 +514,18 @@ async def _budget_rows(
 ) -> AsyncIterator[Row]:
     from cloudoptics.budgets.routes import SELECT_BUDGETS, _out
 
+    by_account: dict[str, set[str]] = {}
+    for provider, account in (await session.execute(text(BUDGET_ACCOUNTS_SQL))).all():
+        by_account.setdefault(str(account).strip(), set()).add(str(provider))
+    workspace = set(map(str, (await session.execute(text(BUDGET_PROVIDERS_SQL))).scalars()))
     for row in (await session.execute(SELECT_BUDGETS)).all():
         b = await _out(session, row)
+        covered = (
+            workspace
+            if b.scope.type == "tenant"
+            else {p for a in b.scope.accounts for p in by_account.get(a, set())}
+        )
+        providers = " ".join(p for p in PROVIDER_NAMES if p in covered)
         scope = "workspace" if b.scope.type == "tenant" else " ".join(b.scope.accounts)
         thresholds = "; ".join(
             f"{t.kind} {t.percent}%{' crossed' if t.crossed else ''}" for t in b.thresholds
@@ -520,6 +547,7 @@ async def _budget_rows(
             cell(b.data_through),
             cell(b.is_active),
             cell(thresholds),
+            cell(providers),
         ]
 
 

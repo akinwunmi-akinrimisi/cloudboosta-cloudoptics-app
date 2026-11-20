@@ -664,3 +664,39 @@ def test_recommendations_find_their_target() -> None:
     summary = inventory.recommendation_summary(disk, "google.compute.disk.IdleResourceRecommender")
     assert summary["savingsMonthly"] == pytest.approx(85 * 30.4167 / 30, rel=1e-3)
     assert inventory._seconds({"seconds": 2592000}) == 2592000
+
+
+async def test_workspace_deletion_says_what_to_remove_in_google_cloud(
+    client: AsyncClient, login, gcp, owner_sql
+) -> None:
+    """The deletion page and email undo the set-up commands: the IAM bindings of the
+    Cloudoptics service account and the dataset label; nothing about AWS stacks."""
+    from test_data_deletion import Outbox
+
+    from cloudoptics.notifications.email import set_mailer
+
+    tenant, headers, _ = await connected(client, login, gcp)
+    sa = connect.service_account()
+    url = f"/v1/tenants/{tenant}/deletion"
+    view = (await client.get(url, headers=headers)).json()
+    assert view["stacks"] == []
+    [removal] = view["removals"]
+    assert removal["provider"] == "gcp"
+    assert removal["label"] == f"Google Cloud billing account {gcp.billing_account.upper()}"
+    commands = "\n".join(removal["commands"])
+    assert f"bq update --clear_label cloudoptics {EXPORT_PROJECT}:{DATASET}" in commands
+    assert "REVOKE `roles/bigquery.dataViewer` ON SCHEMA" in commands
+    assert f'FROM "serviceAccount:{sa}"' in commands
+    assert "remove-iam-policy-binding" in commands and "roles/bigquery.jobUser" in commands
+    assert "add-iam-policy-binding" not in commands
+    box = Outbox()
+    set_mailer(box)
+    try:
+        r = await client.post(url, json={"confirmName": "Acme Cloud Ltd"}, headers=headers)
+        assert r.status_code == 202, r.text
+    finally:
+        set_mailer(None)
+    [mail] = box.sent
+    assert f"Google Cloud billing account {gcp.billing_account.upper()}:" in mail.text
+    assert "bq update --clear_label cloudoptics" in mail.text
+    assert "CloudFormation" not in mail.text and "AWS" not in mail.text

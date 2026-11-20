@@ -140,16 +140,16 @@ async def test_costs_export_by_service_account_and_tag_in_both_currencies(
     assert header == [
         "period_start", "period_end", "service_code", "service_name", "account_id",
         "account_name", "tag:team", "amortised_cost_usd", "billed_cost_usd",
-        "amortised_cost_zar", "fx_rate_avg",
+        "amortised_cost_zar", "fx_rate_avg", "provider",
     ]  # fmt: skip
     assert rows == [
         # EC2: 30 - 5 credit (tax left out) at 18, 19, 20: 180 + 95 + 200.
         ["2026-09-01", "2026-09-30", "AmazonEC2", "Amazon EC2", ACCOUNT, ACCOUNT, "",
-         "25.00", "25.00", "475.00", "19.0000"],
+         "25.00", "25.00", "475.00", "19.0000", "aws"],
         ["2026-09-01", "2026-09-30", "AmazonS3", "Amazon S3", OTHER,
-         "'=HYPERLINK(\"http://evil\")", "'@payments", "6.00", "6.00", "114.00", "19.0000"],
+         "'=HYPERLINK(\"http://evil\")", "'@payments", "6.00", "6.00", "114.00", "19.0000", "aws"],
         ["2026-10-01", "2026-10-15", "AmazonEC2", "Amazon EC2", ACCOUNT, ACCOUNT, "",
-         "7.00", "7.00", "", ""],
+         "7.00", "7.00", "", "", "aws"],
     ]  # fmt: skip
 
     # By day, one account, with tax; no dimension.
@@ -225,6 +225,7 @@ async def test_recommendation_anomaly_and_budget_exports(
     assert line["savings_ghs_month"] == "600.00"  # at today's rate
     assert line["evidence_summary"] == "state: available (sinceDays=12.5)"
     assert line["account_id"] == "111122223333" and line["risk_level"] == "low"
+    assert list(line)[-1] == "provider" and line["provider"] == "aws"
     every = await export(client, tid, viewer, kind="recommendations", status="all")
     assert every["rowCount"] == 2
 
@@ -256,6 +257,7 @@ async def test_recommendation_anomaly_and_budget_exports(
     assert row["impact_usd"] == "100.00" and row["deviation_percent"] == "500.0"
     assert row["note"] == "'+ load test"
     assert row["top_usage_types"] == "BoxUsage:m5.large +100.00"
+    assert list(row)[-1] == "provider" and row["provider"] == "aws"
     resolved = await export(client, tid, viewer, kind="anomalies", status="resolved")
     assert resolved["rowCount"] == 0
 
@@ -268,6 +270,7 @@ async def test_recommendation_anomaly_and_budget_exports(
     assert row["name"] == "'-Company" and row["amount"] == "500.00"
     assert row["scope"] == "workspace" and row["currency"] == "USD"
     assert row["thresholds"].startswith("actual ")
+    assert list(row)[-1] == "providers" and row["providers"] == "aws"
 
     # Each export is written to the audit log.
     log = (await client.get(f"/v1/tenants/{tid}/audit-log", headers=admin)).json()
@@ -447,3 +450,44 @@ async def test_exports_are_rate_limited_and_capped(
     # The limit is per person: a colleague can still export.
     _, colleague = await member(client, login, owner_sql, tenant, "viewer")
     assert (await client.post(base, json=body, headers=colleague)).status_code == 201
+
+
+async def test_exports_say_which_cloud_each_row_is_from(
+    client: AsyncClient, login, owner_sql
+) -> None:
+    """A workspace with AWS and Google Cloud: the provider column (last, so the other columns
+    keep their places) tells the rows apart, and a budget lists the clouds it covers."""
+    tenant, admin, connection = await workspace(client, login, owner_sql)
+    tid = tenant["id"]
+    cost(owner_sql, tenant, connection, SEP, 10)
+    owner_sql(
+        "INSERT INTO cost_daily (tenant_id, connection_id, provider, usage_date, billing_period, "
+        "provider_account_id, service_code, service_name, service_category, region_id, "
+        "usage_type, charge_category, billed_cost_usd, effective_cost_usd, net_cost_usd, "
+        "data_version) VALUES (%s, %s, 'gcp', %s, %s, 'abuja-billing', 'Compute Engine', "
+        "'Compute Engine', 'Compute', 'europe-west2', 'N2 Core', 'Usage', 4, 4, 4, 'v1')",
+        tid,
+        connection,
+        SEP,
+        SEP,
+    )
+    done = await export(client, tid, admin, kind="costs", start="2026-09-01", end="2026-09-30")
+    header, *rows = rows_of(await download(client, done["downloadUrl"], admin))
+    assert header[-1] == "provider" and header[:2] == ["period_start", "period_end"]
+    assert sorted((r[2], r[-1]) for r in rows) == [
+        ("AmazonEC2", "aws"),
+        ("Compute Engine", "gcp"),
+    ]
+    r = await client.post(
+        f"/v1/tenants/{tid}/budgets",
+        json={
+            "name": "Payments",
+            "amount": 100,
+            "scope": {"type": "accounts", "accounts": [ACCOUNT]},
+        },
+        headers=admin,
+    )
+    assert r.status_code == 201, r.text
+    budgets = await export(client, tid, admin, kind="budgets")
+    (row,) = as_dicts(await download(client, budgets["downloadUrl"], admin))
+    assert row["providers"] == "aws"
