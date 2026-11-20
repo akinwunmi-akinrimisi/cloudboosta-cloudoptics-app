@@ -125,7 +125,9 @@ def test_every_invite_route_takes_the_session_and_nothing_else_does(app) -> None
         if p.startswith(PREFIX) and p != f"{PREFIX}/open" and not _needs(d, "invite_session")
     ]
     assert missing == []
-    leaked = [f"{m} {p}" for m, p, d in routes if not p.startswith(PREFIX) and _needs(d, "invite_session")]
+    leaked = [
+        f"{m} {p}" for m, p, d in routes if not p.startswith(PREFIX) and _needs(d, "invite_session")
+    ]
     assert leaked == []
     # Every other route either needs a signed-in user or is a listed public one.
     unlisted = [
@@ -191,7 +193,9 @@ async def test_google_cloud_hand_off_connects_without_joining(
     assert sent["status"] == "sent" and sent["emailSent"] is True and sent["provider"] == "gcp"
     [email] = [e for e in outbox.sent if e.to == [to]]
     assert "Acme Ltd" in email.subject and "Read-only" in email.text
-    assert "do not join the workspace" in email.text and "Billing Account Administrator" in email.text
+    assert (
+        "do not join the workspace" in email.text and "Billing Account Administrator" in email.text
+    )
     token = link_token(outbox, to)
     stored = owner_sql("SELECT token_hash FROM connect_invite WHERE id = %s", sent["id"])
     assert bytes(stored[0][0]) == handoff.token_hash(token)  # only the hash is kept
@@ -338,7 +342,9 @@ async def test_revocation_and_replacement(client: AsyncClient, login, outbox: Ou
     assert r.status_code in (401, 410)
     r = await client.post(f"{PREFIX}/open", json={"token": link_token(outbox, to)})
     assert r.status_code == 410 and r.json()["code"] == "invite_revoked"
-    again = await client.delete(f"/v1/tenants/{tenant}/connect-invites/{second['id']}", headers=owner)
+    again = await client.delete(
+        f"/v1/tenants/{tenant}/connect-invites/{second['id']}", headers=owner
+    )
     assert again.status_code == 204
 
 
@@ -351,7 +357,9 @@ async def test_other_workspaces_and_roles(
     invite = (await send(client, tenant, owner, to, "gcp")).json()
     # Another workspace's admin sees nothing of it and cannot revoke it.
     assert await statuses(client, other, other_owner) == []
-    r = await client.delete(f"/v1/tenants/{other}/connect-invites/{invite['id']}", headers=other_owner)
+    r = await client.delete(
+        f"/v1/tenants/{other}/connect-invites/{invite['id']}", headers=other_owner
+    )
     assert r.status_code == 404
     r = await client.get(f"/v1/tenants/{tenant}/connect-invites", headers=other_owner)
     assert r.status_code == 404
