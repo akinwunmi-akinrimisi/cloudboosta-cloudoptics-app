@@ -16,9 +16,6 @@ const noStop = (s: string) => s.replace(/\.$/, '')
 const readRoles = permissions.roles.filter((r) => r.readOnly)
 const otherRoles = permissions.roles.filter((r) => !r.readOnly)
 
-/** How many read-only roles the stack creates, for the panel's one-line summary. */
-export const READ_ROLE_COUNT = readRoles.length
-
 /** Every action the template grants, for tests and the summary count. */
 export const ALL_ACTIONS = [...new Set(permissions.roles.flatMap((r) => r.groups.flatMap((g) => g.actions)))]
 

@@ -30,8 +30,8 @@ export function Lede({ icon: Icon, children }: { icon: LucideIcon; children: Rea
 
 export interface FlowNode {
   icon: LucideIcon
+  /** One to three words. */
   label: string
-  detail: string
 }
 
 /**
@@ -43,7 +43,7 @@ export function Flow({ from, link, label }: { from: FlowNode; link: FlowNode; la
   const nodes: [FlowNode, string][] = [
     [from, 'node'],
     [link, 'node link'],
-    [{ icon: CircleCheck, label: 'Cloudoptics', detail: 'reads, never writes' }, 'node us'],
+    [{ icon: CircleCheck, label: 'Cloudoptics' }, 'node us'],
   ]
   return (
     <ol className="ed-flow" aria-label={label}>
@@ -66,7 +66,6 @@ function FlowItem({ node, className, arrow }: { node: FlowNode; className: strin
       <li className={className}>
         <Icon size={22} strokeWidth={1.75} aria-hidden="true" />
         <b>{node.label}</b>
-        <span>{node.detail}</span>
       </li>
     </>
   )
@@ -117,11 +116,12 @@ export function TodoItem({
   )
 }
 
-export function Chips({ items, label }: { items: string[]; label: string }) {
+/** Short names in boxes; ``code`` for values to look for or tick (scopes), as is. */
+export function Chips({ items, label, code = false }: { items: string[]; label: string; code?: boolean }) {
   return (
     <ul className="ed-chips" aria-label={label}>
       {items.map((s) => (
-        <li key={s}>{s}</li>
+        <li key={s}>{code ? <code>{s}</code> : s}</li>
       ))}
     </ul>
   )
@@ -285,7 +285,7 @@ export function Checks({ checks }: { checks: PermissionCheck[] }) {
 export interface NextStep {
   icon: LucideIcon
   label: string
-  when: string
+  when?: string
   done?: boolean
 }
 
@@ -302,7 +302,7 @@ export function Next({ steps }: { steps: NextStep[] }) {
             {label}
             {done && <span className="sr-only">, done</span>}
           </b>
-          <span className="when">{when}</span>
+          {when && <span className="when">{when}</span>}
         </li>
       ))}
     </ol>

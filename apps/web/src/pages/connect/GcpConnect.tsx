@@ -1,12 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { Check, Copy, Database, KeyRound, Lock, Pencil, Receipt, Server, Tag, Terminal } from 'lucide-react'
+import { Check, Copy, Database, KeyRound, Tag, Terminal } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import type { GcpConnectionCreate, GcpExportKind, GcpSetup } from '../../api/types'
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
-import { AccessPanel, Disclosure, Flow, Kicker, Lede } from '../../components/onboarding'
+import { Disclosure, Flow, Lede } from '../../components/onboarding'
 import { Alert, Field } from '../../components/ui'
 
 export interface ConnectProps {
@@ -91,24 +91,10 @@ function CopyButton({ text, name, label = 'Copy' }: { text: string; name: string
 }
 
 const FLOW = {
-  from: { icon: Database, label: 'Billing export', detail: 'in BigQuery' },
-  link: { icon: KeyRound, label: 'Service account', detail: 'read access you grant' },
+  from: { icon: Database, label: 'BigQuery export' },
+  link: { icon: KeyRound, label: 'Read-only access' },
 }
 
-/** What Google Cloud access lets Cloudoptics read, beside each step. */
-function GcpAccess() {
-  return (
-    <AccessPanel
-      title="Read-only access"
-      sub="Your billing export in BigQuery"
-      reads={[
-        { icon: Receipt, label: 'Billing export' },
-        { icon: Server, label: 'Resources, if you add the optional step' },
-      ]}
-      never={[{ icon: Pencil, label: 'Change anything' }]}
-    />
-  )
-}
 
 /** Google Cloud: where the billing export is, then the commands that give read access to it. */
 export function GcpConnect({ tenantId, onConnected, connectionId }: ConnectProps & { connectionId?: string }) {
@@ -193,16 +179,15 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
   }
 
   return (
-    <div className="ed-grid">
+    <div className="max-w-[760px]">
       <section className="min-w-0">
-        <Kicker>Step 2 of 3</Kicker>
         <h1 className="ed-h1">Connect Google Cloud</h1>
-        <Lede icon={Lock}>Read-only. It never changes anything.</Lede>
         <Flow label="How Cloudoptics connects to Google Cloud" {...FLOW} />
         <form className="ed-sheet ed-form mt-7" onSubmit={submit} noValidate>
           <Field
             label="Billing account ID"
-            hint="In Billing, Account management. Looks like 012345-6789AB-CDEF01."
+            hint="Billing, Account management"
+            placeholder="012345-6789AB-CDEF01"
             required
             autoComplete="off"
             spellCheck={false}
@@ -212,7 +197,8 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
           />
           <Field
             label="Project that holds the export"
-            hint="The project ID, such as my-billing-project."
+            hint="Its project ID"
+            placeholder="my-billing-project"
             required
             autoComplete="off"
             spellCheck={false}
@@ -222,7 +208,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
           />
           <Field
             label="Dataset"
-            hint="The managed FOCUS export creates gcp_billing_immutable_ followed by the billing account ID and location. For a view, the dataset that holds it."
+            hint="Managed export: gcp_billing_immutable_<ID>_<location>. View: its dataset."
             required
             autoComplete="off"
             spellCheck={false}
@@ -232,11 +218,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
           />
           <Field
             label="Table or view"
-            hint={
-              exportKind === 'focus_export'
-                ? 'Leave empty for the table Google names gcp_billing_export_focus_ followed by the billing account ID.'
-                : 'The FOCUS view you saved.'
-            }
+            hint={exportKind === 'focus_export' ? 'Empty: Google’s default table' : 'Your FOCUS view'}
             placeholder={exportKind === 'focus_export' ? focusTableName(billingAccountId) : undefined}
             required={exportKind !== 'focus_export'}
             autoComplete="off"
@@ -251,7 +233,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
               {(
                 [
                   ['focus_export', 'Managed FOCUS export (Preview)'],
-                  ['focus_view', 'Detailed export with the FOCUS view'],
+                  ['focus_view', 'Detailed export + FOCUS view'],
                 ] as const
               ).map(([value, label]) => (
                 <label key={value} className="ed-tile">
@@ -272,7 +254,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
             <div className="mt-4 flex flex-col gap-4">
               <Field
                 label="Project that runs queries"
-                hint="Leave empty to use the export project. Queries are billed to this project, usually well under a cent a day."
+                hint="Empty: the export project. Billed for queries, under a cent a day."
                 autoComplete="off"
                 spellCheck={false}
                 value={queryProjectId}
@@ -281,7 +263,7 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
               />
               <Field
                 label="Dataset location"
-                hint="Such as US, EU or europe-west2. Leave empty if you are not sure."
+                hint="US, EU, europe-west2… Empty if unsure."
                 autoComplete="off"
                 spellCheck={false}
                 value={datasetLocation}
@@ -296,7 +278,6 @@ function ExportForm({ tenantId, onCreated }: { tenantId: string; onCreated: (set
           </button>
         </form>
       </section>
-      <GcpAccess />
     </div>
   )
 }
@@ -336,16 +317,15 @@ function GrantAccess({
   }
 
   return (
-    <div className="ed-grid">
+    <div className="max-w-[760px]">
       <section className="min-w-0">
-        <Kicker>Step 2 of 3</Kicker>
         <h1 ref={heading} tabIndex={-1} className="ed-h1">
           Give Cloudoptics read access
         </h1>
-        <Lede icon={Terminal}>Run these in Cloud Shell, or a terminal signed in to Google Cloud.</Lede>
+        <Lede icon={Terminal}>Run in Cloud Shell or any signed-in terminal.</Lede>
         <p className="ed-sub flex items-start gap-2">
           <Tag size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
-          The first adds a label that proves the dataset is yours. For a view, label every dataset it reads too.
+          For a view, label every dataset it reads.
         </p>
         {!setup.enabled && (
           <div className="mt-4">
@@ -410,7 +390,6 @@ function GrantAccess({
           </button>
         </div>
       </section>
-      <GcpAccess />
     </div>
   )
 }

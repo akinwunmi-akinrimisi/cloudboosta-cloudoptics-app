@@ -1,21 +1,19 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Activity,
   Building,
   Check,
   Clock,
   Cloud,
+  Coins,
   Copy,
   Download,
   ExternalLink,
   FileText,
   Layers,
   Link2,
-  Lock,
   LogIn,
   MousePointerClick,
-  Network,
   Pencil,
   Receipt,
   Search,
@@ -33,7 +31,7 @@ import { ACCESS_STACK_NAME, ApiError } from '../api/types'
 import { rememberTenant, useApi, useCurrentTenantId, useMe } from '../app/context'
 import type { NextStep } from '../components/onboarding'
 import { AccessPanel, Checks, CopyRow, Disclosure, Flow, Kicker, Lede, Next, Todo, TodoItem } from '../components/onboarding'
-import { PermissionPanel, READ_ROLE_COUNT, SiteLinks } from '../components/permissions'
+import { PermissionPanel, SiteLinks } from '../components/permissions'
 import { Alert, Button, Field, Logo, StatusPill, cx } from '../components/ui'
 import { connectionLabel, providerOf } from '../lib/providers'
 import { DEMO_URL, HOW_IT_WORKS_STACK, absoluteSiteUrl } from '../lib/site'
@@ -62,9 +60,6 @@ const POLL_MS = 5000
 // After this long with no word from the stack, say so and offer the link again.
 const SLOW_MS = 10 * 60 * 1000
 
-/** Shown under each step name from 640 px: what the step is. */
-const STEP_NOTES = ['name and country', 'read-only', 'automatic']
-
 function Progress({ step }: { step: number }) {
   return (
     <ol className="ed-progress" aria-label="Setup progress">
@@ -76,9 +71,6 @@ function Progress({ step }: { step: number }) {
           <span>
             {label}
             {i < step && <span className="sr-only">, done</span>}
-            <span className="ps" aria-hidden="true">
-              {i < step ? 'done' : STEP_NOTES[i]}
-            </span>
           </span>
         </li>
       ))}
@@ -182,20 +174,14 @@ function AwsSteps({ accountId, button }: { accountId?: string; button: ReactNode
       <TodoItem
         n={1}
         icon={LogIn}
-        title={accountId ? `Sign in to AWS account ${accountId}` : 'Sign in to your main AWS account'}
-        hint={accountId ? undefined : 'the one that receives the bill for all your accounts'}
-        time="in this browser"
+        title={accountId ? `Sign in to AWS account ${accountId}` : 'Sign in to your billing AWS account'}
+        hint="in this browser"
       />
-      <TodoItem n={2} icon={MousePointerClick} title="Press the button" hint="AWS opens with everything filled in" go>
+      <TodoItem n={2} icon={MousePointerClick} title="Press the button" hint="AWS opens, filled in" go>
         {button}
       </TodoItem>
-      <TodoItem
-        n={3}
-        icon={SquareCheck}
-        title="Tick “I acknowledge”, then Create stack"
-        hint="at the bottom of the AWS page"
-      />
-      <TodoItem n={4} icon={Clock} title="Come back here" hint="this page moves on by itself" time={`~${AWS_MINUTES} min`} />
+      <TodoItem n={3} icon={SquareCheck} title="Tick “I acknowledge”, then Create stack" hint="at the bottom" />
+      <TodoItem n={4} icon={Clock} title="Come back here" time={`~${AWS_MINUTES} min`} />
     </Todo>
   )
 }
@@ -260,7 +246,6 @@ function ConnectOptions({
       {colleagueMessage && <ForColleague message={colleagueMessage} onCopied={onOpened} />}
       {waiting}
       <Disclosure summary="Prefer to deploy the template yourself?">
-        <p className="ed-sub">For teams that review a template first. Same read-only stack.</p>
         <div className="mt-3 flex flex-col gap-4">{byHand}</div>
       </Disclosure>
     </>
@@ -329,17 +314,14 @@ function AwsAccess() {
   return (
     <AccessPanel
       title="Read-only access"
-      sub={`${READ_ROLE_COUNT} read-only roles in your account`}
       reads={[
-        { icon: Receipt, label: 'Bill and costs' },
-        { icon: Wallet, label: 'Savings Plans, budgets' },
-        { icon: Server, label: 'Resource settings' },
-        { icon: Activity, label: 'Usage metrics' },
-        { icon: Network, label: 'Account names' },
+        { icon: Receipt, label: 'Bills and costs' },
+        { icon: Wallet, label: 'Budgets, Savings Plans' },
+        { icon: Server, label: 'Resources and metrics' },
       ]}
       never={[
         { icon: Pencil, label: 'Change anything' },
-        { icon: FileText, label: 'Files, databases, secrets, logs' },
+        { icon: FileText, label: 'Files, databases, secrets' },
       ]}
     >
       <PermissionPanel />
@@ -350,8 +332,8 @@ function AwsAccess() {
 
 /** The flow diagram for AWS: your account, the read-only stack, Cloudoptics. */
 const AWS_FLOW = {
-  from: { icon: Cloud, label: 'Your AWS account', detail: 'the one that gets the bill' },
-  link: { icon: Layers, label: ACCESS_STACK_NAME, detail: 'one stack, read-only roles' },
+  from: { icon: Cloud, label: 'AWS account' },
+  link: { icon: Layers, label: 'Read-only stack' },
 }
 
 function Waiting({ since, onRetry, error }: { since: number; onRetry: () => void; error: string | null }) {
@@ -388,21 +370,21 @@ function Waiting({ since, onRetry, error }: { since: number; onRetry: () => void
 
 /** What happens after a healthy check, per cloud. */
 function nextSteps(provider: string): NextStep[] {
-  const checked: NextStep = { icon: ShieldCheck, label: 'Access checked', when: 'now', done: true }
+  const checked: NextStep = { icon: ShieldCheck, label: 'Access checked', done: true }
   if (provider === 'gcp') {
-    return [checked, { icon: Receipt, label: 'First costs', when: 'in a few minutes, once the export is read' }]
+    return [checked, { icon: Receipt, label: 'First costs', when: 'in minutes' }]
   }
   if (provider === 'digitalocean') {
     return [
       checked,
-      { icon: Receipt, label: 'Invoices loaded', when: "this month's spend shows as provisional", done: true },
-      { icon: Search, label: 'Recommendations', when: 'after the first resource scan' },
+      { icon: Receipt, label: 'Invoices loaded', when: 'this month provisional', done: true },
+      { icon: Search, label: 'Recommendations', when: 'after the first scan' },
     ]
   }
   return [
     checked,
-    { icon: Search, label: 'Recommendations', when: 'after the first resource scan, a few minutes from now' },
-    { icon: Receipt, label: 'First costs', when: 'within a day, when AWS delivers the first bill' },
+    { icon: Search, label: 'Recommendations', when: 'in minutes' },
+    { icon: Receipt, label: 'First costs', when: 'within a day' },
   ]
 }
 
@@ -439,7 +421,6 @@ function CheckAccess({ tenantId, connectionId }: { tenantId: string; connectionI
 
   return (
     <section className="max-w-[760px]">
-      <Kicker>Step 3 of 3</Kicker>
       <h1 className="ed-h1">{running ? 'Checking access' : conn?.status === 'healthy' ? 'Connected' : 'Almost there'}</h1>
       {conn && (
         <p className="ed-sub">
@@ -526,9 +507,7 @@ export function ConnectNew({ tenantId, onConnected }: { tenantId: string; onConn
   return (
     <div className="ed-grid">
       <section className="min-w-0">
-        <Kicker>Step 2 of 3</Kicker>
         <h1 className="ed-h1">Connect your AWS account</h1>
-        <Lede icon={Lock}>Read-only. It can never change anything.</Lede>
         <Flow label="How Cloudoptics connects to AWS" {...AWS_FLOW} />
         {error && (
           <div className="mt-4">
@@ -681,10 +660,7 @@ function ConnectStep({ tenantId, onConnected }: { tenantId: string; onConnected:
                 checked={p.id === providerId}
                 onChange={() => setProviderId(p.id)}
               />
-              <span className="min-w-0">
-                <b>{p.label}</b>
-                <small>{p.description}</small>
-              </span>
+              <b className="min-w-0">{p.label}</b>
             </label>
           ))}
         </div>
@@ -738,26 +714,31 @@ const COUNTRY_DEFAULTS: Record<string, [currency: string, timeZone: string]> = {
 function WorkspaceSlip({ name, country }: { name: string; country: string }) {
   const local = COUNTRY_DEFAULTS[country]
   return (
-    <figure className="m-0">
-      <figcaption className="ed-kicker mb-3">Your country sets</figcaption>
-      <div className="ed-slip">
+    <div className="ed-slip" aria-label="Currency and time zone" role="group">
+      {name.trim() && (
         <p className="mb-3 truncate font-semibold" aria-hidden="true">
-          {name.trim() || 'Your company'}
+          {name.trim()}
         </p>
-        <dl>
-          <dt>Costs in</dt>
-          <dd>
-            USD{local && <> · <mark>{local[0]}</mark></>}
-          </dd>
-          {local && (
-            <>
-              <dt>Time zone</dt>
-              <dd>{local[1]}</dd>
-            </>
-          )}
-        </dl>
-      </div>
-    </figure>
+      )}
+      <dl>
+        <dt>
+          <Coins size={18} aria-hidden="true" />
+          <span className="sr-only">Costs in</span>
+        </dt>
+        <dd>
+          USD{local && <> · <mark>{local[0]}</mark></>}
+        </dd>
+        {local && (
+          <>
+            <dt>
+              <Clock size={18} aria-hidden="true" />
+              <span className="sr-only">Time zone</span>
+            </dt>
+            <dd>{local[1]}</dd>
+          </>
+        )}
+      </dl>
+    </div>
   )
 }
 
@@ -826,7 +807,6 @@ export function Onboarding({ startAt = 0, connectionId }: { startAt?: number; co
 
         {step === 0 && (
           <section>
-            <Kicker>Step 1 of 3</Kicker>
             <h1 className="ed-h1">{another ? 'Create another workspace' : 'Create your workspace'}</h1>
             {another && <Lede icon={Building}>One workspace per company, with its own members and clouds.</Lede>}
             <div className="ed-ws">

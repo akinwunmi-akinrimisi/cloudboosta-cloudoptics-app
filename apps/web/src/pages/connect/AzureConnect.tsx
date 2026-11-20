@@ -1,12 +1,12 @@
 import { useNavigate } from '@tanstack/react-router'
-import { BadgeCheck, Check, Copy, Database, FileText, KeyRound, Lock, Pencil, Receipt, Server, ShieldCheck, Terminal } from 'lucide-react'
+import { BadgeCheck, Check, Copy, Database, FileText, KeyRound, Receipt, ShieldCheck, Tag, Terminal } from 'lucide-react'
 import type { FormEvent, TextareaHTMLAttributes } from 'react'
 import { useEffect, useId, useRef, useState } from 'react'
 
 import type { AzureConnection, AzureConnectionCreate, AzureConnectionSetup, AzureScopeType } from '../../api/types'
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
-import { AccessPanel, Checks, Chips, Disclosure, Flow, Kicker, Lede, NewTab, Next, Todo, TodoItem } from '../../components/onboarding'
+import { Checks, Chips, Disclosure, Flow, NewTab, Next, Todo, TodoItem } from '../../components/onboarding'
 import { Alert, Field, StatusPill, cx } from '../../components/ui'
 import { accountLabel } from '../../lib/providers'
 
@@ -147,8 +147,8 @@ const EMPTY: AzureFormValues = {
 }
 
 const SCOPES: { id: AzureScopeType; label: string; hint: string }[] = [
-  { id: 'subscription', label: 'Subscription', hint: 'One subscription and its own cost export.' },
-  { id: 'billing_account', label: 'Billing account', hint: 'Every subscription billed to one account.' },
+  { id: 'subscription', label: 'Subscription', hint: 'One subscription' },
+  { id: 'billing_account', label: 'Billing account', hint: 'All it bills' },
 ]
 
 function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: AzureConnectionSetup) => void }) {
@@ -199,16 +199,14 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
 
   const billing = values.scopeType === 'billing_account'
   return (
-    <div className="ed-grid">
+    <div className="max-w-[760px]">
       <section className="min-w-0">
-        <Kicker>Step 2 of 3</Kicker>
         <h1 className="ed-h1">Connect your Azure subscription</h1>
-        <Lede icon={Lock}>Read-only roles. It can never change anything in Azure.</Lede>
         <Flow label="How Cloudoptics connects to Azure" {...FLOW} />
         <form ref={form} className="ed-sheet ed-form mt-7" onSubmit={submit} noValidate>
           <Field
             label="Directory (tenant) ID"
-            hint="In the Azure portal: Microsoft Entra ID, Overview, Tenant ID."
+            hint="Entra ID, Overview, Tenant ID"
             placeholder={GUID_EXAMPLE}
             autoComplete="off"
             spellCheck={false}
@@ -217,7 +215,7 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
             error={errors.directoryId}
           />
           <fieldset className="min-w-0">
-            <legend className="mb-2 text-sm font-medium text-primary">What do you want to connect?</legend>
+            <legend className="mb-2 text-sm font-medium text-primary">Connect</legend>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {SCOPES.map((s) => (
                 <label key={s.id} className="ed-tile">
@@ -241,7 +239,7 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
           {billing && (
             <Field
               label="Billing account ID"
-              hint="In Cost Management: Billing scopes, then Properties, Billing account ID."
+              hint="Cost Management, Billing scopes, Properties"
               autoComplete="off"
               spellCheck={false}
               value={values.billingAccountId}
@@ -252,7 +250,7 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
           {billing ? (
             <TextArea
               label="Subscription IDs to scan (optional)"
-              hint={`For resources and recommendations. Separate them with commas or new lines (up to ${MAX_SUBSCRIPTIONS}).`}
+              hint={`For recommendations. Commas or new lines, up to ${MAX_SUBSCRIPTIONS}.`}
               rows={3}
               placeholder={GUID_EXAMPLE}
               autoComplete="off"
@@ -264,7 +262,7 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
           ) : (
             <Field
               label="Subscription ID"
-              hint="In the Azure portal: Subscriptions, then the Subscription ID column."
+              hint="Subscriptions, Subscription ID column"
               placeholder={GUID_EXAMPLE}
               autoComplete="off"
               spellCheck={false}
@@ -275,7 +273,7 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
           )}
           <Field
             label="Storage account name"
-            hint="Where the cost export is saved: 3 to 24 lowercase letters and numbers."
+            hint="Holds the cost export"
             autoComplete="off"
             spellCheck={false}
             value={values.storageAccount}
@@ -284,7 +282,6 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
           />
           <Field
             label="Container"
-            hint="3 to 63 lowercase letters, numbers and hyphens."
             autoComplete="off"
             spellCheck={false}
             value={values.container}
@@ -293,7 +290,7 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
           />
           <Field
             label="Export folder path (optional)"
-            hint="The folder inside the container, for example cloudoptics/focus. Leave empty for the top."
+            hint="Empty for the top"
             autoComplete="off"
             spellCheck={false}
             value={values.exportPath}
@@ -306,32 +303,16 @@ function AzureForm({ tenantId, onCreated }: { tenantId: string; onCreated: (s: A
           </button>
         </form>
       </section>
-      <AzureAccess />
     </div>
   )
 }
 
 const FLOW = {
-  from: { icon: Database, label: 'FOCUS cost export', detail: 'in your Blob Storage' },
-  link: { icon: KeyRound, label: 'Read-only roles', detail: 'that you assign' },
+  from: { icon: Database, label: 'FOCUS export' },
+  link: { icon: KeyRound, label: 'Read-only roles' },
 }
 
 const ROLES = ['Reader', 'Cost Management Reader', 'Storage Blob Data Reader']
-
-/** What the Azure roles let Cloudoptics read, beside each step. */
-function AzureAccess() {
-  return (
-    <AccessPanel
-      title="Read-only access"
-      sub="Three read-only roles"
-      reads={[
-        { icon: Receipt, label: 'Costs, from the FOCUS export' },
-        { icon: Server, label: 'Resource settings' },
-      ]}
-      never={[{ icon: Pencil, label: 'Change anything' }]}
-    />
-  )
-}
 
 /** A value to paste somewhere else, wrapped (never scrolled sideways), with a Copy button. */
 export function CopyBlock({ label, value }: { label: string; value: string }) {
@@ -423,7 +404,6 @@ function AzureSetupView({ tenantId, setup }: { tenantId: string; setup: AzureCon
 
   return (
     <section className="max-w-[760px]">
-      <Kicker>Step 2 of 3</Kicker>
       <h1 ref={heading} tabIndex={-1} className="ed-h1">
         {title}
       </h1>
@@ -436,8 +416,7 @@ function AzureSetupView({ tenantId, setup }: { tenantId: string; setup: AzureCon
             title="Grant admin consent"
             hint={
               <>
-                Global Administrator or Privileged Role Administrator of directory{' '}
-                <code className="break-all">{conn.directoryId}</code>. Sign-in and read only.
+                Global or Privileged Role Administrator of <code className="break-all">{conn.directoryId}</code>
               </>
             }
           >
@@ -451,12 +430,12 @@ function AzureSetupView({ tenantId, setup }: { tenantId: string; setup: AzureCon
             n={2}
             icon={Terminal}
             title="Give Cloudoptics read access"
-            hint="As Owner or User Access Administrator, in Azure Cloud Shell (Bash)"
+            hint="Owner or User Access Administrator, Cloud Shell (Bash)"
           >
             <Chips items={ROLES} label="Read-only roles it adds" />
             <p className="flex items-start gap-2 text-sm text-secondary">
-              <ShieldCheck size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
-              It also tags the export&apos;s storage account with your code, which proves the account is yours.
+              <Tag size={16} aria-hidden="true" className="mt-0.5 shrink-0" />
+              Also tags your storage account, as proof it is yours.
             </p>
             <CopyBlock label="Azure CLI command" value={setup.roleAssignmentCommand} />
             <Disclosure summary="Prefer the Azure portal?" className="mt-0">
@@ -467,14 +446,18 @@ function AzureSetupView({ tenantId, setup }: { tenantId: string; setup: AzureCon
               </div>
             </Disclosure>
           </TodoItem>
-          <TodoItem n={3} icon={FileText} title="Create the FOCUS cost export" hint="Daily, saved here:">
+          <TodoItem n={3} icon={FileText} title="Create a daily FOCUS cost export">
             <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
               <dt className="text-secondary">Storage account</dt>
-              <dd className="font-mono wrap-anywhere">{conn.storageAccount}</dd>
+              <dd className="wrap-anywhere">
+                <code>{conn.storageAccount}</code>
+              </dd>
               <dt className="text-secondary">Container</dt>
-              <dd className="font-mono wrap-anywhere">{conn.container}</dd>
+              <dd className="wrap-anywhere">
+                <code>{conn.container}</code>
+              </dd>
               <dt className="text-secondary">Folder</dt>
-              <dd className="font-mono wrap-anywhere">{conn.exportPath || 'The top of the container'}</dd>
+              <dd className="wrap-anywhere">{conn.exportPath ? <code>{conn.exportPath}</code> : 'The top'}</dd>
             </dl>
             <div>
               <NewTab href={setup.exportPortalUrl} className="ed-btn">
@@ -504,8 +487,8 @@ function AzureSetupView({ tenantId, setup }: { tenantId: string; setup: AzureCon
           {usable && (
             <Next
               steps={[
-                { icon: ShieldCheck, label: 'Access checked', when: 'now', done: true },
-                { icon: Receipt, label: 'First Azure costs', when: "after the export's first run (up to a day)" },
+                { icon: ShieldCheck, label: 'Access checked', done: true },
+                { icon: Receipt, label: 'First Azure costs', when: 'within a day' },
               ]}
             />
           )}

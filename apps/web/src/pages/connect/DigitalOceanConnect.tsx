@@ -1,12 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Check, Cloud, KeyRound, ListChecks, LogIn, Pencil, Receipt, Server, ShieldCheck } from 'lucide-react'
+import { Check, Cloud, KeyRound, ListChecks, LogIn } from 'lucide-react'
 import type { FormEvent } from 'react'
 import { useState } from 'react'
 
 import type { Connection } from '../../api/types'
 import { ApiError } from '../../api/types'
 import { useApi } from '../../app/context'
-import { AccessPanel, Chips, Flow, Kicker, Lede, Todo, TodoItem } from '../../components/onboarding'
+import { Chips, Flow, Todo, TodoItem } from '../../components/onboarding'
 import { Alert, Button, Field } from '../../components/ui'
 
 /** DigitalOcean's page for a new personal access token. */
@@ -33,8 +33,8 @@ function message(err: unknown): string {
 }
 
 const FLOW = {
-  from: { icon: Cloud, label: 'Your DigitalOcean team', detail: 'the one that gets the bill' },
-  link: { icon: KeyRound, label: 'Read-only token', detail: 'custom read scopes' },
+  from: { icon: Cloud, label: 'Billing team' },
+  link: { icon: KeyRound, label: 'Read-only token' },
 }
 
 /** The three customer steps: make a token, tick the read scopes, paste it. */
@@ -44,28 +44,22 @@ export function TokenSteps() {
       <TodoItem
         n={1}
         icon={LogIn}
-        title="Make a new token"
+        title="Generate New Token"
         hint={
           <>
-            Team that gets the bill →{' '}
+            Billing team,{' '}
             <a className="text-accent underline" href={DO_TOKEN_PAGE} target="_blank" rel="noreferrer">
               Account → API
-            </a>{' '}
-            → Generate New Token
+            </a>
           </>
         }
       />
       <TodoItem n={2} icon={ListChecks} title="Custom Scopes: tick only these">
-        <Chips items={DO_REQUIRED_SCOPES} label="Scopes for costs" />
+        <Chips items={DO_REQUIRED_SCOPES} label="Scopes for costs" code />
         <span className="text-sm text-secondary">For recommendations, also:</span>
-        <Chips items={DO_RESOURCE_SCOPES} label="Scopes for recommendations" />
+        <Chips items={DO_RESOURCE_SCOPES} label="Scopes for recommendations" code />
       </TodoItem>
-      <TodoItem
-        n={3}
-        icon={KeyRound}
-        title="Generate, copy, paste below"
-        hint="Pick an expiry. DigitalOcean shows the token once."
-      />
+      <TodoItem n={3} icon={KeyRound} title="Generate, copy, paste below" />
     </Todo>
   )
 }
@@ -75,11 +69,13 @@ function TokenField({
   value,
   onChange,
   error,
+  hint = 'Shown once by DigitalOcean. Cloudoptics stores it encrypted and never shows it again.',
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   error?: string
+  hint?: string
 }) {
   return (
     <Field
@@ -91,7 +87,7 @@ function TokenField({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       error={error}
-      hint="Shown once by DigitalOcean. Cloudoptics stores it encrypted and never shows it again."
+      hint={hint}
     />
   )
 }
@@ -128,11 +124,9 @@ export function DigitalOceanConnect({
     connect.mutate(token.trim())
   }
   return (
-    <div className="ed-grid">
+    <div className="max-w-[760px]">
       <section className="min-w-0">
-        <Kicker>Step 2 of 3</Kicker>
         <h1 className="ed-h1">Connect DigitalOcean</h1>
-        <Lede icon={ShieldCheck}>A read-only token. It cannot change anything.</Lede>
         <Flow label="How Cloudoptics connects to DigitalOcean" {...FLOW} />
         <TokenSteps />
         <form className="ed-sheet ed-form mt-7" onSubmit={submit}>
@@ -141,6 +135,7 @@ export function DigitalOceanConnect({
             value={token}
             onChange={setToken}
             error={touched ? formatError(token) : undefined}
+            hint="Stored encrypted, never shown again"
           />
           {connect.error && <Alert tone="error">{message(connect.error)}</Alert>}
           <button type="submit" className="ed-btn wide" disabled={connect.isPending || !token.trim()}>
@@ -148,15 +143,6 @@ export function DigitalOceanConnect({
           </button>
         </form>
       </section>
-      <AccessPanel
-        title="Read-only access"
-        sub="Read scopes only"
-        reads={[
-          { icon: Receipt, label: 'Invoices and this month’s spend' },
-          { icon: Server, label: 'Resources, with the extra scopes' },
-        ]}
-        never={[{ icon: Pencil, label: 'Change anything: a token that can is refused' }]}
-      />
     </div>
   )
 }

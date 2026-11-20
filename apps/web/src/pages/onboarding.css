@@ -175,15 +175,6 @@
   background: var(--highlight);
   font-weight: 600;
 }
-.ed-progress .ps {
-  display: none;
-  font: 400 12px/1.2 var(--type-figures);
-  color: var(--ink-2);
-  margin-top: 4px;
-}
-.ed-progress [aria-current] .ps {
-  color: var(--ink);
-}
 @media (min-width: 640px) {
   .ed-progress {
     margin-bottom: 40px;
@@ -199,9 +190,6 @@
   .ed-progress .pn {
     font-size: 26px;
     width: 30px;
-  }
-  .ed-progress .ps {
-    display: block;
   }
 }
 
@@ -363,8 +351,9 @@
   gap: 2px 12px;
   align-items: center;
 }
-.ed-flow .node svg {
-  grid-row: span 2;
+.ed-flow .node b {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .ed-flow .node b {
   font: 600 15px/1.25 var(--type-text);
@@ -959,6 +948,8 @@
   align-items: baseline;
 }
 .ed-slip dt {
+  display: flex;
+  color: var(--ink-2);
   font: 400 12px/1.2 var(--type-figures);
   letter-spacing: 0.08em;
   text-transform: uppercase;

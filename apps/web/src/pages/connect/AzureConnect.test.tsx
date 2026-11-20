@@ -195,7 +195,7 @@ describe('Connect Azure wizard', { timeout: 20_000 }, () => {
     for (const c of DEMO_AZURE_CHECKS) expect(screen.getByText(c.label)).toBeTruthy()
     expect(screen.getByText('Access checked. Connected.')).toBeTruthy()
     expect(screen.getByText('First Azure costs')).toBeTruthy()
-    expect(screen.getByText("after the export's first run (up to a day)")).toBeTruthy()
+    expect(screen.getByText('within a day')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Go to my workspace' }))
     expect(await screen.findByRole('heading', { name: 'Overview' })).toBeTruthy()
   })
