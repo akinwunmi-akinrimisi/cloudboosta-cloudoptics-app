@@ -206,7 +206,8 @@ test('axe on the Google Cloud, Azure and DigitalOcean connect steps', async ({ p
     await page.waitForLoadState('networkidle')
     results.push(await audit(page, `Onboarding: connect ${cloud}`, `/onboarding (step 2, ${cloud})`))
   }
-  // Google Cloud's second page: the commands to run (a fake billing account of its own).
+  // Google Cloud's second page: the sharing steps (a fake billing account of its own), with
+  // the collapsed commands opened too.
   const fake = await request.post(`${API_URL}/__e2e/gcp/billing-account`)
   expect(fake.ok()).toBeTruthy()
   const gcp = (await fake.json()) as { billingAccountId: string; project: string; dataset: string }
@@ -216,7 +217,8 @@ test('axe on the Google Cloud, Azure and DigitalOcean connect steps', async ({ p
   await page.getByLabel(/^Dataset/).first().fill(gcp.dataset)
   await page.getByRole('button', { name: 'Continue' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Give Cloudoptics read access' })).toBeVisible()
-  results.push(await audit(page, 'Onboarding: Google Cloud commands', '/onboarding (step 2, Google Cloud commands)'))
+  await page.getByText('Prefer commands?').click()
+  results.push(await audit(page, 'Onboarding: Google Cloud sharing steps', '/onboarding (step 2, Google Cloud steps)'))
 
   await report('connect', results)
 })

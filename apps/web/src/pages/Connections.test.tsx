@@ -258,9 +258,9 @@ describe('Deleting a workspace with other clouds', () => {
     expect(await screen.findByRole('heading', { name: 'Remove Cloudoptics from your other clouds' })).toBeTruthy()
     // No AWS connection: no CloudFormation stacks to delete.
     expect(screen.queryByRole('heading', { name: 'Remove Cloudoptics from your AWS accounts' })).toBeNull()
-    const gcp = screen.getByRole('region', { name: `Commands for Google Cloud billing account ${BILLING}` })
-    expect(gcp.textContent).toMatch(/bq update --clear_label cloudoptics abuja-billing:billing_export/)
-    expect(gcp.textContent).toMatch(/remove-iam-policy-binding/)
+    // Google Cloud: Cloudoptics deletes the connection's own account, so there are no commands.
+    expect(screen.queryByRole('region', { name: `Commands for Google Cloud billing account ${BILLING}` })).toBeNull()
+    expect(screen.getByText(/stops working at once\. Nothing else to do\./)).toBeTruthy()
     const azure = screen.getByRole('region', { name: `Commands for Azure subscription ${SUBSCRIPTION}` })
     expect(azure.textContent).toMatch(/az role assignment delete/)
     expect(azure.textContent).toMatch(/--operation Delete --tags cloudoptics-verify=co-/)

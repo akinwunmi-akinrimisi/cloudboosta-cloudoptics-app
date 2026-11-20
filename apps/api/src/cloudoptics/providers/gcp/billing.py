@@ -4,9 +4,10 @@ Unit of work: (connection, billing period). BigQuery does the aggregation: one q
 period groups the FOCUS rows to the ``cost_daily`` grain (day x project x service x region x
 SKU x charge category x tags), so what Cloudoptics reads is small whatever the bill's size.
 Every query is filtered on ``BillingPeriodStart`` (the invoice month) and capped by
-``maximumBytesBilled``; it runs
-in the connection's query project, which pays for it (BigQuery on-demand pricing; the first
-TiB a month is free, and a month of grouped FOCUS rows is usually a few MB).
+``maximumBytesBilled``. It runs as the connection's own service account, in Cloudoptics'
+query project (which pays), or in the customer's own query project when the connection names
+one (BigQuery on-demand pricing; the first TiB a month is free, and a month of grouped FOCUS
+rows is usually a few MB).
 
 The result's SHA-256 is the period's version. Google rewrites the export several times a day
 and adjusts a month until its invoice closes, so the current and the previous month are read
