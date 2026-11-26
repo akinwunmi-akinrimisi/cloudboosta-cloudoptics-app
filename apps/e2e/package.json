@@ -14,7 +14,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.5",
-    "oxlint": "^1.88.0",
+    "oxlint": "^1.95.0",
     "typescript": "~7.0.2"
   }
 }
